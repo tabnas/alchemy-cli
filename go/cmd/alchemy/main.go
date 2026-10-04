@@ -52,6 +52,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"unicode/utf8"
 
 	alchemy "github.com/tabnas/alchemy/go"
 	tabnasjson "github.com/tabnas/json/go"
@@ -132,6 +133,12 @@ func read(file string, stdin io.Reader) (string, *exit) {
 	}
 	if err != nil {
 		return "", &exit{fail: tt.InputFail(fmt.Sprintf("cannot read %s: %s", file, ioMessage(err))), status: 2}
+	}
+	// A Go string holds any bytes, so malformed UTF-8 is refused here, as
+	// the Rust binary's read_to_string and the TypeScript bin's fatal
+	// decoder refuse it while reading, with Rust's message.
+	if !utf8.Valid(data) {
+		return "", &exit{fail: tt.InputFail(fmt.Sprintf("cannot read %s: stream did not contain valid UTF-8", file)), status: 2}
 	}
 	return string(data), nil
 }
@@ -218,13 +225,25 @@ func run(args []string, stdin io.Reader, stdout io.Writer) (string, *exit) {
 		if f != nil {
 			return "", fromFail(f)
 		}
+		limits := tt.DefaultLimits()
+		limits.MaxOutputBytes = options.maxOutputBytes
+		// Whatever refuses the run is found before the input is read, so a
+		// refusal never waits on standard input or drains a large file to
+		// say so: the renderer the program cannot take, and in a build
+		// without the incremental adapter the source's own refusal.
+		metrics := tt.NewMetrics()
+		sink, f := program.Sink(stdout, options.render, limits, metrics)
+		if f != nil {
+			return "", fromFail(f)
+		}
+		if f := incrementalRefusal(sink); f != nil {
+			return "", fromFail(f)
+		}
 		input, e := read(options.input, stdin)
 		if e != nil {
 			return "", e
 		}
-		limits := tt.DefaultLimits()
-		limits.MaxOutputBytes = options.maxOutputBytes
-		if f := execute(program, input, options.render, limits, stdout); f != nil {
+		if f := execute(program, sink, metrics, input, limits); f != nil {
 			return "", fromFail(f)
 		}
 		return "", nil
@@ -297,18 +316,30 @@ func parseRunOptions(args []string) (*runOptions, *exit) {
 	return options, nil
 }
 
-// execute runs the program over one JSON document, writing to stdout.
-func execute(program *alchemy.Program, input string, render alchemy.Renderer, limits tt.Limits, stdout io.Writer) *tt.Fail {
-	metrics := tt.NewMetrics()
-	sink, f := program.Sink(stdout, render, limits, metrics)
-	if f != nil {
-		return f
+// incrementalRefusal is the source's refusal to read JSON incrementally,
+// or nil. Only a build without the incremental adapter refuses, and the
+// source refuses before it parses anything, so asking it over an empty
+// document gives the failure the run would meet, before the input is
+// read; sink sees no event.
+func incrementalRefusal(sink tt.Sink) *tt.Fail {
+	if tt.Incremental("json") {
+		return nil
 	}
+	_, f := tt.NewParserSource(tabnasjson.Make(), "").
+		Grammar("json").
+		Mode(tt.IncrementalMode(tt.Prune{})).
+		Run(sink)
+	return f
+}
+
+// execute runs the program over one JSON document, into the sink that
+// writes its output.
+func execute(program *alchemy.Program, sink tt.Sink, metrics *tt.Metrics, input string, limits tt.Limits) *tt.Fail {
 	prune := tt.Prune{}
 	if selector, ok := program.RowSelector(); ok {
 		prune = tt.PruneUnderSelector(selector)
 	}
-	_, f = tt.NewParserSource(tabnasjson.Make(), input).
+	_, f := tt.NewParserSource(tabnasjson.Make(), input).
 		Grammar("json").
 		Mode(tt.IncrementalMode(prune)).
 		Limits(limits).

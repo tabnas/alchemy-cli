@@ -23,7 +23,7 @@ const TMP = mkdtempSync(join(tmpdir(), 'alchemy-cli-'))
 
 type Output = { status: number | null; stdout: string; stderr: string }
 
-function alchemy(args: string[], stdin?: string, cwd?: string): Output {
+function alchemy(args: string[], stdin?: string | Buffer, cwd?: string): Output {
   const out: SpawnSyncReturns<Buffer> = spawnSync(process.execPath, [BIN, ...args], {
     input: stdin,
     stdio: [undefined === stdin ? 'ignore' : 'pipe', 'pipe', 'pipe'],
@@ -206,6 +206,16 @@ describe('cli', () => {
     out = alchemy(['run', '--render', 'json', text, '-'], RECORDS)
     assert.equal(out.status, 2)
     assert.ok(failJson(out).message.startsWith('render_of_text: '), out.stderr)
+    // Before the input is read: an input that cannot be read is never
+    // reached, so the refusal is the renderer's, not `cannot read`.
+    for (const [file, render, prefix] of [
+      [echo, 'csv', 'protocol_mismatch: '],
+      [text, 'json', 'render_of_text: '],
+    ]) {
+      out = alchemy(['run', '--render', render, file, '/nonexistent/input.json'])
+      assert.equal(out.status, 2, prefix)
+      assert.ok(failJson(out).message.startsWith(prefix), out.stderr)
+    }
   })
 
   // The statuses follow the code: 1 for an input or protocol failure, 5 for
@@ -312,6 +322,17 @@ describe('cli', () => {
     assert.equal(out.status, 2)
     assert.equal(failJson(out).code, 'INPUT_INVALID')
     assert.equal(out.stdout, '')
+    // Malformed UTF-8 cannot be read, from a file or from standard input,
+    // as in the Rust binary and the Go command.
+    const bad = join(TMP, 'bad.alc')
+    writeFileSync(bad, Buffer.concat([Buffer.from('def export [input] '), Buffer.from([0xff, 0x0a])]))
+    for (const [file, stdin] of [[bad, undefined], ['-', Buffer.from([0xff])]] as const) {
+      out = alchemy(['canon', file], stdin)
+      assert.equal(out.status, 2, file)
+      assert.equal(failJson(out).code, 'INPUT_INVALID', file)
+      assert.equal(failJson(out).message, `cannot read ${file}: stream did not contain valid UTF-8`)
+      assert.equal(out.stdout, '', file)
+    }
   })
 
   // A program inside the nesting bound checks, runs and explains: the

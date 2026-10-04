@@ -56,6 +56,7 @@ import {
 import { make as makeJson } from '@tabnas/json'
 import { FdWriter, renderers } from '@tabnas/render'
 import { Fail, Limits, Metrics, ParserSource, Prune, SourceMode, routers } from '@tabnas/transduce'
+import type { Sink } from '@tabnas/transduce'
 
 // What every program is compiled with: transduce's routers and render's
 // renderers, the stages alchemy builds a run from.
@@ -217,10 +218,9 @@ function parseRunOptions(args: ReadonlyArray<string>): RunOptions {
   return { render, native, maxOutputBytes, program, input }
 }
 
-// Run the program over one JSON document, writing to standard output.
-function execute(program: Program, input: string, render: Renderer | undefined, limits: Limits): void {
-  const metrics = new Metrics()
-  const sink = program.sink(new FdWriter(1), render, limits, metrics)
+// Run the program over one JSON document, into the sink that writes its
+// output.
+function execute(program: Program, sink: Sink, metrics: Metrics, input: string, limits: Limits): void {
   const selector = program.rowSelector()
   const prune = undefined === selector ? Prune.never() : Prune.under(selector)
   try {
@@ -273,9 +273,14 @@ function command(args: ReadonlyArray<string>): string {
       const src = read(options.program)
       let program = compile(src, options.program, OPTIONS)
       if (!options.native) program = program.withNative(false)
-      const input = read(options.input)
       const limits: Limits = { ...Limits.default(), max_output_bytes: options.maxOutputBytes }
-      execute(program, input, options.render, limits)
+      // A renderer the program cannot take is refused before the input is
+      // read, so the refusal never waits on standard input or drains a
+      // large file to say so.
+      const metrics = new Metrics()
+      const sink = program.sink(new FdWriter(1), options.render, limits, metrics)
+      const input = read(options.input)
+      execute(program, sink, metrics, input, limits)
       return ''
     }
     default:

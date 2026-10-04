@@ -11,6 +11,11 @@ fn binary() -> PathBuf {
 }
 
 fn run(args: &[&str], stdin: Option<&str>) -> Output {
+    run_bytes(args, stdin.map(str::as_bytes))
+}
+
+/// `run` with standard input as bytes, which need not be UTF-8.
+fn run_bytes(args: &[&str], stdin: Option<&[u8]>) -> Output {
     let mut child = Command::new(binary())
         .args(args)
         .stdin(if stdin.is_some() {
@@ -26,12 +31,7 @@ fn run(args: &[&str], stdin: Option<&str>) -> Output {
         // A command refused before standard input is read may have exited
         // already, closing the pipe: that is the behaviour under test, not
         // a failure to write.
-        if let Err(error) = child
-            .stdin
-            .take()
-            .expect("a piped stdin")
-            .write_all(text.as_bytes())
-        {
+        if let Err(error) = child.stdin.take().expect("a piped stdin").write_all(text) {
             assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe, "{error}");
         }
     }
@@ -318,6 +318,26 @@ fn run_renders_a_table_result_as_csv_or_json() {
         "{}",
         stderr(&output)
     );
+    // Before the input is read: an input that cannot be read is never
+    // reached, so the refusal is the renderer's, not `cannot read`.
+    let text = text.to_str().expect("a utf-8 path");
+    for (file, render, prefix) in [
+        (echo, "csv", "protocol_mismatch: "),
+        (text, "json", "render_of_text: "),
+    ] {
+        let output = run(
+            &["run", "--render", render, file, "/nonexistent/input.json"],
+            None,
+        );
+        assert_eq!(output.status.code(), Some(2), "{prefix}");
+        assert!(
+            fail_json(&output)["message"]
+                .as_str()
+                .is_some_and(|m| m.starts_with(prefix)),
+            "{}",
+            stderr(&output)
+        );
+    }
 }
 
 /// The statuses follow the code: 1 for an input or protocol failure, 5
@@ -463,6 +483,23 @@ fn usage_errors_and_unreadable_files_exit_2() {
     let fail = fail_json(&output);
     assert_eq!(fail["code"], "INPUT_INVALID");
     assert_eq!(stdout(&output), "");
+
+    // Malformed UTF-8 cannot be read, from a file or from standard input,
+    // as in the TypeScript bin and the Go command.
+    let bad = std::env::temp_dir().join(format!("alchemy-cli-{}-bad.alc", std::process::id()));
+    std::fs::write(&bad, b"def export [input] \xff\n").expect("the file is written");
+    let bad = bad.to_str().expect("a utf-8 path");
+    for (file, stdin) in [(bad, None), ("-", Some(&b"\xff"[..]))] {
+        let output = run_bytes(&["canon", file], stdin);
+        assert_eq!(output.status.code(), Some(2), "{file}");
+        let fail = fail_json(&output);
+        assert_eq!(fail["code"], "INPUT_INVALID", "{file}");
+        assert_eq!(
+            fail["message"],
+            format!("cannot read {file}: stream did not contain valid UTF-8")
+        );
+        assert_eq!(stdout(&output), "", "{file}");
+    }
 }
 
 /// A program inside the nesting bound checks, runs and explains in a

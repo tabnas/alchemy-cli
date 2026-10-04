@@ -43,7 +43,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use tabnas_alchemy::{canonical, format, parse_file, Program, Renderer};
-use tabnas_transduce::{Code, Fail, Limits, Metrics, ParserSource, Prune, SourceMode};
+use tabnas_transduce::{Code, Fail, Limits, Metrics, ParserSource, Prune, Sink, SourceMode};
 
 const USAGE: &str = "usage: alchemy canon|format|check|explain FILE\n       alchemy run [--render csv|json] [--no-native] [--max-output-bytes N] PROGRAM INPUT\n       (a FILE may be - for standard input)";
 
@@ -187,12 +187,22 @@ fn run(args: &[String]) -> Result<String, Exit> {
             if !options.native {
                 program = program.with_native(false)?;
             }
-            let input = read(&options.input)?;
             let limits = Limits {
                 max_output_bytes: options.max_output_bytes,
                 ..Limits::default()
             };
-            execute(&program, &input, options.render, limits)?;
+            // A renderer the program cannot take is refused before the
+            // input is read, so the refusal never waits on standard input
+            // or drains a large file to say so.
+            let metrics = Metrics::new();
+            let sink = program.sink(
+                Box::new(io::stdout()),
+                options.render,
+                &limits,
+                metrics.clone(),
+            )?;
+            let input = read(&options.input)?;
+            execute(&program, sink, metrics, &input, limits)?;
             Ok(String::new())
         }
         _ => Err(usage()),
@@ -264,15 +274,15 @@ impl RunOptions {
     }
 }
 
-/// Run the program over one JSON document, writing to standard output.
+/// Run the program over one JSON document, into the sink that writes its
+/// output.
 fn execute(
     program: &Program,
+    sink: Box<dyn Sink + Send>,
+    metrics: Arc<Metrics>,
     input: &str,
-    render: Option<Renderer>,
     limits: Limits,
 ) -> Result<(), Fail> {
-    let metrics = Metrics::new();
-    let sink = program.sink(Box::new(io::stdout()), render, &limits, metrics.clone())?;
     let prune = match program.row_selector() {
         Some(selector) => Prune::Under(selector.clone()),
         None => Prune::Never,

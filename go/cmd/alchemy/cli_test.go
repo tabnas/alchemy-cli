@@ -271,6 +271,17 @@ func TestRunRefusesARendererBeforeReading(t *testing.T) {
 	if o.status != 2 || !strings.HasPrefix(failJSON(t, o)["message"].(string), "render_of_text: ") {
 		t.Errorf("%+v", o)
 	}
+	// Before the input is read: an input that cannot be read is never
+	// reached, so the refusal is the renderer's, not `cannot read`.
+	for _, c := range []struct{ file, render, prefix string }{
+		{echo, "csv", "protocol_mismatch: "},
+		{own, "json", "render_of_text: "},
+	} {
+		o = invoke(t, []string{"run", "--render", c.render, c.file, "/nonexistent/input.json"}, nil)
+		if o.status != 2 || !strings.HasPrefix(failJSON(t, o)["message"].(string), c.prefix) {
+			t.Errorf("%s: %+v", c.prefix, o)
+		}
+	}
 }
 
 // The statuses follow the code: 1 for an input or protocol failure, 5 for
@@ -373,6 +384,19 @@ func TestUsageErrorsAndUnreadableFilesExit2(t *testing.T) {
 	o = invoke(t, []string{"canon", "/nonexistent/program.alc"}, nil)
 	if o.status != 2 || failJSON(t, o)["code"] != "INPUT_INVALID" || o.stdout != "" {
 		t.Errorf("%+v", o)
+	}
+	// Malformed UTF-8 cannot be read, from a file or from standard input,
+	// as in the Rust binary and the TypeScript bin.
+	bad := tempFile(t, "bad.alc", "def export [input] \xff\n")
+	for _, c := range []struct {
+		file  string
+		stdin *string
+	}{{bad, nil}, {"-", text("\xff")}} {
+		o = invoke(t, []string{"canon", c.file}, c.stdin)
+		f := failJSON(t, o)
+		if o.status != 2 || f["code"] != "INPUT_INVALID" || f["message"] != "cannot read "+c.file+": stream did not contain valid UTF-8" || o.stdout != "" {
+			t.Errorf("%s: %+v", c.file, o)
+		}
 	}
 }
 
@@ -505,6 +529,13 @@ func TestRunRefusesWithoutTheIncrementalAdapter(t *testing.T) {
 	o := invoke(t, []string{"run", echo, "-"}, text(`{"a":[1.50,1e2],"a":2}`))
 	f := failJSON(t, o)
 	if o.status != 2 || o.stdout != "" || f["code"] != "STREAMABILITY_UNKNOWN" || f["output"] != "none" || !strings.Contains(f["message"].(string), "tabnas_nodecell") {
+		t.Errorf("%d %q %v", o.status, o.stdout, f)
+	}
+	// Before the document is read: an input that cannot be read is never
+	// reached, so the refusal is still the source's, not `cannot read`.
+	o = invoke(t, []string{"run", echo, "/nonexistent/input.json"}, nil)
+	f = failJSON(t, o)
+	if o.status != 2 || o.stdout != "" || f["code"] != "STREAMABILITY_UNKNOWN" || !strings.Contains(f["message"].(string), "tabnas_nodecell") {
 		t.Errorf("%d %q %v", o.status, o.stdout, f)
 	}
 }

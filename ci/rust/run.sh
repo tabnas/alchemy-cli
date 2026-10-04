@@ -10,6 +10,8 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
+# shellcheck source=../phase.sh
+source "$ROOT/ci/phase.sh"
 
 # Every sibling any crate in the graph takes by path: alchemy, transduce
 # and render, the JSON grammar, the engine, and csv and jsonic, which
@@ -86,16 +88,12 @@ trap 'if [ -f "$LOCK_BEFORE" ] && ! cmp -s "$LOCK_BEFORE" Cargo.lock; then cp "$
 # Not `--locked`: the siblings resolve from checkouts of main, and their
 # versions move under this lock. Not `--all` on fmt: that reaches into the
 # sibling checkouts.
-echo "gate: fmt"
-"${CARGO[@]}" fmt --check
-echo "gate: build"
-"${CARGO[@]}" build --all-targets
-echo "gate: test"
-"${CARGO[@]}" test --all-targets
+phase "gate: fmt" "${CARGO[@]}" fmt --check
+phase "gate: build" "${CARGO[@]}" build --all-targets
+phase "gate: test" "${CARGO[@]}" test --all-targets
 # No `test --doc`: the crate is a binary with no library target, which
 # cargo refuses to doc-test.
-echo "gate: clippy"
-"${CARGO[@]}" clippy --all-targets --all-features -- -D warnings
+phase "gate: clippy" "${CARGO[@]}" clippy --all-targets --all-features -- -D warnings
 
 if ! diff -q <(lock_without_sibling_versions "$LOCK_BEFORE") \
              <(lock_without_sibling_versions Cargo.lock) >/dev/null; then

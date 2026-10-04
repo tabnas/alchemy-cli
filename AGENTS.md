@@ -94,6 +94,8 @@ that one alone.
 | `go/` | `github.com/tabnas/alchemy-cli/go`: the `alchemy` command and its tests |
 | `rs/` | `tabnas-alchemy-cli`: the `alchemy` binary and its tests |
 | `ci/rust/run.sh` | the Rust gate `.github/workflows/rust.yml` runs |
+| `ci/polyglot/run.sh` | the TypeScript and Go gate the same workflow runs |
+| `ci/phase.sh` | `phase`, which both gates run each step through: a line every 25 seconds while it runs |
 
 ## Build and test
 
@@ -106,4 +108,11 @@ CI workflows name the list.
   `go.work` outside the repositories when the siblings carry unreleased
   changes.
 - Rust: `ci/rust/run.sh`, which runs `cargo fmt --check`, the build, the
-  tests and clippy with `--locked`.
+  tests and clippy, then compares `rs/Cargo.lock` with what it was before:
+  the gate fails if cargo rewrote anything but the versions of the sibling
+  crates, which move with the checkouts. That comparison is why the gate
+  does not pass `--locked`, as alchemy's, transduce's and render's gates
+  do not.
+- TypeScript and Go together: `ci/polyglot/run.sh`, which builds the
+  TypeScript siblings in order and runs this package's suite, then the Go
+  suite plain and with `-tags tabnas_nodecell`, and vet.
