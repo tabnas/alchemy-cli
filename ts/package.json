@@ -1,0 +1,60 @@
+{
+  "name": "@tabnas/alchemy-cli",
+  "version": "0.1.0",
+  "main": "dist/cli.js",
+  "type": "commonjs",
+  "types": "dist/cli.d.ts",
+  "description": "The alchemy command: check, explain and run alchemy programs over JSON with the tabnas transducers and renderers.",
+  "homepage": "https://tabnas.dev",
+  "keywords": [
+    "parser",
+    "dsl",
+    "streaming",
+    "transducer",
+    "cli"
+  ],
+  "author": "Richard Rodger (http://richardrodger.com)",
+  "license": "MIT",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "tsc --build src && tsc --build test",
+    "watch": "tsc --build src test -w",
+    "clean": "rm -rf node_modules dist dist-test package-lock.json",
+    "reset": "npm run clean && npm i && npm run build && npm test",
+    "test": "npm run build && node --enable-source-maps --test \"dist-test/*.test.js\""
+  },
+  "files": [
+    "dist",
+    "src",
+    "bin",
+    "README.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": "./dist/cli.js"
+  },
+  "bin": {
+    "alchemy": "bin/alchemy"
+  },
+  "peerDependencies": {
+    "@tabnas/alchemy": ">=0",
+    "@tabnas/json": ">=0",
+    "@tabnas/render": ">=0",
+    "@tabnas/transduce": ">=0"
+  },
+  "devDependencies": {
+    "@tabnas/alchemy": "*",
+    "@tabnas/json": "*",
+    "@tabnas/render": "*",
+    "@tabnas/transduce": "*",
+    "@types/node": "26.x",
+    "typescript": "7.x"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/tabnas/alchemy-cli.git",
+    "directory": "ts"
+  }
+}

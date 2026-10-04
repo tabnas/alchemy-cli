@@ -1,0 +1,29 @@
+# @tabnas/alchemy-cli
+
+The `alchemy` command for [alchemy](https://github.com/tabnas/alchemy), the
+small transformation language for streaming structured data through the
+tabnas parser and transducer stack.
+
+```sh
+npm install -g @tabnas/alchemy-cli
+```
+
+```
+alchemy canon FILE       print the program in canonical form
+alchemy format FILE      print the program in layout form
+alchemy check FILE       parse, desugar, resolve, check and build the plan
+alchemy explain FILE     print the plan report
+alchemy run [--render csv|json] [--no-native] [--max-output-bytes N] PROGRAM INPUT
+                         run the program over the JSON document INPUT
+```
+
+A `FILE`, `PROGRAM` or `INPUT` may be `-` for standard input. A failure is
+one JSON object on standard error, and the exit status follows its code;
+`src/cli.ts` documents both.
+
+The command composes `@tabnas/alchemy` with the stages it compiles onto:
+`@tabnas/transduce`'s `routers` and `@tabnas/render`'s `renderers`, passed
+to alchemy's `compile`, and it reads `INPUT` with `@tabnas/json`.
+
+This package includes its TypeScript sources under `src/` alongside the
+compiled JavaScript and declarations under `dist/`.

@@ -1,0 +1,72 @@
+# CI caller: the org-standard polyglot workflow for the ts/ and go/
+# trees. rust.yml runs the Rust gate (ci/rust/run.sh) separately.
+name: ci
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  # deps names every tabnas repository the ts/ and go/ trees depend on,
+  # dependency first: the grammars, then alchemy, then transduce and render,
+  # which build on alchemy's shared types.
+  ci:
+    uses: tabnas/.github/.github/workflows/polyglot-ci.yml@main
+    with:
+      deps: "parser json jsonic csv alchemy transduce render"
+
+  # The shared workflow runs `go test ./...` with no build tags. `alchemy
+  # run` reads its document through transduce's incremental source, which
+  # that module builds only under the `tabnas_nodecell` build tag; without
+  # it the run tests skip. This job runs the suite once more with the tag,
+  # as alchemy's own ci.yml does.
+  go-nodecell:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          path: alchemy-cli
+
+      # cache: false, as in support's job: setup-go looks for go.mod in
+      # $GITHUB_WORKSPACE, non-recursively, and the checkout is one level
+      # down, so the cache step would warn on every run.
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version: "1.24"
+          cache: false
+
+      # The same siblings the shared go job clones (the deps input above).
+      - name: Clone tabnas dependencies
+        shell: bash
+        run: |
+          set -e
+          for dep in parser json jsonic csv alchemy transduce render; do
+            git clone --depth 1 "https://github.com/tabnas/$dep.git" "$dep"
+          done
+
+      # Mirrors the shared workflow's go job: a workspace over every module
+      # in the tree, so the suite runs against sibling source.
+      - name: Set up go workspace
+        shell: bash
+        run: |
+          set -e
+          go work init
+          for gm in $(find . -name go.mod -not -path '*/vendor/*' -not -path '*/node_modules/*'); do
+            go work use "$(dirname "$gm")"
+          done
+
+      - name: Build with the tag
+        working-directory: alchemy-cli/go
+        run: go build -tags tabnas_nodecell ./...
+
+      - name: Vet and test with the tag
+        working-directory: alchemy-cli/go
+        run: |
+          go vet -tags tabnas_nodecell ./...
+          go test -tags tabnas_nodecell -v ./...
