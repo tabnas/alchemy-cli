@@ -60,6 +60,13 @@ import (
 	tt "github.com/tabnas/transduce/go"
 )
 
+// VERSION is this module's version. It MUST equal ts/package.json
+// "version": admin/publish.sh rewrites both, and
+// TestVersionMatchesPackageJSON fails the build if they drift. Keep it the
+// only `^const VERSION =` in the module, which is how the orchestrator
+// finds it.
+const VERSION = "0.1.0"
+
 const usage = "usage: alchemy canon|format|check|explain FILE\n       alchemy run [--render csv|json] [--no-native] [--max-output-bytes N] PROGRAM INPUT\n       (a FILE may be - for standard input)"
 
 func main() {

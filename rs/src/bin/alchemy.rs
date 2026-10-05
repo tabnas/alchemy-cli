@@ -45,6 +45,11 @@ use std::sync::Arc;
 use tabnas_alchemy::{canonical, format, parse_file, Program, Renderer};
 use tabnas_transduce::{Code, Fail, Limits, Metrics, ParserSource, Prune, Sink, SourceMode};
 
+/// This crate's version, read from `rs/Cargo.toml`. It MUST equal
+/// `ts/package.json` "version": admin/publish.sh rewrites both, and
+/// `rs/tests/version_test.rs` fails the build if they drift.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 const USAGE: &str = "usage: alchemy canon|format|check|explain FILE\n       alchemy run [--render csv|json] [--no-native] [--max-output-bytes N] PROGRAM INPUT\n       (a FILE may be - for standard input)";
 
 fn main() -> ExitCode {

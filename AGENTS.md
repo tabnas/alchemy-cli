@@ -116,3 +116,25 @@ CI workflows name the list.
 - TypeScript and Go together: `ci/polyglot/run.sh`, which builds the
   TypeScript siblings in order and runs this package's suite, then the Go
   suite plain and with `-tags tabnas_nodecell`, and vet.
+
+## Releasing
+
+`.tabnas-kind` says `TOOL`, so the release workflows publish (admin
+ADR-20). A release is two steps, and a session's credentials cannot push
+tags, so neither step pushes one:
+
+1. **A reviewed bump PR** that moves every version site together:
+   `ts/package.json`, `VERSION` in `ts/src/cli.ts` and in
+   `go/cmd/alchemy/main.go`, and `version` in `rs/Cargo.toml` with the
+   root `tabnas-alchemy-cli` entry of `rs/Cargo.lock` (the binary's
+   `VERSION` reads it). `ts/test/version.test.ts`,
+   `go/cmd/alchemy/version_test.go` and `rs/tests/version_test.rs` fail
+   when they disagree.
+2. **Dispatch `release.yml` on `main`** with `go` true, once `main` CI is
+   green on the bump commit. It publishes npm over OIDC, writes the
+   `ts/v` and `go/v` tags, makes the GitHub Release on the `go/v` tag, and
+   publishes the crate through `crates-release.yml`. Both trusted
+   publishers name `release.yml`.
+
+alchemy, transduce and render are released before this package (admin
+`publish.sh` ORDER), since the build resolves them from the registry.
