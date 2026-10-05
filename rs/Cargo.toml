@@ -1,0 +1,35 @@
+[package]
+name = "tabnas-alchemy-cli"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+authors = ["Richard Rodger <http://richardrodger.com>"]
+description = "The alchemy command: runs programs in the alchemy streaming language over JSON documents, composing tabnas-alchemy, tabnas-transduce and tabnas-render."
+license = "MIT"
+homepage = "https://tabnas.dev"
+repository = "https://github.com/tabnas/alchemy-cli"
+readme = "README.md"
+include = ["src/**", "README.md", "LICENSE"]
+keywords = ["dsl", "streaming", "transducer", "cli", "tabnas"]
+categories = ["command-line-utilities", "parsing"]
+
+# `alchemy canon | format | check | explain | run`, moved here from
+# tabnas-alchemy: the one place the language, the routers and the
+# renderers meet.
+[[bin]]
+name = "alchemy"
+path = "src/bin/alchemy.rs"
+
+[dependencies]
+# Sibling checkouts, the standard tabnas development model: the language
+# and its shared types, the routers (and the parser source `run` reads its
+# input through), the renderers, and the JSON grammar `run` parses its
+# input with.
+tabnas-alchemy = { path = "../../alchemy/rs" }
+tabnas-transduce = { path = "../../transduce/rs" }
+tabnas-render = { path = "../../render/rs" }
+tabnas-json = { path = "../../json/rs" }
+
+[dev-dependencies]
+# The failures the binary prints on standard error, read back as JSON.
+serde_json = { version = "1.0", features = ["preserve_order"] }

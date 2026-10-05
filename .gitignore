@@ -1,0 +1,20 @@
+# TypeScript (ts/)
+node_modules/
+dist/
+dist-test/
+package-lock.json
+*.tsbuildinfo
+*.tgz
+
+# Go (go/): local workspaces and built binaries
+go.work
+go.work.sum
+/go/alchemy
+/go/alchemy.exe
+/go/cmd/alchemy/alchemy
+/go/cmd/alchemy/alchemy.exe
+
+# Rust (rs/): Cargo's build output (Cargo.lock IS committed)
+target/
+
+.DS_Store
