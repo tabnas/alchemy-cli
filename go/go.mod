@@ -4,14 +4,13 @@ go 1.24.7
 
 // The language, the stages its programs run on (transduce's routers and
 // render's renderers), and the JSON grammar `run` reads its document with.
-// The shared types are in no release of alchemy yet, nor are the Routers
-// and Renderers that transduce and render build on them: a go.work over
-// the sibling checkouts resolves all three until their releases do.
+// The shared types, and the Routers and Renderers that transduce and
+// render build on them, are in all three from v0.2.0.
 require (
-	github.com/tabnas/alchemy/go v0.1.3
+	github.com/tabnas/alchemy/go v0.2.0
 	github.com/tabnas/json/go v0.5.13
-	github.com/tabnas/render/go v0.1.2
-	github.com/tabnas/transduce/go v0.1.2
+	github.com/tabnas/render/go v0.2.0
+	github.com/tabnas/transduce/go v0.2.0
 )
 
 require (
