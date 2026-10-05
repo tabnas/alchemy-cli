@@ -60,6 +60,12 @@ import type { Sink } from '@tabnas/transduce'
 
 // What every program is compiled with: transduce's routers and render's
 // renderers, the stages alchemy builds a run from.
+// VERSION is this package's version. It MUST equal package.json "version":
+// admin/publish.sh rewrites both, and test/version.test.ts fails the build
+// if they drift. Mirrors `const VERSION` in go/cmd/alchemy/main.go and
+// `VERSION` in rs/src/bin/alchemy.rs.
+export const VERSION = '0.1.0'
+
 const OPTIONS: CompileOptions = { routers, renderers }
 
 const USAGE =
