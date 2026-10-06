@@ -203,7 +203,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-parser"
-version = "0.12.9"
+version = "0.12.10"
 dependencies = [
  "indexmap",
  "regex",
@@ -216,15 +216,12 @@ name = "tabnas-render"
 version = "0.2.0"
 dependencies = [
  "tabnas-alchemy",
- "tabnas-parser",
 ]
 
 [[package]]
 name = "tabnas-transduce"
 version = "0.2.0"
 dependencies = [
- "indexmap",
- "serde_json",
  "tabnas-alchemy",
  "tabnas-csv",
  "tabnas-json",
