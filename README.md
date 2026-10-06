@@ -35,6 +35,21 @@ reference, [`docs/language.md`](https://github.com/tabnas/alchemy/blob/main/docs
 in alchemy, describes each command, the `run` options and the exit
 statuses.
 
+## Install
+
+Each runtime installs a command named `alchemy`:
+
+| Runtime | Install |
+|---|---|
+| TypeScript (Node 24 or later) | `npm install -g @tabnas/alchemy-cli` |
+| Go | `go install -tags tabnas_nodecell github.com/tabnas/alchemy-cli/go/cmd/alchemy@latest` |
+| Rust (1.85 or later) | `cargo install tabnas-alchemy-cli` |
+
+The Go command needs the `tabnas_nodecell` build tag: `run` reads its
+document through transduce's incremental source, which builds only with
+it, and a build without it refuses `run` with `STREAMABILITY_UNKNOWN`
+before reading the document.
+
 ## Layout
 
 | Path | What it is |

@@ -18,7 +18,9 @@ alchemy run [--render csv|json] [--no-native] [--max-output-bytes N] PROGRAM INP
                          run the program over the JSON document INPUT
 ```
 
-alchemy, transduce, render and the JSON grammar are sibling checkouts
+Install it from crates.io with `cargo install tabnas-alchemy-cli`.
+
+To develop it: alchemy, transduce, render and the JSON grammar are sibling checkouts
 named by path in `Cargo.toml`. From this directory: `cargo build`,
 `cargo test --all-targets` (`tests/cli_test.rs` runs the built binary as
 a script runs it), and
