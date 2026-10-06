@@ -41,12 +41,14 @@
   "peerDependencies": {
     "@tabnas/alchemy": ">=0",
     "@tabnas/json": ">=0",
+    "@tabnas/parser": ">=0",
     "@tabnas/render": ">=0",
     "@tabnas/transduce": ">=0"
   },
   "devDependencies": {
     "@tabnas/alchemy": "*",
     "@tabnas/json": "*",
+    "@tabnas/parser": "*",
     "@tabnas/render": "*",
     "@tabnas/transduce": "*",
     "@types/node": "26.x",
