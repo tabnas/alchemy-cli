@@ -16,5 +16,5 @@ require (
 require (
 	github.com/tabnas/csv/go v0.6.2 // indirect
 	github.com/tabnas/jsonic/go v0.7.4 // indirect
-	github.com/tabnas/parser/go v0.12.9 // indirect
+	github.com/tabnas/parser/go v0.12.10 // indirect
 )
