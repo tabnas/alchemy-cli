@@ -99,9 +99,16 @@ that one alone.
 
 ## Build and test
 
-Every runtime builds against sibling checkouts of alchemy, transduce,
-render and the grammars they use, cloned next to this repository; the
-CI workflows name the list.
+The Rust crate builds against sibling checkouts of alchemy, transduce,
+render and the grammars they use, cloned next to this repository:
+`rs/Cargo.toml` takes them by path, and `ci/rust/run.sh` lists every one
+the graph needs. They are all on crates.io, but the committed manifest
+stays path-only. TypeScript and Go install the published packages
+instead: `npm install` takes the `@tabnas/*` devDependencies from the npm
+registry, and `go/go.mod` requires released versions from the module
+proxy. Sibling checkouts are optional for those two: `ci/polyglot/run.sh`
+links them over the registry copies, and admin's `scripts/link.sh` does
+the same locally. The CI workflows name the list.
 
 - TypeScript, from `ts/`: `npm install`, then `npm test`.
 - Go, from `go/`: `gofmt -l .`, `go vet ./...`, `go test ./...`, with a

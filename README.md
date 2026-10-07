@@ -60,8 +60,10 @@ before reading the document.
 
 ## Build and test
 
-See [`AGENTS.md`](AGENTS.md). Each runtime builds against sibling
-checkouts of alchemy, transduce, render and the grammars they use.
+See [`AGENTS.md`](AGENTS.md). The Rust crate builds against sibling
+checkouts of alchemy, transduce, render and the grammars they use;
+TypeScript and Go install the published packages, and sibling checkouts
+are optional there.
 
 ## License
 
