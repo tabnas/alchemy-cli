@@ -8,13 +8,13 @@ go 1.24.7
 // render build on them, are in all three from v0.2.0.
 require (
 	github.com/tabnas/alchemy/go v0.2.1
-	github.com/tabnas/json/go v0.5.14
+	github.com/tabnas/json/go v0.5.15
 	github.com/tabnas/render/go v0.2.1
-	github.com/tabnas/transduce/go v0.2.1
+	github.com/tabnas/transduce/go v0.2.2
 )
 
 require (
-	github.com/tabnas/csv/go v0.6.3 // indirect
-	github.com/tabnas/jsonic/go v0.7.5 // indirect
+	github.com/tabnas/csv/go v0.6.4 // indirect
+	github.com/tabnas/jsonic/go v0.7.6 // indirect
 	github.com/tabnas/parser/go v0.12.10 // indirect
 )
