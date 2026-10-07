@@ -7,10 +7,10 @@ go 1.24.7
 // The shared types, and the Routers and Renderers that transduce and
 // render build on them, are in all three from v0.2.0.
 require (
-	github.com/tabnas/alchemy/go v0.2.1
+	github.com/tabnas/alchemy/go v0.2.2
 	github.com/tabnas/json/go v0.5.15
-	github.com/tabnas/render/go v0.2.1
-	github.com/tabnas/transduce/go v0.2.2
+	github.com/tabnas/render/go v0.2.2
+	github.com/tabnas/transduce/go v0.2.3
 )
 
 require (

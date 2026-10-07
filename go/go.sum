@@ -1,5 +1,5 @@
-github.com/tabnas/alchemy/go v0.2.1 h1:SNcsDLCnZlwxowCDckRhQpU9i3KZfP210zhz21eWkrA=
-github.com/tabnas/alchemy/go v0.2.1/go.mod h1:W8PmkbEmd7POsTERCRCgHTn8SUU1+52GNGmCSxVPlG8=
+github.com/tabnas/alchemy/go v0.2.2 h1:1zij1VFAu30TA1QsfuZGPyRr2NfOV3IrYLHiGaBpxao=
+github.com/tabnas/alchemy/go v0.2.2/go.mod h1:lKJ/6zoEqg3I33SgMGJ4oFh20VCBgFQrcHOZucqxWiU=
 github.com/tabnas/csv/go v0.6.4 h1:86p9voQ9detze4WWtovw4JNoLO5uEXTCnB9g0nGZgKs=
 github.com/tabnas/csv/go v0.6.4/go.mod h1:AMXhM9WPvZ5v3ITwLq4h1vBuYjjdSk58K+43od+Qc0w=
 github.com/tabnas/debug/go v0.3.12 h1:RDoMmB5cMrMkyUe4E7NxvD1F6cm/+V+3b2KbCkx3YJw=
@@ -24,14 +24,14 @@ github.com/tabnas/markdown/go v0.7.10 h1:W0rHIleWCp0DtWiTtJUDoXAq/16S1gGbLKoLtwX
 github.com/tabnas/markdown/go v0.7.10/go.mod h1:bQRWkolXQD391tC2HFDNtzAu06qex+aulxAHZOlhqa0=
 github.com/tabnas/parser/go v0.12.10 h1:gfiVRv0+jm4EfKc7v0S79tR3mVULoLSYACHMc7xNNRs=
 github.com/tabnas/parser/go v0.12.10/go.mod h1:WrlfEVyZ1QjEIowWiyEu3K1iHj7wxuPut5zoH9Trehk=
-github.com/tabnas/render/go v0.2.1 h1:TmLlFEd/x9f5OGuDBtRQTujD/68hAzLyiUUqsgnwIrI=
-github.com/tabnas/render/go v0.2.1/go.mod h1:bZqULQrznxuNad+tJI2/elq9hvBrGwSna2nE/H06aMs=
+github.com/tabnas/render/go v0.2.2 h1:qVDpUzjUjkTTz3qF/iDRTv8TL2pqFSBY1XOyTqWKQbA=
+github.com/tabnas/render/go v0.2.2/go.mod h1:U9xNSv8bLvUG+Kh1Yb4qYJckr6dNmGAkS4rSwRwBYmY=
 github.com/tabnas/support/go v0.3.8 h1:TFo5WX0m3yIwk91Xt42/vgFGhT7VIqyDEFVGT+Q+u5g=
 github.com/tabnas/support/go v0.3.8/go.mod h1:q+EGPO8fRFQAYDwRHFH4lafD5l5W/NCdY8vhN9IJOkY=
 github.com/tabnas/toml/go v0.5.14 h1:ClHhCzhF4IJPKPm4XJw5YLDRBs3coqyCLCRBw9fJT48=
 github.com/tabnas/toml/go v0.5.14/go.mod h1:KmcnZVu93WxcGjchz137GWHElujSB4w4OUHSWqeAGeU=
-github.com/tabnas/transduce/go v0.2.2 h1:C1wRoe+vbkuNfKAy9gdGB7bIclFmXTH9WqM/de8kusQ=
-github.com/tabnas/transduce/go v0.2.2/go.mod h1:bQgjK/elIWoLNvZEhPH2GzIGEpRILfeW7CEpH0VHsJQ=
+github.com/tabnas/transduce/go v0.2.3 h1:0/buYPSCYfK99SgQArcmlmGpyYnS3f8xcMydvoZIhcE=
+github.com/tabnas/transduce/go v0.2.3/go.mod h1:8PITQXoO+Tcl6KzdkB9Dslv4Pfm4WifpiiFkctqy+Tc=
 github.com/tabnas/xml/go v0.7.14 h1:nrbPa6CJ5ejmQ8/OuH+R+/HPbrG9L15rGznTkgPdziU=
 github.com/tabnas/xml/go v0.7.14/go.mod h1:+Q7e40AxObUNSZXbmwvp4CxcE/JAaMgJnPfwVE6iRok=
 github.com/tabnas/yaml/go v0.5.21 h1:MSJviDaHC6rB1sh/lZlfZy800AGwetK8tBP2uPOkaQE=
