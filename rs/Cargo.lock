@@ -161,7 +161,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-alchemy-cli"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "serde_json",
  "tabnas-alchemy",
@@ -172,7 +172,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-csv"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "indexmap",
  "serde",
@@ -183,7 +183,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-json"
-version = "0.5.14"
+version = "0.5.15"
 dependencies = [
  "regex",
  "serde_json",
@@ -192,7 +192,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-jsonic"
-version = "0.7.5"
+version = "0.7.6"
 dependencies = [
  "indexmap",
  "regex",
@@ -220,7 +220,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-transduce"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "tabnas-alchemy",
  "tabnas-csv",
