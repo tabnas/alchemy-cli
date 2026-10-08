@@ -4,9 +4,10 @@
 // transduce's tests and benches share (transduce/rs/tests/support/mod.rs,
 // which rs/tests/stdlib_test.rs and rs/tests/run_test.rs include by path,
 // and its TypeScript twin transduce/ts/test/support.ts). A test package
-// holds nothing of another's, so the five generators are spelled here, and
-// `support.test.ts` holds them to the sibling checkout's compiled twin
-// whenever one is built beside this one.
+// holds nothing of another's, so the five generators are spelled here, a
+// copy kept in step by hand. A copy that drifted would change which
+// documents the tests run over, not whether a result is checked: every
+// test that uses them compares two paths over the same document.
 //
 // A record is `{"id":i,"person":{"name":"Person number i"},"account":
 // {"balance":D.CC}}`, the JSON document wraps them under
@@ -15,7 +16,6 @@
 // flattened columns `id,name,balance`, and the YAML variant is the block
 // form of the JSON document.
 
-import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { REPO_ROOT } from './host'
@@ -71,9 +71,3 @@ export const TRANSDUCE = join(REPO_ROOT, '..', 'transduce')
 // transduce's fixture documents: required, as they are for the Rust
 // tests.
 export const FIXTURES = join(TRANSDUCE, 'rs', 'tests', 'fixtures')
-
-// transduce's compiled test support, when its tests have been built.
-export function siblingSupport(): any | undefined {
-  const path = join(TRANSDUCE, 'ts', 'dist-test', 'support.js')
-  return existsSync(path) ? require(path) : undefined
-}
