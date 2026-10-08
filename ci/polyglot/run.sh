@@ -14,8 +14,11 @@ source "$ROOT/ci/phase.sh"
 
 SIBLINGS=$(sed -n 's/^SIBLINGS="\(.*\)"$/\1/p' "$ROOT/ci/rust/run.sh")
 # The engine and the grammars, then alchemy (its build compiles src only),
-# then transduce and render, which build on alchemy's shared types.
-TS_PACKAGES="parser json jsonic csv alchemy transduce render"
+# then transduce and render, which build on alchemy's shared types. Every
+# grammar the tests of alchemy's programs read is here, so TypeScript runs
+# on the same sibling sources the Rust gate and the Go workspace do; ini
+# takes hoover.
+TS_PACKAGES="parser support json jsonic hoover csv ini json5 jsonc jsonl markdown toml xml yaml zon alchemy transduce render"
 
 for package in $TS_PACKAGES; do
   if [[ ! -f "$FLEET_ROOT/$package/ts/package.json" ]]; then

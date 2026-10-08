@@ -8,19 +8,28 @@ on:
   pull_request:
 
 jobs:
-  # deps names every tabnas repository the ts/ and go/ trees depend on,
-  # dependency first: the grammars, then alchemy, then transduce and render,
-  # which build on alchemy's shared types.
+  # deps names the tabnas repositories the ts/ and go/ trees build against
+  # from source, dependency first: the grammars `run` reads with, then
+  # alchemy, then transduce and render, which build on alchemy's shared
+  # types. The other grammars the tests of alchemy's programs read are
+  # test-only and released: TypeScript installs them from the registry and
+  # Go resolves them from go.mod, so cloning and building each from source
+  # here, on every OS, would buy nothing. ci/rust/run.sh lists them for the
+  # Rust gate, which takes every crate by path. debug is here though nothing
+  # in this repository imports it: json's nested test module (go/debugtest)
+  # replaces debug with its sibling checkout, the shared go job's workspace
+  # takes in every module it finds, and jsonic requires debug, so without
+  # the clone the workspace cannot load jsonic's requirements.
   ci:
     uses: tabnas/.github/.github/workflows/polyglot-ci.yml@main
     with:
-      deps: "parser json jsonic csv alchemy transduce render"
+      deps: "parser debug json jsonic csv alchemy transduce render"
 
   # The shared workflow runs `go test ./...` with no build tags. `alchemy
   # run` reads its document through transduce's incremental source, which
   # that module builds only under the `tabnas_nodecell` build tag; without
-  # it the run tests skip. This job runs the suite once more with the tag,
-  # as alchemy's own ci.yml does.
+  # it the run tests skip, and so do go/e2e's tests that read a document.
+  # This job runs the suite once more with the tag.
   go-nodecell:
     strategy:
       fail-fast: false
@@ -46,7 +55,7 @@ jobs:
         shell: bash
         run: |
           set -e
-          for dep in parser json jsonic csv alchemy transduce render; do
+          for dep in parser debug json jsonic csv alchemy transduce render; do
             git clone --depth 1 "https://github.com/tabnas/$dep.git" "$dep"
           done
 

@@ -21,7 +21,9 @@ alchemy run [--render csv|json] [--no-native] [--max-output-bytes N] PROGRAM INP
 Install it from crates.io with `cargo install tabnas-alchemy-cli`.
 
 To develop it: alchemy, transduce, render and the JSON grammar are sibling checkouts
-named by path in `Cargo.toml`. From this directory: `cargo build`,
-`cargo test --all-targets` (`tests/cli_test.rs` runs the built binary as
-a script runs it), and
+named by path in `Cargo.toml`, and so are the fixture runner and the
+grammars the tests of alchemy's programs read; those tests also read
+alchemy's `test/spec/` from its checkout. From this directory:
+`cargo build`, `cargo test --all-targets` (`tests/cli_test.rs` runs the
+built binary as a script runs it), and
 `cargo clippy --all-targets --all-features -- -D warnings`.
