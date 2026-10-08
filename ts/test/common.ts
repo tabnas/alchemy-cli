@@ -1,8 +1,9 @@
 /* Copyright (c) 2026 tabnas, MIT License */
 
-// What the command's tests share with alchemy's own (alchemy's
-// test/common.ts, where these are defined first): the spec's worked
-// example, its expected CSV and the spec's program.
+// What the command's tests and the alchemy tests that run programs (moved
+// here from alchemy; ./host.ts holds their helpers) share: the spec's
+// worked example, its expected CSV and the spec's program. alchemy's
+// ts/test/common.ts keeps the program for its own compile-only tests.
 
 // The spec's worked example, byte for byte as aless's fixture has it
 // (329 bytes; the metadata before the rows; Bob's members in another

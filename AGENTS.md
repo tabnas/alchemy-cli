@@ -90,12 +90,34 @@ that one alone.
 
 | Path | What it is |
 |---|---|
-| `ts/` | `@tabnas/alchemy-cli`: the `alchemy` bin and its tests |
+| `ts/` | `@tabnas/alchemy-cli`: the `alchemy` bin and its tests, and the tests of alchemy's programs (`ts/test/host.ts` composes the three components for them) |
 | `go/` | `github.com/tabnas/alchemy-cli/go`: the `alchemy` command and its tests |
-| `rs/` | `tabnas-alchemy-cli`: the `alchemy` binary and its tests |
+| `go/e2e/` | the tests of alchemy's programs in Go: test files only, alchemy's exported API composed with transduce and render |
+| `rs/` | `tabnas-alchemy-cli`: the `alchemy` binary and its tests, and the tests of alchemy's programs (`rs/tests/common/` composes the three) |
 | `ci/rust/run.sh` | the Rust gate `.github/workflows/rust.yml` runs |
 | `ci/polyglot/run.sh` | the TypeScript and Go gate the same workflow runs |
 | `ci/phase.sh` | `phase`, which both gates run each step through: a line every 25 seconds while it runs |
+
+## The tests of alchemy's programs
+
+alchemy depends on neither transduce nor render (the maintainer's ruling
+of 2026-10-08), so its releases and theirs never leave a requirement a
+release behind. Its tests that run programs need all three, so they are
+here, in every runtime:
+- `run.tsv`, natively and interpreted;
+- the catalogue test over every error row of alchemy's four fixture files;
+- the lowering;
+- events;
+- linked sources;
+- the translation parts;
+- the standard library's differential test.
+
+They read alchemy's `test/spec/` and transduce's `rs/tests/` from the
+sibling checkouts, and fail, naming the path, when either is missing.
+alchemy's `.github/workflows/downstream.yml` runs this repository's two
+gates against each change there, so a change to alchemy meets them before
+it merges. A behaviour of alchemy's that a row can express is pinned in
+alchemy's `test/spec/`, not here.
 
 ## Build and test
 
@@ -106,9 +128,11 @@ the graph needs. They are all on crates.io, but the committed manifest
 stays path-only. TypeScript and Go install the published packages
 instead: `npm install` takes the `@tabnas/*` devDependencies from the npm
 registry, and `go/go.mod` requires released versions from the module
-proxy. Sibling checkouts are optional for those two: `ci/polyglot/run.sh`
-links them over the registry copies, and admin's `scripts/link.sh` does
-the same locally. The CI workflows name the list.
+proxy. For those two, sibling checkouts are optional as code:
+`ci/polyglot/run.sh` links them over the registry copies, and admin's
+`scripts/link.sh` does the same locally. They are not optional as
+fixtures: the tests of alchemy's programs read `../alchemy` and
+`../transduce`, as above. The CI workflows name the list.
 
 - TypeScript, from `ts/`: `npm install`, then `npm test`.
 - Go, from `go/`: `gofmt -l .`, `go vet ./...`, `go test ./...`, with a
