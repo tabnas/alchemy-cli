@@ -1,6 +1,6 @@
 {
   "name": "@tabnas/alchemy-cli",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "main": "dist/cli.js",
   "type": "commonjs",
   "types": "dist/cli.d.ts",
