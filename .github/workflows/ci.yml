@@ -8,14 +8,18 @@ on:
   pull_request:
 
 jobs:
-  # deps names every tabnas repository the ts/ and go/ trees depend on,
-  # dependency first: the grammars (the tests of alchemy's programs read
-  # most of them, and ini takes hoover), then alchemy, then transduce and
-  # render, which build on alchemy's shared types.
+  # deps names the tabnas repositories the ts/ and go/ trees build against
+  # from source, dependency first: the grammars `run` reads with, then
+  # alchemy, then transduce and render, which build on alchemy's shared
+  # types. The other grammars the tests of alchemy's programs read are
+  # test-only and released: TypeScript installs them from the registry and
+  # Go resolves them from go.mod, so cloning and building each from source
+  # here, on every OS, would buy nothing. ci/rust/run.sh lists them for the
+  # Rust gate, which takes every crate by path.
   ci:
     uses: tabnas/.github/.github/workflows/polyglot-ci.yml@main
     with:
-      deps: "parser support json hoover jsonic csv json5 jsonc jsonl markdown toml xml yaml zon ini alchemy transduce render"
+      deps: "parser json jsonic csv alchemy transduce render"
 
   # The shared workflow runs `go test ./...` with no build tags. `alchemy
   # run` reads its document through transduce's incremental source, which
@@ -47,7 +51,7 @@ jobs:
         shell: bash
         run: |
           set -e
-          for dep in parser support json hoover jsonic csv json5 jsonc jsonl markdown toml xml yaml zon ini alchemy transduce render; do
+          for dep in parser json jsonic csv alchemy transduce render; do
             git clone --depth 1 "https://github.com/tabnas/$dep.git" "$dep"
           done
 
