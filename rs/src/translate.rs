@@ -121,19 +121,19 @@ fn packages() -> Vec<(Option<Descriptor>, Reader)> {
             reader!(tabnas_ini),
         ),
         (
-            descriptor!("tabnas-json", tabnas_json),
+            descriptor!("tabnas-json", tabnas_json, embed),
             reader!(tabnas_json),
         ),
         (
-            descriptor!("tabnas-json5", tabnas_json5),
+            descriptor!("tabnas-json5", tabnas_json5, embed),
             reader!(tabnas_json5),
         ),
         (
-            descriptor!("tabnas-jsonc", tabnas_jsonc),
+            descriptor!("tabnas-jsonc", tabnas_jsonc, embed),
             reader!(tabnas_jsonc),
         ),
         (
-            descriptor!("tabnas-jsonic", tabnas_jsonic),
+            descriptor!("tabnas-jsonic", tabnas_jsonic, embed),
             reader!(tabnas_jsonic),
         ),
         (
