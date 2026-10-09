@@ -112,7 +112,10 @@ macro_rules! reader {
 /// Every grammar package this command carries, with its reader.
 fn packages() -> Vec<(Option<Descriptor>, Reader)> {
     vec![
-        (descriptor!("tabnas-csv", tabnas_csv), reader!(tabnas_csv)),
+        (
+            descriptor!("tabnas-csv", tabnas_csv, embed),
+            reader!(tabnas_csv),
+        ),
         (descriptor!("tabnas-ini", tabnas_ini), reader!(tabnas_ini)),
         (
             descriptor!("tabnas-json", tabnas_json),
@@ -131,11 +134,11 @@ fn packages() -> Vec<(Option<Descriptor>, Reader)> {
             reader!(tabnas_jsonic),
         ),
         (
-            descriptor!("tabnas-jsonl", tabnas_jsonl),
+            descriptor!("tabnas-jsonl", tabnas_jsonl, embed),
             reader!(tabnas_jsonl),
         ),
         (
-            descriptor!("tabnas-markdown", tabnas_markdown),
+            descriptor!("tabnas-markdown", tabnas_markdown, embed),
             reader!(tabnas_markdown),
         ),
         (
