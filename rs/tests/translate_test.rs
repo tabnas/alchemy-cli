@@ -343,6 +343,85 @@ fn markdown_cell(text: &str) -> String {
 // The cross product
 // ---------------------------------------------------------------------
 
+/// Whether an INI document read back (`back`) is what INI's conventions
+/// make of `expected`: an object is a section (or the root) and an array
+/// of scalars is `key[]` lines, each read back as itself; a number reads
+/// back as its text, and one that is not finite as its word; a container
+/// INI has no place for (inside an array, an empty array, or under a key
+/// no header can spell) reads back as its compact JSON text, a string;
+/// true, false and null read back as themselves, and a string as itself.
+fn ini_same(expected: &Datum, back: &Datum) -> bool {
+    match (expected, back) {
+        (Datum::Object(e), Datum::Object(b)) => {
+            e.len() == b.len()
+                && e.iter().all(|(k, v)| {
+                    b.get(k)
+                        .or_else(|| b.get(k.trim()))
+                        .is_some_and(|w| ini_same(v, w))
+                })
+        }
+        (Datum::Array(e), Datum::Array(b)) if !e.is_empty() => {
+            e.len() == b.len() && e.iter().zip(b).all(|(x, y)| ini_item(x, y))
+        }
+        (Datum::Number { value, .. }, Datum::String(s)) => number_text_is(*value, s),
+        (container @ (Datum::Object(_) | Datum::Array(_)), Datum::String(s)) => {
+            json_text_is(container, s)
+        }
+        (e, b) => same(e, b),
+    }
+}
+
+/// An array item: a scalar as `ini_same` reads it, a container as its
+/// JSON text.
+fn ini_item(expected: &Datum, back: &Datum) -> bool {
+    match (expected, back) {
+        (container @ (Datum::Object(_) | Datum::Array(_)), Datum::String(s)) => {
+            json_text_is(container, s)
+        }
+        (e, b) => ini_same(e, b),
+    }
+}
+
+/// Whether `text` spells the number `value`: its digits, or the word of
+/// one that is not finite.
+fn number_text_is(value: f64, text: &str) -> bool {
+    match text {
+        "Infinity" => value == f64::INFINITY,
+        "-Infinity" => value == f64::NEG_INFINITY,
+        "NaN" => value.is_nan(),
+        t => t.parse::<f64>().is_ok_and(|n| n == value),
+    }
+}
+
+/// Whether `text` is the compact JSON text of `container`, read back as
+/// JSON and compared as values, a number that is not finite matching
+/// null or its word.
+fn json_text_is(container: &Datum, text: &str) -> bool {
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(text) else {
+        return false;
+    };
+    fn matches(d: &Datum, j: &serde_json::Value) -> bool {
+        use serde_json::Value as J;
+        match (d, j) {
+            (Datum::Null, J::Null) | (Datum::Number { .. }, J::Null) => true,
+            (Datum::Bool(a), J::Bool(b)) => a == b,
+            (Datum::Number { value, .. }, J::Number(n)) => n.as_f64() == Some(*value),
+            (Datum::Number { value, .. }, J::String(s)) => number_text_is(*value, s),
+            (Datum::String(a), J::String(b)) => **a == **b,
+            (Datum::Array(a), J::Array(b)) => {
+                a.len() == b.len() && a.iter().zip(b).all(|(x, y)| matches(x, y))
+            }
+            (Datum::Object(a), J::Object(b)) => {
+                a.len() == b.len()
+                    && a.iter()
+                        .all(|(k, v)| b.get(&**k).is_some_and(|w| matches(v, w)))
+            }
+            _ => false,
+        }
+    }
+    matches(container, &json)
+}
+
 /// ZON's conventions: an empty struct reads back as an empty tuple.
 fn zon_reading(d: &Datum) -> Datum {
     match d {
@@ -412,10 +491,17 @@ fn check(from: &Format, target: &Format, source: &Datum, written: &str) -> Resul
     let expected = match id {
         "csv" => return check_records(source, &back, &|t| t.to_string()),
         "markdown" => return check_records(source, &back, &markdown_cell),
+        "ini" => {
+            let expected = wrap_object(source, &Options::default().key);
+            return if ini_same(&expected, &back) {
+                Ok(())
+            } else {
+                Err(format!("read back as {back}, where {expected} was written"))
+            };
+        }
         "json" | "jsonc" | "jsonic" => map_non_finite(source, &|_| Datum::Null),
         "jsonl" => map_non_finite(&wrap_array(source), &|_| Datum::Null),
         "toml" => without_nulls(&wrap_object(source, &key)),
-        "ini" => wrap_object(source, &key),
         "zon" => zon_reading(source),
         _ => source.clone(),
     };

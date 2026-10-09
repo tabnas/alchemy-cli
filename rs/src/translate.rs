@@ -116,7 +116,10 @@ fn packages() -> Vec<(Option<Descriptor>, Reader)> {
             descriptor!("tabnas-csv", tabnas_csv, embed),
             reader!(tabnas_csv),
         ),
-        (descriptor!("tabnas-ini", tabnas_ini), reader!(tabnas_ini)),
+        (
+            descriptor!("tabnas-ini", tabnas_ini, embed),
+            reader!(tabnas_ini),
+        ),
         (
             descriptor!("tabnas-json", tabnas_json),
             reader!(tabnas_json),
