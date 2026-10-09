@@ -676,15 +676,20 @@ fn an_inferred_binding_agrees_both_ways() {
         r#"[{"a":1},2]"#,
         "\"a\"\r\n\"1\"\r\n\"\"\r\n",
     );
-    err(
+    // A first row of another kind than an object: a scalar is one
+    // `value` column, the row itself; an array's columns are its
+    // positions. A later row projects through the first row's paths, so
+    // an object under positional columns is a missing cell, and under a
+    // `value` column its compact JSON text.
+    ok(
         "a first row that is a scalar",
         r#"[1,{"a":1}]"#,
-        Code::InputInvalid,
+        "\"value\"\r\n\"1\"\r\n\"{\"\"a\"\":1}\"\r\n",
     );
-    err(
+    ok(
         "a first row that is an array",
-        r#"[[1],{"a":1}]"#,
-        Code::InputInvalid,
+        r#"[[1,"x"],{"a":1},[2]]"#,
+        "\"0\",\"1\"\r\n\"1\",\"x\"\r\n\"\",\"\"\r\n\"2\",\"\"\r\n",
     );
     // A table of no columns, from no rows or from an empty first row, is
     // one the CSV renderer refuses, as it refuses any.

@@ -363,8 +363,13 @@ func TestAnInferredBindingAgreesBothWays(t *testing.T) {
 		"\"s\",\"n\",\"t\",\"z\",\"o\"\r\n\"q\"\"x\",\"1.5\",\"true\",\"\",\"{\"\"k\"\":[1,2]}\"\r\n")
 	ok("a key that spells an index names a member", `[{"0":"zero","1":"one"}]`, "\"0\",\"1\"\r\n\"zero\",\"one\"\r\n")
 	ok("a later row that is not an object has missing cells", `[{"a":1},2]`, "\"a\"\r\n\"1\"\r\n\"\"\r\n")
-	fails("a first row that is a scalar", `[1,{"a":1}]`, CodeInputInvalid)
-	fails("a first row that is an array", `[[1],{"a":1}]`, CodeInputInvalid)
+	// A first row of another kind than an object: a scalar is one `value`
+	// column, the row itself; an array's columns are its positions. A later
+	// row projects through the first row's paths, so an object under
+	// positional columns is a missing cell, and under a `value` column its
+	// compact JSON text.
+	ok("a first row that is a scalar", `[1,{"a":1}]`, "\"value\"\r\n\"1\"\r\n\"{\"\"a\"\":1}\"\r\n")
+	ok("a first row that is an array", `[[1,"x"],{"a":1},[2]]`, "\"0\",\"1\"\r\n\"1\",\"x\"\r\n\"\",\"\"\r\n\"2\",\"\"\r\n")
 	// A table of no columns, from no rows or from an empty first row, is
 	// one the CSV renderer refuses, as it refuses any.
 	fails("no rows", "[]", CodeTargetValueUnrepresentable)
