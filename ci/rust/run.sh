@@ -15,11 +15,12 @@ source "$ROOT/ci/phase.sh"
 
 # Every sibling any crate in the graph takes by path: alchemy, transduce
 # and render, the JSON grammar, the engine, and csv and jsonic, which
-# transduce's line sources take; then this crate's own dev-dependencies,
-# which a test build compiles: the fixture runner and every grammar the
-# tests of alchemy's programs read (ini takes hoover). Those tests also
-# read alchemy's test/spec and transduce's rs/tests from the checkouts.
-SIBLINGS="parser json jsonic csv alchemy transduce render support hoover ini json5 jsonc jsonl markdown toml xml yaml zon"
+# transduce's line sources take; then the other grammars `translate` reads
+# and writes, which the tests of alchemy's programs read too (ini takes
+# hoover); and this crate's own dev-dependency, the fixture runner. The
+# tests also read alchemy's test/spec, transduce's rs/tests and every
+# grammar's test/spec from the checkouts.
+SIBLINGS="parser json jsonic csv alchemy transduce render support hoover ini json5 jsonc jsonl markdown toml xml yaml zon chess css expr feed proto semver"
 
 # TypeScript- and Go-only additions needed by ci/polyglot/run.sh: none.
 TS_SIBLINGS=""
