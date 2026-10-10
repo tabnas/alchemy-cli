@@ -122,6 +122,33 @@ gates against each change there, so a change to alchemy meets them before
 it merges. A behaviour of alchemy's that a row can express is pinned in
 alchemy's `test/spec/`, not here.
 
+## The translation matrix
+
+`translate`'s tests (`rs/tests/translate_test.rs`,
+`ts/test/translate.test.ts`, `go/translate/translate_test.go`) run the
+cross product of their corpus into every format: transduce's fixtures and
+JSONTestSuite's documents in every runtime, and every format's own
+`test/spec/*.tsv` in Rust's release run (`ci/rust/run.sh`). A pair is held
+to what its target declares: written, and read back under the target's
+conventions (its loss list); or refused with the code and the reason its
+parts declare, which the matrix counts: a schema-only target (one that
+writes a schema's tree with no embedding into it: CSS, PGN, proto) refuses
+another format's tree, and Semantic Versioning's embedding refuses a tree
+that is not a version. A pair refused otherwise, or written where a
+refusal is declared, fails.
+
+A format whose reader, as this command reads a document through
+transduce, does not build the tree its parts declare is registered in that
+runtime's test with its defect (`READER_DEFECTS`, `readerDefects`): its
+documents are left out as sources and counted, and a test holds each entry
+to an example, comparing what the command reads with what the format's
+package builds with its own API (for a version past 2^53 - 1, its own
+round trip), so an entry fails once the reader is repaired, and is then
+deleted. Go also pins the order a reader's plain maps are written in
+(`orderDivergent`), which the matrix, comparing values, cannot see. A defect is the package's to repair; never
+register one to make a pair pass without naming it, and never work around
+one here in silence.
+
 ## Build and test
 
 The Rust crate builds against sibling checkouts of alchemy, transduce,

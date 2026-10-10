@@ -29,8 +29,9 @@ The command composes `@tabnas/alchemy` with the stages it compiles onto:
 `@tabnas/transduce`'s `routers` and `@tabnas/render`'s `renderers`, passed
 to alchemy's `compile`, and `run` reads `INPUT` with `@tabnas/json`.
 `translate` reads and writes the formats of the grammar packages it
-carries (`@tabnas/csv`, `ini`, `json`, `json5`, `jsonc`, `jsonic`, `jsonl`,
-`markdown`, `toml`, `xml`, `yaml` and `zon`), composing each pair's route
+carries (`@tabnas/chess`, `css`, `csv`, `expr`, `feed`, `ini`, `json`,
+`json5`, `jsonc`, `jsonic`, `jsonl`, `markdown`, `proto`, `semver`,
+`toml`, `xml`, `yaml` and `zon`), composing each pair's route
 from the translation parts the packages export with alchemy's `translate`;
 `src/translate.ts` documents it.
 
