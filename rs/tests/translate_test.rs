@@ -307,7 +307,8 @@ fn check_records(
             .as_object()
             .ok_or_else(|| format!("row {i} read back as {got}"))?;
         for (label, expected) in labels.iter().zip(row) {
-            let text = match got.get(label.as_str()) {
+            // A label is a header cell, written and read back as any cell.
+            let text = match got.get(cell_text(label).as_str()) {
                 Some(Datum::String(s)) => s.to_string(),
                 Some(Datum::Null) | None => String::new(),
                 Some(other) => other.to_string(),
@@ -331,10 +332,11 @@ fn check_records(
 }
 
 /// Markdown's normalisation of a written cell: a line break is a space,
-/// and the spaces at either end are not kept.
+/// a U+0000 is U+FFFD, and the spaces at either end are not kept.
 fn markdown_cell(text: &str) -> String {
     text.replace("\r\n", " ")
         .replace(['\n', '\r'], " ")
+        .replace('\0', "\u{fffd}")
         .trim()
         .to_string()
 }
@@ -422,15 +424,80 @@ fn json_text_is(container: &Datum, text: &str) -> bool {
     matches(container, &json)
 }
 
-/// ZON's conventions: an empty struct reads back as an empty tuple.
+/// Whether a string spells an integer as ZON's reader writes a big
+/// integer's digits, which is when the render writes a lone `$big` as the
+/// integer itself: a minus sign at most, and first, then `0` or digits
+/// that do not begin with `0`, but not `-0`.
+fn zon_big_digits(s: &str) -> bool {
+    let digits = s.strip_prefix('-').unwrap_or(s);
+    !digits.is_empty()
+        && digits.bytes().all(|b| b.is_ascii_digit())
+        && (digits == "0" || !digits.starts_with('0'))
+        && s != "-0"
+}
+
+/// The integer an object whose only member is `$big` spells, when its
+/// value is a big integer's digits: ZON's render writes that object as
+/// the integer, and its reader builds an integer no double holds exactly
+/// as that object.
+fn zon_big(d: &Datum) -> Option<Datum> {
+    let members = d.as_object().filter(|m| m.len() == 1)?;
+    match members.get("$big") {
+        Some(Datum::String(s)) if zon_big_digits(s) => Some(Datum::Number {
+            value: s.parse().ok()?,
+            lexeme: Some(s.clone()),
+        }),
+        _ => None,
+    }
+}
+
+/// What ZON's conventions make of a value it is given: an empty struct
+/// reads back as an empty tuple, and a lone `$big` holding a big
+/// integer's digits as that integer.
 fn zon_reading(d: &Datum) -> Datum {
     match d {
         Datum::Object(m) if m.is_empty() => Datum::Array(Vec::new()),
+        Datum::Object(_) if zon_big(d).is_some() => zon_big(d).unwrap(),
         Datum::Array(items) => Datum::Array(items.iter().map(zon_reading).collect()),
         Datum::Object(members) => Datum::Object(
             members
                 .iter()
                 .map(|(k, v)| (k.clone(), zon_reading(v)))
+                .collect(),
+        ),
+        d => d.clone(),
+    }
+}
+
+/// A field name as ZON's render wrote it, read back by the declared
+/// reverse of its convention: `$empty` is the empty name; `$$` and a rest
+/// is `$` and the rest; `$json:` and a text is the string the text spells
+/// as a double-quoted JSON string; any other name is as it is.
+fn zon_name(written: &str) -> Box<str> {
+    if written == "$empty" {
+        "".into()
+    } else if let Some(rest) = written.strip_prefix("$$") {
+        format!("${rest}").into()
+    } else if let Some(json) = written.strip_prefix("$json:") {
+        serde_json::from_str::<String>(json)
+            .map(Into::into)
+            .unwrap_or_else(|_| written.into())
+    } else {
+        written.into()
+    }
+}
+
+/// What ZON's reader made of a document its render wrote, as the value it
+/// was: a lone `$big` (the reader's big integer) is the integer, and every
+/// field name reads back by the reverse of the convention that wrote it.
+fn zon_back(d: &Datum) -> Datum {
+    match d {
+        Datum::Object(_) if zon_big(d).is_some() => zon_big(d).unwrap(),
+        Datum::Array(items) => Datum::Array(items.iter().map(zon_back).collect()),
+        Datum::Object(members) => Datum::Object(
+            members
+                .iter()
+                .map(|(k, v)| (zon_name(k), zon_back(v)))
                 .collect(),
         ),
         d => d.clone(),
@@ -505,6 +572,7 @@ fn check(from: &Format, target: &Format, source: &Datum, written: &str) -> Resul
         "zon" => zon_reading(source),
         _ => source.clone(),
     };
+    let back = if id == "zon" { zon_back(&back) } else { back };
     if same(&expected, &back) {
         Ok(())
     } else {
