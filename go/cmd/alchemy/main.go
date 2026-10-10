@@ -9,6 +9,10 @@
 //	alchemy explain FILE     print the plan report
 //	alchemy run [--render csv|json] [--no-native] [--max-output-bytes N] PROGRAM INPUT
 //	                         run the program over the JSON document INPUT
+//	alchemy translate --from FORMAT --to FORMAT [--path PATH] [--key KEY]
+//	                  [--with PROGRAM] [--max-output-bytes N] INPUT
+//	                         write INPUT, read as FORMAT, in another format
+//	alchemy formats          print the formats translate reads and writes, as JSON
 //
 // FILE, PROGRAM and INPUT may be - for standard input (one of them per
 // run). Nothing but the answer goes to standard output. A failure is the
@@ -40,6 +44,19 @@
 // lexemes (1.50 written 1.5), keep one of a repeated member where the
 // stream reports both, and hold the whole document, which is not the run
 // the plan report promises. Build the command with -tags tabnas_nodecell.
+//
+// translate reads INPUT with the grammar of --from and writes it in --to,
+// through the translation parts each format's module exports, as the
+// translate package composes them: any of the formats `alchemy formats`
+// lists into any other. --path takes a JSON array of keys and indexes
+// (["people",0]) and translates that value instead of the document; --key
+// names the member a root is wrapped under for a format whose document must
+// be an object (items by default); --with runs a program over the input
+// first, as run does, and writes its export's events or table in --to.
+// translate reads a document incrementally where its grammar is verified
+// and whole otherwise, so a build without the tag reads every document
+// whole, and writes a number by its value rather than by the lexeme the
+// document spelled it with.
 package main
 
 import (
@@ -52,9 +69,12 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"unicode"
 	"unicode/utf8"
 
+	"github.com/tabnas/alchemy-cli/go/translate"
 	alchemy "github.com/tabnas/alchemy/go"
+	at "github.com/tabnas/alchemy/go/translate"
 	tabnasjson "github.com/tabnas/json/go"
 	tr "github.com/tabnas/render/go"
 	tt "github.com/tabnas/transduce/go"
@@ -67,7 +87,7 @@ import (
 // finds it.
 const VERSION = "0.1.6"
 
-const usage = "usage: alchemy canon|format|check|explain FILE\n       alchemy run [--render csv|json] [--no-native] [--max-output-bytes N] PROGRAM INPUT\n       (a FILE may be - for standard input)"
+const usage = "usage: alchemy canon|format|check|explain FILE\n       alchemy run [--render csv|json] [--no-native] [--max-output-bytes N] PROGRAM INPUT\n       alchemy translate --from FORMAT --to FORMAT [--path PATH] [--key KEY] [--with PROGRAM] [--max-output-bytes N] INPUT\n       alchemy formats\n       (a FILE may be - for standard input)"
 
 func main() {
 	// A write to a closed standard output or standard error fails with an
@@ -254,8 +274,180 @@ func run(args []string, stdin io.Reader, stdout io.Writer) (string, *exit) {
 			return "", fromFail(f)
 		}
 		return "", nil
+	case "translate":
+		options, e := parseTranslateOptions(rest)
+		if e != nil {
+			return "", e
+		}
+		limits := tt.DefaultLimits()
+		limits.MaxOutputBytes = options.maxOutputBytes
+		request := &translate.Request{
+			From:    options.from,
+			To:      options.to,
+			Options: at.DefaultOptions(),
+			Limits:  limits,
+		}
+		if options.key != nil {
+			request.Options.Key = *options.key
+		}
+		if options.path != nil {
+			path, f := translate.ParsePath(*options.path, limits)
+			if f != nil {
+				return "", &exit{fail: f, status: 2}
+			}
+			request.Path = path
+		}
+		if options.program != nil {
+			src, e := read(*options.program, stdin)
+			if e != nil {
+				return "", e
+			}
+			request.Program = &alchemy.Source{File: *options.program, Text: src}
+		}
+		// The composition is compiled before the input is read, so a route
+		// that cannot be composed never waits on standard input.
+		compiled, f := translate.Compile(request)
+		if f != nil {
+			return "", fromFail(f)
+		}
+		input, e := read(options.input, stdin)
+		if e != nil {
+			return "", e
+		}
+		if f := translate.RunCompiled(request, compiled, input, rustIO{stdout}, tt.NewMetrics()); f != nil {
+			return "", fromFail(f)
+		}
+		return "", nil
+	case "formats":
+		if len(rest) != 0 {
+			return "", usageError()
+		}
+		return translate.FormatsJSON() + "\n", nil
 	}
 	return "", usageError()
+}
+
+// rustIO is a writer whose failures read as the Rust binary's I/O errors
+// (ioMessage), for the message that quotes one: `Broken pipe (os error
+// 32)`.
+type rustIO struct{ w io.Writer }
+
+func (r rustIO) Write(p []byte) (int, error) {
+	n, err := r.w.Write(p)
+	if err != nil {
+		return n, errors.New(ioMessage(err))
+	}
+	return n, nil
+}
+
+// debugQuote is s as Rust's Debug writes a str, as the Rust binary's
+// messages quote an argument: in double quotes, with \0, \t, \r, \n, \\
+// and \" escaped, a character that extends a grapheme or is not printable
+// as \u{...} in lowercase hex, and every other character as itself.
+func debugQuote(s string) string {
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, r := range s {
+		switch r {
+		case 0:
+			b.WriteString(`\0`)
+		case '\t':
+			b.WriteString(`\t`)
+		case '\r':
+			b.WriteString(`\r`)
+		case '\n':
+			b.WriteString(`\n`)
+		case '\\':
+			b.WriteString(`\\`)
+		case '"':
+			b.WriteString(`\"`)
+		default:
+			if unicode.In(r, unicode.Mn, unicode.Me, unicode.Other_Grapheme_Extend) || !unicode.IsPrint(r) {
+				fmt.Fprintf(&b, `\u{%x}`, r)
+			} else {
+				b.WriteRune(r)
+			}
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
+}
+
+type translateOptions struct {
+	from, to       *translate.Format
+	path           *string
+	key            *string
+	program        *string
+	maxOutputBytes *uint64
+	input          string
+}
+
+// parseTranslateOptions reads translate's command line as the Rust
+// binary's does: in order, each flag taking the argument after it whatever
+// that is, a later flag replacing an earlier one, and the format --from or
+// --to names looked up where it stands.
+func parseTranslateOptions(args []string) (*translateOptions, *exit) {
+	options := &translateOptions{}
+	named := func(flag, id string) (*translate.Format, *exit) {
+		format := translate.Named(id)
+		if format == nil {
+			return nil, &exit{fail: tt.InputFail(flag + " takes " + translate.Names() + ", not " + debugQuote(id)), status: 2}
+		}
+		return format, nil
+	}
+	var files []string
+	for i := 0; i < len(args); {
+		arg := args[i]
+		switch arg {
+		case "--from", "--to", "--path", "--key", "--with", "--max-output-bytes":
+		default:
+			if strings.HasPrefix(arg, "--") {
+				return nil, usageError()
+			}
+			files = append(files, arg)
+			i++
+			continue
+		}
+		if i+1 >= len(args) {
+			return nil, usageError()
+		}
+		value := args[i+1]
+		switch arg {
+		case "--from":
+			format, e := named(arg, value)
+			if e != nil {
+				return nil, e
+			}
+			options.from = format
+		case "--to":
+			format, e := named(arg, value)
+			if e != nil {
+				return nil, e
+			}
+			options.to = format
+		case "--path":
+			options.path = &value
+		case "--key":
+			options.key = &value
+		case "--with":
+			options.program = &value
+		case "--max-output-bytes":
+			n, ok := parseU64(value)
+			if !ok {
+				return nil, &exit{fail: tt.InputFail("--max-output-bytes takes a number of bytes, not " + debugQuote(value)), status: 2}
+			}
+			options.maxOutputBytes = &n
+		}
+		i += 2
+	}
+	if options.from == nil || options.to == nil || len(files) != 1 {
+		return nil, usageError()
+	}
+	options.input = files[0]
+	if options.program != nil && *options.program == "-" && options.input == "-" {
+		return nil, &exit{fail: tt.InputFail("only one of PROGRAM and INPUT may be - (standard input)"), status: 2}
+	}
+	return options, nil
 }
 
 type runOptions struct {

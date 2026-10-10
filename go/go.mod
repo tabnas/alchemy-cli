@@ -3,34 +3,35 @@ module github.com/tabnas/alchemy-cli/go
 go 1.24.7
 
 // The language, the stages its programs run on (transduce's routers and
-// render's renderers), and the JSON grammar `run` reads its document with.
-// The shared types, and the Routers and Renderers that transduce and
-// render build on them, are in all three from v0.2.0.
+// render's renderers), and the grammars: the JSON one `run` reads its
+// document with, and the twelve `translate` reads and writes, each with
+// its translation parts. The shared types, and the Routers and Renderers
+// that transduce and render build on them, are in all three from v0.2.0.
 require (
-	github.com/tabnas/alchemy/go v0.2.4
-	github.com/tabnas/json/go v0.5.16
+	github.com/tabnas/alchemy/go v0.2.5
+	github.com/tabnas/csv/go v0.6.6
+	github.com/tabnas/ini/go v0.5.18
+	github.com/tabnas/json/go v0.5.17
+	github.com/tabnas/json5/go v0.5.15
+	github.com/tabnas/jsonc/go v0.5.14
+	github.com/tabnas/jsonic/go v0.7.9
+	github.com/tabnas/jsonl/go v0.1.16
+	github.com/tabnas/markdown/go v0.7.12
 	github.com/tabnas/render/go v0.2.4
-	github.com/tabnas/transduce/go v0.2.5
+	github.com/tabnas/toml/go v0.5.16
+	github.com/tabnas/transduce/go v0.2.6
+	github.com/tabnas/xml/go v0.7.16
+	github.com/tabnas/yaml/go v0.5.23
+	github.com/tabnas/zon/go v0.5.16
 )
 
-// What alchemy's end-to-end tests (e2e) read documents with and run
-// fixtures through: the engine, the grammars and the shared fixture
-// runner. They were alchemy's own tests, which ran programs on transduce
-// and render; alchemy depends on neither, so they are here.
+// What alchemy's end-to-end tests (e2e) need besides, as they read
+// documents with the grammars above and run fixtures: the engine and the
+// shared fixture runner. They were alchemy's own tests, which ran programs
+// on transduce and render; alchemy depends on neither, so they are here.
 require (
-	github.com/tabnas/csv/go v0.6.5
-	github.com/tabnas/ini/go v0.5.17
-	github.com/tabnas/json5/go v0.5.14
-	github.com/tabnas/jsonc/go v0.5.13
-	github.com/tabnas/jsonic/go v0.7.8
-	github.com/tabnas/jsonl/go v0.1.15
-	github.com/tabnas/markdown/go v0.7.11
 	github.com/tabnas/parser/go v0.12.11
 	github.com/tabnas/support/go v0.3.9
-	github.com/tabnas/toml/go v0.5.15
-	github.com/tabnas/xml/go v0.7.15
-	github.com/tabnas/yaml/go v0.5.22
-	github.com/tabnas/zon/go v0.5.15
 )
 
 require github.com/tabnas/hoover/go v0.3.14 // indirect

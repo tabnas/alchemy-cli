@@ -64,7 +64,11 @@ Each runtime installs a command named `alchemy`:
 The Go command needs the `tabnas_nodecell` build tag: `run` reads its
 document through transduce's incremental source, which builds only with
 it, and a build without it refuses `run` with `STREAMABILITY_UNKNOWN`
-before reading the document.
+before reading the document. `translate` reads a document whole where
+its grammar is not verified for the incremental source, which in a
+build without the tag is every grammar, so such a build writes each
+number by its value rather than by the lexeme the document spelled it
+with.
 
 ## Layout
 
