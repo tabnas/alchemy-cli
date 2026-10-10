@@ -282,10 +282,22 @@ impl Write for Held {
 pub fn run(
     request: &Request<'_>,
     input: &str,
+    out: Box<dyn Write + Send>,
+    metrics: Arc<Metrics>,
+) -> Result<(), Fail> {
+    run_compiled(request, &compile(request)?, input, out, metrics)
+}
+
+/// [`run`], with the request's composition compiled already
+/// ([`compile`]), so that one compiled composition serves many inputs.
+pub fn run_compiled(
+    request: &Request<'_>,
+    compiled: &(Composition, Program),
+    input: &str,
     mut out: Box<dyn Write + Send>,
     metrics: Arc<Metrics>,
 ) -> Result<(), Fail> {
-    let (composition, program) = compile(request)?;
+    let (composition, program) = compiled;
     let attempt = |mode: SourceMode, metrics: Arc<Metrics>| -> Result<Vec<u8>, Fail> {
         let held = Held::default();
         let sink = program.sink(

@@ -12,11 +12,15 @@
 //! conformance pins). A fixture its own grammar refuses (ZON's repeated
 //! fields) is no document, and is counted as one refused.
 
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
-use tabnas_alchemy::translate::Options;
+use tabnas_alchemy::translate::{Composition, Options};
+use tabnas_alchemy::Program;
 use tabnas_alchemy_cli::translate::{self, Format, Request};
 use tabnas_transduce::{Datum, Fail, Limits, Metrics};
 
@@ -100,8 +104,52 @@ fn corpus() -> Vec<(String, &'static str, String)> {
     docs
 }
 
+/// The formats whose repositories' fixture corpora the matrix reads, by
+/// the id each format's manifest gives it (the repository's name).
+const SPEC_CORPORA: [&str; 12] = [
+    "csv", "ini", "json", "json5", "jsonc", "jsonic", "jsonl", "markdown", "toml", "xml", "yaml",
+    "zon",
+];
+
+/// Every format's own fixture corpus: the input of every row of its
+/// repository's `test/spec/*.tsv`, decoded as the fixture runner decodes
+/// it, once each. A row that sets options of its own (`opts`) is read by
+/// another reader than the format's default, and an error row's input is
+/// one the format refuses, so neither is a document of the format here.
+fn spec_corpus(docs: &mut Vec<(String, &'static str, String)>) {
+    for id in SPEC_CORPORA {
+        let dir = siblings().join(id).join("test/spec");
+        let files = tabnas_support::load_spec_dir(&dir, &tabnas_support::SpecOptions::default())
+            .unwrap_or_else(|e| panic!("{id}: cannot read {}: {e}", dir.display()));
+        let mut seen = HashSet::new();
+        for file in files {
+            if !file.header.iter().any(|column| column == "input") {
+                continue;
+            }
+            for row in &file.rows {
+                if !row.named("opts").trim().is_empty()
+                    || tabnas_support::is_error_expect(row.named("expected"))
+                {
+                    continue;
+                }
+                let input = row.unesc_named("input");
+                if seen.insert(input.clone()) {
+                    docs.push((format!("{id}/{}:{}", file.file, row.line), id, input));
+                }
+            }
+        }
+    }
+}
+
 fn format(id: &str) -> &'static Format {
     translate::format(id).unwrap_or_else(|| panic!("{id} is a format"))
+}
+
+thread_local! {
+    /// The compositions compiled so far, by source, target and program:
+    /// one compiled composition serves every document of a pair.
+    static COMPILED: RefCell<HashMap<(String, String, Option<String>), Rc<(Composition, Program)>>> =
+        RefCell::new(HashMap::new());
 }
 
 /// Translate `text`, read as `from`, into `to`, with `program` in front
@@ -120,8 +168,27 @@ fn translate_text(
         program,
         limits: Limits::default(),
     };
+    let key = (
+        from.id().to_string(),
+        to.id().to_string(),
+        program.map(|(_, text)| text.to_string()),
+    );
+    let compiled = match COMPILED.with(|c| c.borrow().get(&key).cloned()) {
+        Some(compiled) => compiled,
+        None => {
+            let compiled = Rc::new(translate::compile(&request)?);
+            COMPILED.with(|c| c.borrow_mut().insert(key, compiled.clone()));
+            compiled
+        }
+    };
     let out = Buffer::default();
-    translate::run(&request, text, Box::new(out.clone()), Metrics::new())?;
+    translate::run_compiled(
+        &request,
+        &compiled,
+        text,
+        Box::new(out.clone()),
+        Metrics::new(),
+    )?;
     let bytes = out.0.lock().unwrap().clone();
     Ok(String::from_utf8(bytes).expect("a translation writes UTF-8"))
 }
@@ -332,12 +399,14 @@ fn check_records(
 }
 
 /// Markdown's normalisation of a written cell: a line break is a space,
-/// a U+0000 is U+FFFD, and the spaces at either end are not kept.
+/// a U+0000 is U+FFFD, and the whitespace at either end is not kept, as
+/// the reader trims it: what JavaScript's `trim` takes, which is Unicode's
+/// whitespace without U+0085 and with U+FEFF.
 fn markdown_cell(text: &str) -> String {
     text.replace("\r\n", " ")
         .replace(['\n', '\r'], " ")
         .replace('\0', "\u{fffd}")
-        .trim()
+        .trim_matches(|c: char| (c.is_whitespace() && c != '\u{85}') || c == '\u{feff}')
         .to_string()
 }
 
@@ -580,15 +649,37 @@ fn check(from: &Format, target: &Format, source: &Datum, written: &str) -> Resul
     }
 }
 
-#[test]
-fn every_document_translates_into_every_format() {
+/// How deep a value nests: a scalar is 0, a container one more than its
+/// deepest member.
+fn depth(d: &Datum) -> usize {
+    match d {
+        Datum::Array(items) => 1 + items.iter().map(depth).max().unwrap_or(0),
+        Datum::Object(members) => 1 + members.values().map(depth).max().unwrap_or(0),
+        _ => 0,
+    }
+}
+
+/// The nesting every format reads: the readers guard nesting at different
+/// depths (tabnas-json past 128 levels, YAML's and ZON's near it, the
+/// transducer at 256 events deep, which XML's embedding reaches at about
+/// 127 levels, two elements a level), and a root adapter or an embedding
+/// adds a level or two. A document nested deeper than this is at one
+/// format's guard and past another's, a limit and not a shape, so the
+/// matrix leaves it out, and pins how few such documents there are.
+const DEPTH_BOUND: usize = 100;
+
+/// The cross product of `docs` and every format: each document read with
+/// its format's grammar, written in every format, and read back under the
+/// target's conventions. At least `floor` documents, and at most
+/// `too_deep_at_most` of them deeper than every format reads.
+fn matrix(docs: Vec<(String, &'static str, String)>, floor: usize, too_deep_at_most: usize) {
     let limits = Limits::default();
-    let docs = corpus();
     let targets = translate::formats();
     assert_eq!(targets.len(), 12, "the formats: {}", translate::names());
     let total = docs.len() * targets.len();
     let mut failures: Vec<String> = Vec::new();
     let mut refused_sources = Vec::new();
+    let mut too_deep = Vec::new();
     let mut pairs = 0;
     for (n, (name, from, text)) in docs.iter().enumerate() {
         let from = format(from);
@@ -599,6 +690,10 @@ fn every_document_translates_into_every_format() {
                 continue;
             }
         };
+        if depth(&source) > DEPTH_BOUND {
+            too_deep.push(format!("{name}: {} levels", depth(&source)));
+            continue;
+        }
         for to in targets {
             pairs += 1;
             let outcome = translate_text(from, to, text, None)
@@ -622,28 +717,63 @@ fn every_document_translates_into_every_format() {
                 failures.push(format!("{name} ({}) -> {}: {why}", from.id(), to.id()));
             }
         }
-        eprintln!(
-            "matrix: {} of {} documents ({}%), {} failures",
-            n + 1,
-            docs.len(),
-            (n + 1) * 100 / docs.len(),
-            failures.len()
-        );
+        if (n + 1) % 25 == 0 || n + 1 == docs.len() {
+            eprintln!(
+                "matrix: {} of {} documents ({}%), {} failures",
+                n + 1,
+                docs.len(),
+                (n + 1) * 100 / docs.len(),
+                failures.len()
+            );
+        }
     }
     for line in &refused_sources {
         eprintln!("refused source: {line}");
     }
+    for line in &too_deep {
+        eprintln!("deeper than every format reads: {line}");
+    }
     for line in &failures {
         eprintln!("FAIL {line}");
     }
+    eprintln!(
+        "matrix: {pairs} pairs of {} documents; {} refused by their own reader, {} too deep",
+        docs.len(),
+        refused_sources.len(),
+        too_deep.len()
+    );
     assert!(
-        pairs + refused_sources.len() * targets.len() == total && total >= 120 * 12,
+        pairs + (refused_sources.len() + too_deep.len()) * targets.len() == total
+            && docs.len() >= floor,
         "the corpora shrank: {} documents",
         docs.len()
+    );
+    assert!(
+        too_deep.len() <= too_deep_at_most,
+        "{} documents are deeper than every format reads (above)",
+        too_deep.len()
     );
     assert!(
         failures.is_empty(),
         "{} of {pairs} pairs failed (above)",
         failures.len()
     );
+}
+
+/// transduce's fixtures, one document per format at least, and the
+/// documents of JSONTestSuite every JSON parser must accept.
+#[test]
+fn every_document_translates_into_every_format() {
+    matrix(corpus(), 120, 0);
+}
+
+/// Every format's own fixture corpus, into every format: thousands of
+/// documents, run in release by `ci/rust/run.sh` (`--ignored`), where it
+/// takes minutes rather than the hour a debug build would.
+#[test]
+#[ignore = "the cross product of every format's fixtures: ci/rust/run.sh runs it in release"]
+fn every_fixture_of_every_format_translates_into_every_format() {
+    let mut docs = Vec::new();
+    spec_corpus(&mut docs);
+    matrix(docs, 2300, 1);
 }
