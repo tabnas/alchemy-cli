@@ -122,6 +122,55 @@ gates against each change there, so a change to alchemy meets them before
 it merges. A behaviour of alchemy's that a row can express is pinned in
 alchemy's `test/spec/`, not here.
 
+## The translation matrix
+
+`translate`'s tests (`rs/tests/translate_test.rs`,
+`ts/test/translate.test.ts`, `go/translate/translate_test.go`) run the
+cross product of their corpus into every format: transduce's fixtures and
+JSONTestSuite's documents in every runtime, and every format's own
+`test/spec/*.tsv` in Rust's release run (`ci/rust/run.sh`). A pair is held
+to what its target declares: written, and read back under the target's
+conventions (its loss list); or refused with the code and the reason its
+parts declare, which the matrix counts: a schema-only target (one that
+writes a schema's tree with no embedding into it: CSS, PGN, proto) refuses
+another format's tree, and Semantic Versioning's embedding refuses a tree
+that is not a version. A pair refused otherwise, or written where a
+refusal is declared, fails.
+
+A format is read with its package's parser, through transduce's parser
+source, unless the parser's own value is not yet the tree its parts
+declare and the package's API reads a document as that tree: then that
+tree is the document, read whole (`Reader::Tree` in Rust, `tree` in Go,
+`{ tree }` in TypeScript). Expressions are read so in Rust and Go (the
+simplified tree: `parse_simplified`, `Simplify`), proto's descriptor in
+TypeScript and Go (`toDescriptor`, `ToDescriptor`), and Go's feeds and
+PGN databases, whose modules build typed values, through their JSON
+encoding (`plainTree`). TypeScript's expr package exports no simplifier,
+so TypeScript reads an expression as its parse builds it, each operator
+the object that describes it, which expr's parts take by its `src`; a
+test pins that, and fails once the package exports one. Where a
+package's own parse checks a document before its parser runs, and the
+parser does not check it itself, the reader makes the same check first
+(`Reader::Checked` in Rust, `check` in Go, `{ parser, check }` in
+TypeScript): proto's Rust crate refuses a document nesting past its cap
+before the engine builds a tree whose drop could abort the process
+(`preflight`), and json5 refuses a document holding no value with its
+own codes in every runtime.
+
+A format whose reader, as this command reads a document through
+transduce, does not build the tree its parts declare is registered in
+that runtime's test with its defect (`READER_DEFECTS`, `readerDefects`):
+its documents are left out as sources and counted, and a test holds each
+entry to an example, comparing what the command reads with what the
+format's package builds with its own API (for a version past 2^53 - 1,
+its own round trip), so an entry fails once the reader is repaired, and
+is then deleted. Go also pins the order a reader's objects are written
+in where it is not the Rust and TypeScript readers' (`orderDivergent`:
+plain maps in sorted key order, typed values in their fields' order),
+which the matrix, comparing values, cannot see. A defect is the
+package's to repair; never register one to make a pair pass without
+naming it, and never work around one here in silence.
+
 ## Build and test
 
 The Rust crate builds against sibling checkouts of alchemy, transduce,

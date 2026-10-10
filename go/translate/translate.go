@@ -20,9 +20,12 @@
 // grammar builds otherwise than its events showed (a YAML stream of several
 // documents, a merge key, a repeated member), which the incremental source
 // refuses part way: the grammar's own value is the document, so it is read
-// again whole. Nothing here knows a format by its name: a format is what
-// its manifest says, and a module whose manifest names no parts this host
-// can take is not a format here.
+// again whole. Where a module's parser builds a value that is not yet the
+// tree its parts declare (an expression's operators, a typed descriptor,
+// feed or database), the tree the module's API reads a document as is the
+// document, read whole. Nothing here knows a format by its name: a format
+// is what its manifest says, and a module whose manifest names no parts
+// this host can take is not a format here.
 //
 // The incremental source needs the engine's node-cell identity, which
 // transduce builds only with the tabnas_nodecell tag. Without it no grammar
@@ -32,6 +35,8 @@ package translate
 
 import (
 	"bytes"
+	"encoding/json"
+	"fmt"
 	"io"
 	"math"
 	"math/big"
@@ -40,10 +45,15 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"unicode"
 
 	alchemy "github.com/tabnas/alchemy/go"
 	at "github.com/tabnas/alchemy/go/translate"
+	tabnaschess "github.com/tabnas/chess/go"
+	tabnascss "github.com/tabnas/css/go"
 	tabnascsv "github.com/tabnas/csv/go"
+	tabnasexpr "github.com/tabnas/expr/go"
+	tabnasfeed "github.com/tabnas/feed/go"
 	tabnasini "github.com/tabnas/ini/go"
 	tabnasjson "github.com/tabnas/json/go"
 	tabnasjson5 "github.com/tabnas/json5/go"
@@ -52,7 +62,9 @@ import (
 	tabnasjsonl "github.com/tabnas/jsonl/go"
 	tabnasmarkdown "github.com/tabnas/markdown/go"
 	tabnas "github.com/tabnas/parser/go"
+	tabnasproto "github.com/tabnas/proto/go"
 	tr "github.com/tabnas/render/go"
+	tabnassemver "github.com/tabnas/semver/go"
 	tabnastoml "github.com/tabnas/toml/go"
 	tt "github.com/tabnas/transduce/go"
 	tabnasxml "github.com/tabnas/xml/go"
@@ -67,12 +79,48 @@ type Format struct {
 	Part *at.Part
 	// reader is a source over a text with a fresh parser of the format's
 	// grammar under its own options: a ParserSource takes its parser over,
-	// so each read has one.
+	// so each read has one. It is nil where tree is not.
 	reader func(text string) *tt.ParserSource
+	// tree is a document as the tree the format's module reads it as with
+	// its own API, where its parser's value is not yet the tree its parts
+	// declare (an expression's operators, or a typed value). It is nil
+	// where reader is not.
+	tree func(text string) (any, *tt.Fail)
+	// check is what the module's own parse checks before its parser runs,
+	// which the parser does not check itself: a document it refuses is not
+	// parsed. Nil where the module checks nothing first.
+	check func(text string) *tt.Fail
 }
 
 // ID is the manifest's languageId.
 func (f *Format) ID() string { return f.Part.ID }
+
+// run drives sink with a document's events as the format reads it, after
+// the check its module's own parse makes first, where it makes one: its
+// parser's, through transduce's ParserSource in mode, or the tree its
+// module's API reads, read whole whatever the mode and walked as the
+// ParserSource walks a parser's value, under the same limits and counts.
+func (f *Format) run(input string, mode tt.SourceMode, limits tt.Limits, metrics *tt.Metrics, sink tt.Sink) (tt.Flow, *tt.Fail) {
+	if f.check != nil {
+		if fail := f.check(input); fail != nil {
+			return tt.Continue, fail
+		}
+	}
+	if f.tree == nil {
+		return f.reader(input).Grammar(f.ID()).Mode(mode).Limits(limits).Metrics(metrics).Run(sink)
+	}
+	guarded := tt.NewGuarded(sink, limits, tt.NewAbortFlag(), metrics)
+	defer guarded.Flush()
+	tree, fail := f.tree(input)
+	if fail != nil {
+		return tt.Continue, fail
+	}
+	flow, fail := tt.WalkValue(tree, guarded)
+	if fail != nil || flow == tt.Stop {
+		return flow, fail
+	}
+	return guarded.Event(tt.EvEnd())
+}
 
 // Read is a document read whole with this format's grammar, as a value:
 // its events as translate reads them, incrementally where the grammar is
@@ -132,70 +180,95 @@ func installed(name string, err error) {
 	}
 }
 
-// module is a grammar module this command carries: its parts and its
-// reader.
+// module is a grammar module this command carries: its parts, its reader
+// or its tree, and its check (Format's).
 type module struct {
 	descriptor func() at.Descriptor
 	reader     func(text string) *tt.ParserSource
+	tree       func(text string) (any, *tt.Fail)
+	check      func(text string) *tt.Fail
 }
 
-// modules is every grammar module this command carries, each with the
-// reader its documents are read with: the module's own parser, under its
-// own options.
+// modules is every grammar module this command carries, each with how its
+// documents are read: the module's own parser, under its own options, or,
+// where its parser's value is not yet the tree its parts declare, the tree
+// its own API reads a document as.
 func modules() []module {
 	return []module{
-		{func() at.Descriptor {
+		{descriptor: func() at.Descriptor {
+			p := tabnaschess.Translate()
+			return descriptor("tabnas-chess", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
+		}, tree: pgnTree},
+		{descriptor: func() at.Descriptor {
+			p := tabnascss.Translate()
+			return descriptor("tabnas-css", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
+		}, reader: func(text string) *tt.ParserSource { return tt.NewParserSource(tabnascss.MakeJsonic(), text) }},
+		{descriptor: func() at.Descriptor {
 			p := tabnascsv.Translate()
 			return descriptor("tabnas-csv", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
-		}, func(text string) *tt.ParserSource {
+		}, reader: func(text string) *tt.ParserSource {
 			parser, err := tabnascsv.Make()
 			installed("tabnas-csv", err)
 			return tt.NewParserSource(parser, text)
 		}},
-		{func() at.Descriptor {
+		{descriptor: func() at.Descriptor {
+			p := tabnasexpr.Translate()
+			return descriptor("tabnas-expr", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
+		}, tree: exprTree},
+		{descriptor: func() at.Descriptor {
+			p := tabnasfeed.Translate()
+			return descriptor("tabnas-feed", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
+		}, tree: feedTree},
+		{descriptor: func() at.Descriptor {
 			p := tabnasini.Translate()
 			return descriptor("tabnas-ini", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
-		}, func(text string) *tt.ParserSource { return tt.NewParserSource(tabnasini.MakeJsonic(), text) }},
-		{func() at.Descriptor {
+		}, reader: func(text string) *tt.ParserSource { return tt.NewParserSource(tabnasini.MakeJsonic(), text) }},
+		{descriptor: func() at.Descriptor {
 			p := tabnasjson.Translate()
 			return descriptor("tabnas-json", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
-		}, func(text string) *tt.ParserSource { return tt.NewParserSource(tabnasjson.Make(), text) }},
-		{func() at.Descriptor {
+		}, reader: func(text string) *tt.ParserSource { return tt.NewParserSource(tabnasjson.Make(), text) }},
+		{descriptor: func() at.Descriptor {
 			p := tabnasjson5.Translate()
 			return descriptor("tabnas-json5", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
-		}, func(text string) *tt.ParserSource {
-			parser := tabnasjsonic.Make()
-			installed("tabnas-json5", parser.UseDefaults(tabnasjson5.Json5, tabnasjson5.Defaults()))
-			return tt.NewParserSource(parser, text)
-		}},
-		{func() at.Descriptor {
+		}, reader: func(text string) *tt.ParserSource {
+			return tt.NewParserSource(json5Parser(), text)
+		}, check: json5Check},
+		{descriptor: func() at.Descriptor {
 			p := tabnasjsonc.Translate()
 			return descriptor("tabnas-jsonc", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
-		}, func(text string) *tt.ParserSource {
+		}, reader: func(text string) *tt.ParserSource {
 			parser := tabnasjsonic.Make()
 			installed("tabnas-jsonc", parser.Use(tabnasjsonc.Jsonc))
 			return tt.NewParserSource(parser, text)
 		}},
-		{func() at.Descriptor {
+		{descriptor: func() at.Descriptor {
 			p := tabnasjsonic.Translate()
 			return descriptor("tabnas-jsonic", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
-		}, func(text string) *tt.ParserSource { return tt.NewParserSource(tabnasjsonic.Make(), text) }},
-		{func() at.Descriptor {
+		}, reader: func(text string) *tt.ParserSource { return tt.NewParserSource(tabnasjsonic.Make(), text) }},
+		{descriptor: func() at.Descriptor {
 			p := tabnasjsonl.Translate()
 			return descriptor("tabnas-jsonl", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
-		}, func(text string) *tt.ParserSource { return tt.NewParserSource(tabnasjsonl.Make(), text) }},
-		{func() at.Descriptor {
+		}, reader: func(text string) *tt.ParserSource { return tt.NewParserSource(tabnasjsonl.Make(), text) }},
+		{descriptor: func() at.Descriptor {
 			p := tabnasmarkdown.Translate()
 			return descriptor("tabnas-markdown", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
-		}, func(text string) *tt.ParserSource { return tt.NewParserSource(tabnasmarkdown.Make(), text) }},
-		{func() at.Descriptor {
+		}, reader: func(text string) *tt.ParserSource { return tt.NewParserSource(tabnasmarkdown.Make(), text) }},
+		{descriptor: func() at.Descriptor {
+			p := tabnasproto.Translate()
+			return descriptor("tabnas-proto", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
+		}, tree: protoTree},
+		{descriptor: func() at.Descriptor {
+			p := tabnassemver.Translate()
+			return descriptor("tabnas-semver", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
+		}, reader: func(text string) *tt.ParserSource { return tt.NewParserSource(tabnassemver.Make(), text) }},
+		{descriptor: func() at.Descriptor {
 			p := tabnastoml.Translate()
 			return descriptor("tabnas-toml", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
-		}, func(text string) *tt.ParserSource { return tt.NewParserSource(tabnastoml.MakeJsonic(), text) }},
-		{func() at.Descriptor {
+		}, reader: func(text string) *tt.ParserSource { return tt.NewParserSource(tabnastoml.MakeJsonic(), text) }},
+		{descriptor: func() at.Descriptor {
 			p := tabnasxml.Translate()
 			return descriptor("tabnas-xml", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
-		}, func(text string) *tt.ParserSource {
+		}, reader: func(text string) *tt.ParserSource {
 			// XML's plugin, outside its embed mode, reconfigures the jsonic
 			// host it is installed on as a pure XML parser, jsonic's own
 			// grammar and lexers unreachable.
@@ -203,14 +276,14 @@ func modules() []module {
 			installed("tabnas-xml", parser.UseDefaults(tabnasxml.Xml, tabnasxml.Defaults))
 			return tt.NewParserSource(parser, text)
 		}},
-		{func() at.Descriptor {
+		{descriptor: func() at.Descriptor {
 			p := tabnasyaml.Translate()
 			return descriptor("tabnas-yaml", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
-		}, func(text string) *tt.ParserSource { return tt.NewParserSource(tabnasyaml.MakeJsonic(), text) }},
-		{func() at.Descriptor {
+		}, reader: func(text string) *tt.ParserSource { return tt.NewParserSource(tabnasyaml.MakeJsonic(), text) }},
+		{descriptor: func() at.Descriptor {
 			p := tabnaszon.Translate()
 			return descriptor("tabnas-zon", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
-		}, func(text string) *tt.ParserSource { return tt.NewParserSource(zonParser(), text) }},
+		}, reader: func(text string) *tt.ParserSource { return tt.NewParserSource(zonParser(), text) }},
 	}
 }
 
@@ -233,6 +306,127 @@ func zonParser() *tabnas.Tabnas {
 	return parser
 }
 
+// A tree reader's parser is built once and reused, as the modules' own
+// one-call parses reuse theirs: building the grammar dominates a parse, a
+// parse builds a fresh context and only reads the instance, and no source
+// installs a budget or a subscriber on it.
+var (
+	protoParser = sync.OnceValue(func() *tabnas.Tabnas {
+		history := 8192
+		parser := tabnas.Make(tabnas.Options{Rewind: &tabnas.RewindOptions{History: &history}})
+		installed("tabnas-proto", tabnasproto.Proto(parser))
+		return parser
+	})
+	feedParser = sync.OnceValue(func() *tabnas.Tabnas {
+		parser := tabnas.Make()
+		installed("tabnas-feed", parser.UseDefaults(tabnasfeed.Feed, tabnasfeed.Defaults))
+		return parser
+	})
+)
+
+// json5Parser is json5's parser with its default options, on jsonic's.
+func json5Parser() *tabnas.Tabnas {
+	parser := tabnasjsonic.Make()
+	installed("tabnas-json5", parser.UseDefaults(tabnasjson5.Json5, tabnasjson5.Defaults()))
+	return parser
+}
+
+// json5Check is what json5's Parse checks before its parser runs, which
+// the parser does not check itself: a document holding no value is refused
+// as json5_empty or json5_no_value, rather than as the engine's unexpected.
+// Only a document that may hold none, one that is empty or opens, after
+// whitespace, with a comment, is put to the module's Parse.
+func json5Check(text string) *tt.Fail {
+	rest := strings.TrimLeftFunc(text, func(r rune) bool { return unicode.IsSpace(r) || r == '\ufeff' })
+	if rest != "" && !strings.HasPrefix(rest, "/") {
+		return nil
+	}
+	_, err := tabnasjson5.Parse(json5Parser(), text)
+	if te, ok := err.(*tabnas.TabnasError); ok && (te.Code == "json5_empty" || te.Code == "json5_no_value") {
+		return engineFailure(te)
+	}
+	return nil
+}
+
+// exprTree is an expression as expr's module reads one for its shared
+// fixtures, the tree its parts declare: each operation a list whose first
+// element is the operator's source text (Simplify of its Parse). The
+// parser's own value holds an operation's operator as an *Op, which no
+// transduce event carries.
+func exprTree(text string) (any, *tt.Fail) {
+	value, err := tabnasexpr.Parse(text)
+	if err != nil {
+		return nil, engineFailure(err)
+	}
+	return tabnasexpr.Simplify(value), nil
+}
+
+// protoTree is a .proto file as proto's module reads one, the descriptor
+// its parts declare (ToDescriptor of the parse, as its Parse builds it).
+// The parser's own value is the grammar's syntax tree.
+func protoTree(text string) (any, *tt.Fail) {
+	cst, err := protoParser().Parse(text)
+	if err != nil {
+		return nil, engineFailure(err)
+	}
+	descriptor, err := tabnasproto.ToDescriptor(cst, nil)
+	if err != nil {
+		return nil, tt.InputFail(err.Error())
+	}
+	return plainTree(descriptor)
+}
+
+// feedTree is a feed as feed's module reads one by default, the Atom-shaped
+// feed its parts declare: the parser builds it as a typed AtomFeed.
+func feedTree(text string) (any, *tt.Fail) {
+	feed, err := feedParser().Parse(text)
+	if err != nil {
+		return nil, engineFailure(err)
+	}
+	return plainTree(feed)
+}
+
+// pgnTree is a PGN database as chess's module reads one (its Parse), the
+// tree its parts declare: the parser builds it as a typed Database.
+func pgnTree(text string) (any, *tt.Fail) {
+	database, err := tabnaschess.Parse(text)
+	if err != nil {
+		return nil, engineFailure(err)
+	}
+	return plainTree(database)
+}
+
+// plainTree is a module's typed value as the tree its JSON encoding names:
+// encoding/json writes it, its fields' tags naming the members, in the
+// fields' order (a map's in sorted key order), and the engine's ordered map
+// reads it back, so that the walk keeps that order.
+func plainTree(value any) (any, *tt.Fail) {
+	text, err := json.Marshal(map[string]any{"tree": value})
+	if err == nil {
+		var tree tabnas.OrderedMap
+		if err = json.Unmarshal(text, &tree); err == nil {
+			return tree.Vals["tree"], nil
+		}
+	}
+	return nil, tt.InputFail("the document's value has no tree: " + err.Error())
+}
+
+// engineFailure is an engine error as transduce's ParserSource reports it:
+// the input's, with the engine's code and position, and a cancel, which no
+// abort of this command's asks for, a guard of the grammar's own.
+func engineFailure(err error) *tt.Fail {
+	te, ok := err.(*tabnas.TabnasError)
+	if !ok {
+		return tt.InputFail(err.Error())
+	}
+	f := tt.FailFromTabnas(te)
+	if te.Code == "cancel" {
+		f.Message = fmt.Sprintf("the grammar stopped the parse with a guard of its own (%s: %s); a grammar "+
+			"may refuse nesting or size below this crate's Limits", te.Code, strings.TrimRight(te.Detail, " \t\r\n"))
+	}
+	return f
+}
+
 var (
 	registryOnce sync.Once
 	registry     []*Format
@@ -246,7 +440,7 @@ func Formats() []*Format {
 			if part == nil {
 				continue
 			}
-			registry = append(registry, &Format{Part: part, reader: m.reader})
+			registry = append(registry, &Format{Part: part, reader: m.reader, tree: m.tree, check: m.check})
 		}
 		sort.SliceStable(registry, func(i, j int) bool { return registry[i].Part.ID < registry[j].Part.ID })
 	})
@@ -437,12 +631,7 @@ func RunCompiled(r *Request, compiled *Compiled, input string, out io.Writer, me
 			sink = tt.NewTreeContract(sink)
 		}
 		if r.Path == nil {
-			_, f := r.From.reader(input).
-				Grammar(r.From.ID()).
-				Mode(mode).
-				Limits(r.Limits).
-				Metrics(metrics).
-				Run(sink)
+			_, f := r.From.run(input, mode, r.Limits, metrics, sink)
 			if f != nil {
 				return nil, f
 			}
@@ -544,7 +733,7 @@ func (c *collect) Event(ev tt.Event) (tt.Flow, *tt.Fail) {
 // repeated member keeps its last value, as the grammar's own value does.
 func read(format *Format, input string, mode tt.SourceMode, limits tt.Limits) (tt.Datum, *tt.Fail) {
 	c := &collect{builder: tt.NewDatumBuilder(math.MaxInt, "max_capture_bytes", tt.LastWins)}
-	if _, f := format.reader(input).Grammar(format.ID()).Mode(mode).Limits(limits).Run(c); f != nil {
+	if _, f := format.run(input, mode, limits, tt.NewMetrics(), c); f != nil {
 		return tt.Datum{}, f
 	}
 	value, ok := c.builder.Take()
@@ -599,7 +788,9 @@ func ParsePath(text string, limits tt.Limits) (*Path, *tt.Fail) {
 
 // FormatsJSON is the registry as JSON, one object per format, for `alchemy
 // formats`: its id, the shapes it reads and writes, the root its render
-// needs, its schema, its parts' entries, and its loss sentences.
+// needs, its schema, why its documents are read whole where it says
+// (whole, null where it does not), its parts' entries, and its loss
+// sentences.
 func FormatsJSON() string {
 	text := func(s string) tt.Datum { return tt.StringDatum(s) }
 	entry := func(a *at.Alc) tt.Datum {
@@ -620,6 +811,10 @@ func FormatsJSON() string {
 		if p.Schema != "" {
 			schema = text(p.Schema)
 		}
+		whole := tt.NullDatum()
+		if p.Whole != "" {
+			whole = text(p.Whole)
+		}
 		var render string
 		switch p.Render.Kind {
 		case at.RenderJSON:
@@ -639,6 +834,7 @@ func FormatsJSON() string {
 			tt.Member{Key: "writes", Value: text(p.Writes.String())},
 			tt.Member{Key: "root", Value: text(p.Root.String())},
 			tt.Member{Key: "schema", Value: schema},
+			tt.Member{Key: "whole", Value: whole},
 			tt.Member{Key: "lift", Value: entry(p.Lift)},
 			tt.Member{Key: "embed", Value: entry(p.Embed)},
 			tt.Member{Key: "render", Value: text(render)},

@@ -14,6 +14,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { source } from '@tabnas/alchemy'
+import { translate as iniParts } from '@tabnas/ini'
+import { translate as tomlParts } from '@tabnas/toml'
 
 import { EXPECTED_CSV, PROGRAM, RECORDS } from './common'
 
@@ -442,7 +444,26 @@ describe('cli', () => {
 // of its corpus into every format.
 describe('cli translate', () => {
   const PEOPLE = '{"people":[{"name":"Ann","age":31.50},{"name":"Bo","age":7}],"n":null}'
-  const IDS = ['csv', 'ini', 'json', 'json5', 'jsonc', 'jsonic', 'jsonl', 'markdown', 'toml', 'xml', 'yaml', 'zon']
+  const IDS = [
+    'css',
+    'csv',
+    'expr',
+    'feed',
+    'ini',
+    'json',
+    'json5',
+    'jsonc',
+    'jsonic',
+    'jsonl',
+    'markdown',
+    'pgn',
+    'proto',
+    'semver',
+    'toml',
+    'xml',
+    'yaml',
+    'zon',
+  ]
   const TABLE =
     'def export [input]\n' +
     '  table-from-json (record (entry :columns :infer) (entry :rows (path "people" each-index))) input\n'
@@ -465,6 +486,7 @@ describe('cli translate', () => {
         'writes',
         'root',
         'schema',
+        'whole',
         'lift',
         'embed',
         'render',
@@ -472,28 +494,46 @@ describe('cli translate', () => {
       ])
       assert.ok(0 < f.loss.length, `${f.id} declares what it does not keep`)
     }
-    assert.deepStrictEqual(formats[2], {
+    const byId = (id: string) => formats.find((f: any) => id === f.id)
+    assert.deepStrictEqual(byId('json'), {
       id: 'json',
       reads: ['tree'],
       writes: 'tree',
       root: 'any',
       schema: null,
+      whole: null,
       lift: null,
       embed: null,
       render: 'json',
       loss: ['JSON has no spelling for Infinity or NaN, so a number that is not finite is written as null.'],
     })
-    const markdown = formats[7]
+    const markdown = byId('markdown')
     assert.deepStrictEqual(
       [markdown.reads, markdown.writes, markdown.root, markdown.schema, markdown.lift, markdown.embed, markdown.render],
       [['records', 'tree'], 'records', 'array', 'markdown-ast', 'markdown-lift', null, 'markdown-render'],
     )
-    const xml = formats[9]
+    const xml = byId('xml')
     assert.deepStrictEqual([xml.schema, xml.embed, xml.render], ['xml-element', 'xml-embed', 'xml-render'])
-    // No format writes a schema's tree without an embedding into it, so the
-    // composition's `schema_only` refusal is not reachable from here: a
-    // plain tree reaches every format.
-    for (const f of formats) assert.ok(null === f.schema || 'records' === f.writes || null !== f.embed, f.id)
+    // The formats that write a schema's tree with no embedding into it are
+    // schema-only: the composition refuses any other format's tree for them.
+    assert.deepStrictEqual(
+      formats.filter((f: any) => null !== f.schema && 'tree' === f.writes && null === f.embed).map((f: any) => f.id),
+      ['css', 'pgn', 'proto'],
+    )
+    assert.deepStrictEqual(
+      [byId('pgn').schema, byId('semver').embed, byId('feed').embed, byId('expr').embed],
+      ['pgn-database', 'semver-embed', 'feed-embed', 'expr-embed'],
+    )
+    // Why a format's documents are read whole, where its manifest says:
+    // TOML's and INI's sentences as their manifests give them.
+    for (const [id, parts] of [
+      ['toml', tomlParts()],
+      ['ini', iniParts()],
+    ] as const) {
+      const whole = JSON.parse(String(parts?.manifest)).translate.whole
+      assert.ok('string' === typeof whole && '' !== whole, id)
+      assert.strictEqual(byId(id).whole, whole, id)
+    }
     // `formats` takes no arguments.
     const extra = alchemy(['formats', 'json'])
     assert.equal(extra.status, 2)
@@ -621,6 +661,99 @@ describe('cli translate', () => {
     assert.equal(fail.code, 'DSL_TYPE_ERROR')
     assert.ok(fail.message.startsWith('unknown_name: nope'), JSON.stringify(fail))
     assert.deepStrictEqual([fail.row, fail.col], [1, 21])
+  })
+
+  // What a target declares it cannot carry it refuses before writing
+  // anything, status 1: a schema-only target refuses another format's tree
+  // when the route is composed, before the input is read, and Semantic
+  // Versioning's embedding refuses a tree that is not a version. Each takes
+  // its own format's documents, and a program that makes its tree.
+  // What a package's own parse checks before its rules run, the command
+  // checks too: a JSON5 document holding no value is refused with json5's
+  // own codes, not the engine's unexpected, status 1, as the Rust and Go
+  // commands refuse it (json5's TypeScript error carries no position, theirs
+  // 1:1). proto's TypeScript package has no cap to check: a .proto file
+  // nested past the cap proto's Rust reader holds documents to (100) is
+  // translated, and one nested 300 deep is refused with a structured
+  // failure, the depth limit transduce holds a walk to, not a crash.
+  it('translate checks what a package checks before its parse', () => {
+    for (const [input, code] of [
+      ['', 'json5_empty'],
+      ['// c\n', 'json5_no_value'],
+    ]) {
+      const out = alchemy(['translate', '--from', 'json5', '--to', 'json', '-'], input)
+      assert.equal(out.status, 1, out.stderr)
+      assert.equal(out.stdout, '')
+      assert.deepStrictEqual(failJson(out), {
+        code: 'INPUT_INVALID',
+        message: `${code}: JSON5 input must contain a value`,
+        output: 'none',
+      })
+    }
+    let out = alchemy(['translate', '--from', 'json5', '--to', 'json', '-'], '// c\n{a:1}\n')
+    assert.equal(out.status, 0, out.stderr)
+    assert.equal(out.stdout, '{"a":1}\n')
+    const deep = (n: number): string =>
+      'syntax = "proto3";\n' + 'message M {'.repeat(n) + '}'.repeat(n) + '\n'
+    out = alchemy(['translate', '--from', 'proto', '--to', 'json', '-'], deep(101))
+    assert.equal(out.status, 0, out.stderr)
+    out = alchemy(['translate', '--from', 'proto', '--to', 'json', '-'], deep(300))
+    assert.equal(out.status, 5, out.stderr)
+    assert.equal(out.stdout, '')
+    assert.deepStrictEqual(failJson(out), {
+      code: 'RESOURCE_LIMIT_EXCEEDED',
+      message: 'a container is nested deeper than 256',
+      limit: { name: 'max_depth', value: 256 },
+      output: 'none',
+    })
+  })
+
+  it('translate refuses what a target declares it cannot carry', () => {
+    let out = alchemy(['translate', '--from', 'json', '--to', 'css', '/nonexistent/input.json'])
+    assert.equal(out.status, 1, out.stderr)
+    assert.equal(out.stdout, '')
+    assert.deepStrictEqual(failJson(out), {
+      code: 'TARGET_VALUE_UNREPRESENTABLE',
+      message:
+        'schema_only: css writes a css-ast tree, the tree its own documents read as, and this document is not ' +
+        'one; a program that makes one can be composed with the render',
+      output: 'none',
+    })
+    out = alchemy(['translate', '--from', 'json', '--to', 'semver', '-'], '{"major":1,"minor":2}')
+    assert.equal(out.status, 1, out.stderr)
+    assert.equal(out.stdout, '')
+    assert.deepStrictEqual(failJson(out), {
+      code: 'TARGET_VALUE_UNREPRESENTABLE',
+      message:
+        'the document is not a version: it has no patch; a version is an object whose major, minor and patch ' +
+        'are whole numbers written in digits, with an optional prerelease and build, each a list of identifiers ' +
+        'or one string of them',
+      row: 48,
+      col: 3,
+      file: 'tabnas-semver/alchemy/embed.alc',
+      output: 'none',
+    })
+    const tree = '{"type":"stylesheet","rules":[{"type":"rule","selectors":["a"],"declarations":' +
+      '[{"type":"declaration","property":"color","value":"red"}]}]}'
+    const echo = tempFile('echo-css.alc', 'def export [input] input\n')
+    for (const [args, stdin, want] of [
+      [['--from', 'json', '--to', 'semver', '-'], '{"major":1,"minor":2,"patch":3,"prerelease":"rc.1"}', '1.2.3-rc.1'],
+      [['--from', 'semver', '--to', 'json', '-'], '1.2.3-rc.1', '{"major":1,"minor":2,"patch":3,"prerelease":["rc",1],"build":[]}\n'],
+      [['--from', 'css', '--to', 'css', '-'], 'a{color:red}', 'a {\n  color: red;\n}\n'],
+      [['--from', 'json', '--to', 'css', '--with', echo, '-'], tree, 'a {\n  color: red;\n}\n'],
+      [['--from', 'pgn', '--to', 'pgn', '-'], '1. e4 e5 1-0', '1. e4 e5 1-0\n'],
+      [['--from', 'json', '--to', 'expr', '-'], '{"a":[1,-2]}', '{"a":[1,-2]}\n'],
+      [
+        ['--from', 'proto', '--to', 'proto', '-'],
+        'syntax = "proto3";\nmessage M { int32 a = 1; }\n',
+        'syntax = "proto3";\nmessage M {\n  int32 a = 1;\n}\n',
+      ],
+    ] as Array<[string[], string, string]>) {
+      out = alchemy(['translate', ...args], stdin)
+      assert.equal(out.status, 0, `${args}: ${out.stderr}`)
+      assert.equal(out.stdout, want, String(args))
+      assert.equal(out.stderr, '', String(args))
+    }
   })
 
   it('translate failures exit with their statuses', () => {

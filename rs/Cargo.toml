@@ -23,20 +23,26 @@ path = "src/bin/alchemy.rs"
 [dependencies]
 # Sibling checkouts, the standard tabnas development model: the language
 # and its shared types, the routers (and the parser source `run` and
-# `translate` read their input through), the renderers, and the twelve
+# `translate` read their input through), the renderers, and the eighteen
 # grammars `translate` reads and writes, each with its translation parts
 # (`run` parses its input with the JSON one).
 tabnas-alchemy = { path = "../../alchemy/rs" }
 tabnas-transduce = { path = "../../transduce/rs" }
 tabnas-render = { path = "../../render/rs" }
 tabnas-json = { path = "../../json/rs" }
+tabnas-chess = { path = "../../chess/rs" }
+tabnas-css = { path = "../../css/rs" }
 tabnas-csv = { path = "../../csv/rs" }
+tabnas-expr = { path = "../../expr/rs" }
+tabnas-feed = { path = "../../feed/rs" }
 tabnas-ini = { path = "../../ini/rs" }
 tabnas-json5 = { path = "../../json5/rs" }
 tabnas-jsonc = { path = "../../jsonc/rs" }
 tabnas-jsonic = { path = "../../jsonic/rs" }
 tabnas-jsonl = { path = "../../jsonl/rs" }
 tabnas-markdown = { path = "../../markdown/rs" }
+tabnas-proto = { path = "../../proto/rs" }
+tabnas-semver = { path = "../../semver/rs" }
 tabnas-toml = { path = "../../toml/rs" }
 tabnas-xml = { path = "../../xml/rs" }
 tabnas-yaml = { path = "../../yaml/rs" }

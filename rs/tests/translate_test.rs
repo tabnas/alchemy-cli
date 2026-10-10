@@ -6,11 +6,22 @@
 //! own grammar refuses, or that reads back as anything but the conventions
 //! say is a failure, and so is a corpus that shrinks.
 //!
-//! The corpora are the sibling checkouts': transduce's fixtures (aless's,
-//! one document per format at least, and more for YAML and ZON) and the
-//! documents of JSONTestSuite every JSON parser must accept (jsonc's
-//! conformance pins). A fixture its own grammar refuses (ZON's repeated
-//! fields) is no document, and is counted as one refused.
+//! A pair whose target declares that it refuses the document is held to
+//! that refusal, its code and the start of its message, and counted: a
+//! schema-only target (one that writes a schema's tree with no embedding
+//! into it: CSS, PGN, proto) refuses another format's tree, and Semantic
+//! Versioning's embedding refuses a tree that is not a version. A refusal
+//! of another kind, or a document written where a refusal is declared, is
+//! a failure.
+//!
+//! The corpora are the sibling checkouts': transduce's fixtures (aless's: a
+//! document of every format but CSS, expressions, PGN, proto and Semantic
+//! Versioning, whose own fixtures the release run reads, and more for YAML
+//! and ZON) and the documents of JSONTestSuite every JSON parser must
+//! accept (jsonc's conformance pins). A fixture its own grammar refuses
+//! (ZON's repeated fields) is no document, and is counted as one refused;
+//! so is a document of a format whose reader is a registered defect
+//! (`READER_DEFECTS`), counted apart.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -18,6 +29,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use tabnas_alchemy::translate::{Composition, Options};
 use tabnas_alchemy::Program;
@@ -58,6 +70,7 @@ fn format_of(extension: &str) -> Option<&'static str> {
         "xml" => "xml",
         "yaml" => "yaml",
         "zon" => "zon",
+        "rss" | "atom" => "feed",
         _ => return None,
     })
 }
@@ -104,11 +117,28 @@ fn corpus() -> Vec<(String, &'static str, String)> {
     docs
 }
 
-/// The formats whose repositories' fixture corpora the matrix reads, by
-/// the id each format's manifest gives it (the repository's name).
-const SPEC_CORPORA: [&str; 12] = [
-    "csv", "ini", "json", "json5", "jsonc", "jsonic", "jsonl", "markdown", "toml", "xml", "yaml",
-    "zon",
+/// The repositories whose fixture corpora the matrix reads, each with the
+/// id its format's manifest gives it: the repository's name, but for
+/// tabnas/chess, whose format is PGN.
+const SPEC_CORPORA: [(&str, &str); 18] = [
+    ("chess", "pgn"),
+    ("css", "css"),
+    ("csv", "csv"),
+    ("expr", "expr"),
+    ("feed", "feed"),
+    ("ini", "ini"),
+    ("json", "json"),
+    ("json5", "json5"),
+    ("jsonc", "jsonc"),
+    ("jsonic", "jsonic"),
+    ("jsonl", "jsonl"),
+    ("markdown", "markdown"),
+    ("proto", "proto"),
+    ("semver", "semver"),
+    ("toml", "toml"),
+    ("xml", "xml"),
+    ("yaml", "yaml"),
+    ("zon", "zon"),
 ];
 
 /// Every format's own fixture corpus: the input of every row of its
@@ -117,8 +147,8 @@ const SPEC_CORPORA: [&str; 12] = [
 /// another reader than the format's default, and an error row's input is
 /// one the format refuses, so neither is a document of the format here.
 fn spec_corpus(docs: &mut Vec<(String, &'static str, String)>) {
-    for id in SPEC_CORPORA {
-        let dir = siblings().join(id).join("test/spec");
+    for (repository, id) in SPEC_CORPORA {
+        let dir = siblings().join(repository).join("test/spec");
         let files = tabnas_support::load_spec_dir(&dir, &tabnas_support::SpecOptions::default())
             .unwrap_or_else(|e| panic!("{id}: cannot read {}: {e}", dir.display()));
         let mut seen = HashSet::new();
@@ -134,7 +164,11 @@ fn spec_corpus(docs: &mut Vec<(String, &'static str, String)>) {
                 }
                 let input = row.unesc_named("input");
                 if seen.insert(input.clone()) {
-                    docs.push((format!("{id}/{}:{}", file.file, row.line), id, input));
+                    docs.push((
+                        format!("{repository}/{}:{}", file.file, row.line),
+                        id,
+                        input,
+                    ));
                 }
             }
         }
@@ -143,6 +177,202 @@ fn spec_corpus(docs: &mut Vec<(String, &'static str, String)>) {
 
 fn format(id: &str) -> &'static Format {
     translate::format(id).unwrap_or_else(|| panic!("{id} is a format"))
+}
+
+// ---------------------------------------------------------------------
+// The readers registered as defective
+// ---------------------------------------------------------------------
+
+/// The formats whose reader, as this command reads a document through
+/// transduce, does not build the tree the format's parts declare, for a
+/// defect of the format's package: each id with its defect. The matrix
+/// reads no document of a registered format as a source, and counts the
+/// documents it leaves out; every format is still a target.
+/// `a_registered_reader_defect_still_stands` holds each entry to an example
+/// document, comparing what the command reads with what the package's own
+/// API builds of it, so an entry fails once its reader is repaired, and
+/// must then be deleted.
+const READER_DEFECTS: [(&str, &str); 1] = [(
+    "proto",
+    "tabnas-proto's parser builds the grammar's syntax tree, and the descriptor its parts \
+     declare (the schema proto-descriptor) is what tabnas_proto::parse builds from it, a typed \
+     FileDescriptorProto whose tree only its serde Serialize gives, which this crate cannot \
+     read without serde_json at run time; so transduce walks the syntax tree, which proto's own \
+     render refuses as no FileDescriptorProto",
+)];
+
+/// Whether documents of `id` are left out as sources for a registered
+/// reader defect.
+fn registered_defect(id: &str) -> bool {
+    READER_DEFECTS.iter().any(|(defective, _)| *defective == id)
+}
+
+/// A value as serde_json holds it, as a `Datum`: what a package's own API
+/// builds, for the comparisons here.
+fn datum_of_json(j: &serde_json::Value) -> Datum {
+    use serde_json::Value as J;
+    match j {
+        J::Null => Datum::Null,
+        J::Bool(b) => Datum::Bool(*b),
+        J::Number(n) => Datum::Number {
+            value: n.as_f64().unwrap_or(f64::NAN),
+            lexeme: None,
+        },
+        J::String(s) => Datum::String(s.as_str().into()),
+        J::Array(items) => Datum::Array(items.iter().map(datum_of_json).collect()),
+        J::Object(members) => Datum::Object(
+            members
+                .iter()
+                .map(|(k, v)| (k.as_str().into(), datum_of_json(v)))
+                .collect(),
+        ),
+    }
+}
+
+/// Each registered reader defect still stands: the tree this command reads
+/// an example document as is not the one the format's package builds with
+/// its own API, the tree its parts declare. Once a reader is repaired this
+/// fails, until its entry in `READER_DEFECTS` is deleted.
+#[test]
+fn a_registered_reader_defect_still_stands() {
+    let limits = Limits::default();
+    for (id, defect) in READER_DEFECTS {
+        let (example, read, declared) = match id {
+            "proto" => {
+                let text = "syntax = \"proto3\";\nmessage M { int32 a = 1; }\n";
+                let descriptor = tabnas_proto::parse(text, None).unwrap();
+                let declared = datum_of_json(&serde_json::to_value(&descriptor).unwrap());
+                (text, format(id).read(text, &limits).unwrap(), declared)
+            }
+            _ => panic!("{id}: a registered defect needs an example here"),
+        };
+        assert!(
+            !same(&read, &declared),
+            "{id}'s reader now reads {example:?} as the tree its package builds, {declared}: \
+             delete its entry ({defect})"
+        );
+    }
+    // What the defect means for a translation: a .proto file is refused by
+    // its own render.
+    let proto = format("proto");
+    let fail = translate_text(proto, proto, "syntax = \"proto3\";\n", None).unwrap_err();
+    assert_eq!(fail.code, Code::TargetValueUnrepresentable);
+    assert!(
+        fail.message
+            .starts_with("the tree is not a FileDescriptorProto"),
+        "{fail}"
+    );
+}
+
+// ---------------------------------------------------------------------
+// The refusals the targets declare
+// ---------------------------------------------------------------------
+
+/// What a pair is held to: written, and read back under the target's
+/// conventions; or refused as the target declares, with the code and the
+/// start of the message alchemy's composition or the target's part gives.
+enum Expect {
+    Written,
+    Refused(Code, String),
+}
+
+/// What `from`'s document, read as `source`, into `to` is held to. A
+/// schema-only target (one that writes from a tree, with a schema and no
+/// embed: CSS, PGN, proto) refuses a tree of another schema before any
+/// output, as alchemy's composition declares; Semantic Versioning's
+/// embedding refuses a tree that is not a version, as its part declares.
+/// Every other pair is written, Markdown's table among them: it writes
+/// from records, which any tree makes.
+fn expect(from: &Format, to: &Format, source: &Datum) -> Expect {
+    let target = &to.part;
+    let foreign = target.writes == tabnas_alchemy::translate::Shape::Tree
+        && target.schema.is_some()
+        && from.part.schema != target.schema;
+    match (&target.schema, &target.embed) {
+        (Some(schema), None) if foreign => Expect::Refused(
+            Code::TargetValueUnrepresentable,
+            format!("schema_only: {} writes a {schema} tree, ", target.id),
+        ),
+        _ if foreign && to.id() == "semver" && !semver_version(source) => Expect::Refused(
+            Code::TargetValueUnrepresentable,
+            "the document is not a version: ".to_string(),
+        ),
+        _ => Expect::Written,
+    }
+}
+
+/// The text a number is written with when it is digits alone: its lexeme,
+/// or the text JSON writes for it, ECMAScript's, which spells a whole
+/// number below 10^21 with its digits.
+fn written_digits(d: &Datum) -> Option<String> {
+    let Datum::Number { value, lexeme } = d else {
+        return None;
+    };
+    let text = match lexeme {
+        Some(lexeme) => lexeme.to_string(),
+        None if value.is_finite()
+            && value.fract() == 0.0
+            && !value.is_sign_negative()
+            && *value < 1e21 =>
+        {
+            format!("{}", *value as u128)
+        }
+        None => return None,
+    };
+    (!text.is_empty() && text.bytes().all(|b| b.is_ascii_digit())).then_some(text)
+}
+
+/// Whether a string is digits with no leading zero, but for `0` itself.
+fn digit_string(s: &str) -> bool {
+    !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) && (s == "0" || !s.starts_with('0'))
+}
+
+/// Whether a value is a prerelease (`prerelease`) or build identifier: a
+/// number written in digits, or a string of 0-9, A-Z, a-z and -, not
+/// empty, which for a prerelease is no number of digits that begins with a
+/// zero.
+fn semver_identifier(d: &Datum, prerelease: bool) -> bool {
+    match d {
+        Datum::Number { .. } => written_digits(d).is_some(),
+        Datum::String(s) => {
+            !s.is_empty()
+                && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+                && !(prerelease && s.bytes().all(|b| b.is_ascii_digit()) && !digit_string(s))
+        }
+        _ => false,
+    }
+}
+
+/// Whether a value is a version as Semantic Versioning's embedding takes
+/// one (its part's `alchemy/embed.alc`): an object whose major, minor and
+/// patch are whole numbers written in digits (a number whose text is digits
+/// alone, or a string of digits with no leading zero), and whose prerelease
+/// and build, where it has them, are null, the empty string, or a list of
+/// identifiers or one string of them joined by dots.
+fn semver_version(d: &Datum) -> bool {
+    let Some(m) = d.as_object() else {
+        return false;
+    };
+    let core = |key: &str| match m.get(key) {
+        Some(n @ Datum::Number { .. }) => written_digits(n).is_some(),
+        Some(Datum::String(s)) => digit_string(s),
+        _ => false,
+    };
+    let identifiers = |key: &str, prerelease: bool| match m.get(key) {
+        None | Some(Datum::Null) => true,
+        Some(Datum::String(s)) => {
+            s.is_empty()
+                || s.split('.')
+                    .all(|id| semver_identifier(&Datum::String(id.into()), prerelease))
+        }
+        Some(Datum::Array(items)) => items.iter().all(|i| semver_identifier(i, prerelease)),
+        Some(_) => false,
+    };
+    core("major")
+        && core("minor")
+        && core("patch")
+        && identifiers("prerelease", true)
+        && identifiers("build", false)
 }
 
 /// A pair's source, target and program, by id and text.
@@ -578,6 +808,526 @@ fn zon_back(d: &Datum) -> Datum {
     }
 }
 
+/// The default operators' source texts, as expr's render reads an
+/// operator: `+`, `-`, `*`, `/`, `%`, and `(` for a group.
+const EXPR_OPERATORS: [&str; 6] = ["+", "-", "*", "/", "%", "("];
+
+/// A tree with each operator reduced to its source text, as expr's shared
+/// fixtures and its render read one: a list whose first element is an
+/// object whose `src` is a default operator's source text has that text in
+/// the object's place.
+fn expr_simplify(d: &Datum) -> Datum {
+    match d {
+        Datum::Array(items) => Datum::Array(
+            items
+                .iter()
+                .enumerate()
+                .map(|(i, item)| match (i, item) {
+                    (0, Datum::Object(m)) => match m.get("src") {
+                        Some(Datum::String(src)) if EXPR_OPERATORS.contains(&&**src) => {
+                            Datum::String(src.clone())
+                        }
+                        _ => expr_simplify(item),
+                    },
+                    _ => expr_simplify(item),
+                })
+                .collect(),
+        ),
+        Datum::Object(members) => Datum::Object(
+            members
+                .iter()
+                .map(|(k, v)| (k.clone(), expr_simplify(v)))
+                .collect(),
+        ),
+        d => d.clone(),
+    }
+}
+
+/// What expr's conventions make of a tree it is given (its loss list): an
+/// operator's description reads back as its source text; a negative
+/// number, written with its sign, as the operator `-` applied to its
+/// magnitude; and a number that is not finite as the string Infinity,
+/// -Infinity or NaN.
+fn expr_reading(d: &Datum) -> Datum {
+    fn numbers(d: &Datum) -> Datum {
+        match d {
+            Datum::Number { value, .. } if value.is_nan() => Datum::String("NaN".into()),
+            Datum::Number { value, .. } if value.is_infinite() => Datum::String(
+                if *value > 0.0 {
+                    "Infinity"
+                } else {
+                    "-Infinity"
+                }
+                .into(),
+            ),
+            Datum::Number { value, lexeme }
+                if lexeme
+                    .as_deref()
+                    .map_or(value.is_sign_negative(), |l| l.starts_with('-')) =>
+            {
+                Datum::Array(vec![
+                    Datum::String("-".into()),
+                    Datum::Number {
+                        value: value.abs(),
+                        lexeme: None,
+                    },
+                ])
+            }
+            Datum::Array(items) => Datum::Array(items.iter().map(numbers).collect()),
+            Datum::Object(members) => Datum::Object(
+                members
+                    .iter()
+                    .map(|(k, v)| (k.clone(), numbers(v)))
+                    .collect(),
+            ),
+            d => d.clone(),
+        }
+    }
+    numbers(&expr_simplify(d))
+}
+
+/// The largest integer every runtime's reader of a version keeps as a
+/// number, 2^53 - 1; Semantic Versioning's Rust reader keeps one past it
+/// as its digits.
+const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
+
+/// A version's number as Semantic Versioning's reader builds it from its
+/// digits: a number up to 2^53 - 1, and its digits past it.
+fn semver_number(digits: &str) -> Datum {
+    match digits.parse::<f64>() {
+        Ok(value) if value <= MAX_SAFE_INTEGER => Datum::Number {
+            value,
+            lexeme: None,
+        },
+        _ => Datum::String(digits.into()),
+    }
+}
+
+/// What a version reads back as, by Semantic Versioning's loss list: its
+/// major, minor and patch, each the number its digits make; its prerelease
+/// and build as lists, empty where they are absent, null or empty, one
+/// string split at its dots; a prerelease identifier of digits as the
+/// number they make and a build identifier as its text; and no other
+/// member.
+fn semver_reading(d: &Datum) -> Datum {
+    let m = d.as_object().expect("a version is an object");
+    let text = |v: &Datum| match v {
+        Datum::String(s) => s.to_string(),
+        n => written_digits(n).expect("a version's numbers are written in digits"),
+    };
+    let identifiers = |key: &str, prerelease: bool| {
+        let items: Vec<Datum> = match m.get(key) {
+            Some(Datum::String(s)) if !s.is_empty() => {
+                s.split('.').map(|id| Datum::String(id.into())).collect()
+            }
+            Some(Datum::Array(items)) => items.clone(),
+            _ => Vec::new(),
+        };
+        Datum::Array(
+            items
+                .iter()
+                .map(|id| {
+                    let id = text(id);
+                    if prerelease && id.bytes().all(|b| b.is_ascii_digit()) {
+                        semver_number(&id)
+                    } else {
+                        Datum::String(id.into())
+                    }
+                })
+                .collect(),
+        )
+    };
+    let core = |key: &str| semver_number(&text(&m[key]));
+    Datum::Object(
+        [
+            ("major", core("major")),
+            ("minor", core("minor")),
+            ("patch", core("patch")),
+            ("prerelease", identifiers("prerelease", true)),
+            ("build", identifiers("build", false)),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.into(), v))
+        .collect(),
+    )
+}
+
+/// The id, and an author's uri, the feed render supplies where a feed has
+/// none.
+const FEED_RENDER: &str = "tag:tabnas.dev,2026:feed-render";
+
+/// The date the feed render supplies where a feed or an entry has none,
+/// the one its embedding gives a plain tree.
+const FEED_EPOCH: &str = "1970-01-01T00:00:00Z";
+
+/// Whether `s` is `n` decimal digits.
+fn digits_of(n: usize, s: &str) -> bool {
+    s.len() == n && s.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// Whether `s` is two digits from `lo` to `hi`.
+fn two_digits(lo: u32, hi: u32, s: &str) -> bool {
+    digits_of(2, s) && s.parse::<u32>().is_ok_and(|n| lo <= n && n <= hi)
+}
+
+/// Whether `s` is an RFC 3339 date-time with the upper-case T and Z Atom
+/// asks for, as the feed render reads one: a full date; a time, whose
+/// seconds may have a fraction; and Z or an offset.
+fn rfc3339(s: &str) -> bool {
+    let time = |t: &str| {
+        let p: Vec<&str> = t.split(':').collect();
+        let second = |sec: &str| match sec.split('.').collect::<Vec<_>>()[..] {
+            [whole] => two_digits(0, 60, whole),
+            [whole, fraction] => {
+                two_digits(0, 60, whole)
+                    && !fraction.is_empty()
+                    && fraction.bytes().all(|b| b.is_ascii_digit())
+            }
+            _ => false,
+        };
+        p.len() == 3 && two_digits(0, 23, p[0]) && two_digits(0, 59, p[1]) && second(p[2])
+    };
+    let offset = |o: &str| match o.split(':').collect::<Vec<_>>()[..] {
+        [h, m] => two_digits(0, 23, h) && two_digits(0, 59, m),
+        _ => false,
+    };
+    let [date, rest] = s.split('T').collect::<Vec<_>>()[..] else {
+        return false;
+    };
+    let date_ok = match date.split('-').collect::<Vec<_>>()[..] {
+        [y, m, d] => digits_of(4, y) && two_digits(1, 12, m) && two_digits(1, 31, d),
+        _ => false,
+    };
+    date_ok
+        && match rest.split('Z').collect::<Vec<_>>()[..] {
+            [t, ""] => time(t),
+            [_] => match rest.split('+').collect::<Vec<_>>()[..] {
+                [t, o] => time(t) && offset(o),
+                [_] => match rest.split('-').collect::<Vec<_>>()[..] {
+                    [t, o] => time(t) && offset(o),
+                    _ => false,
+                },
+                _ => false,
+            },
+            _ => false,
+        }
+}
+
+/// An RSS date, RFC 822's date-time with a four-digit year allowed and its
+/// names in any case, as the same instant in RFC 3339's form, as the feed
+/// render writes one: a day of the week and a comma at most, then the day,
+/// the month, the year (two digits before 50 in the 2000s, else in the
+/// 1900s), the time (seconds 00 where it has none) and the zone (Z for UT,
+/// GMT and Z, the US zones' offsets, or a sign and four digits). Its tabs
+/// and line breaks are spaces.
+fn rfc822(s: &str) -> Option<String> {
+    let words = |t: &str| -> Vec<String> {
+        t.replace(['\n', '\r', '\t'], " ")
+            .split(' ')
+            .filter(|w| !w.is_empty())
+            .map(str::to_string)
+            .collect()
+    };
+    let parts: Vec<&str> = s.split(',').collect();
+    let w = match parts[..] {
+        [_] => words(s),
+        [day, rest] => match &words(day)[..] {
+            [d] if ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+                .contains(&d.to_ascii_lowercase().as_str()) =>
+            {
+                words(rest)
+            }
+            _ => return None,
+        },
+        _ => return None,
+    };
+    let [day, month, year, time, zone] = &w[..] else {
+        return None;
+    };
+    let year = if digits_of(4, year) {
+        year.clone()
+    } else if digits_of(2, year) {
+        format!("{}{year}", if year.as_str() < "50" { "20" } else { "19" })
+    } else {
+        return None;
+    };
+    let months = [
+        "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
+    ];
+    let month = months
+        .iter()
+        .position(|m| *m == month.to_ascii_lowercase())
+        .map(|i| format!("{:02}", i + 1))?;
+    let day = if digits_of(1, day) {
+        format!("0{day}")
+    } else {
+        day.clone()
+    };
+    if !two_digits(1, 31, &day) {
+        return None;
+    }
+    let mut hms: Vec<&str> = time.split(':').collect();
+    if hms.len() == 2 {
+        hms.push("00");
+    }
+    if !(hms.len() == 3
+        && two_digits(0, 23, hms[0])
+        && two_digits(0, 59, hms[1])
+        && two_digits(0, 60, hms[2]))
+    {
+        return None;
+    }
+    let numeric = |sign: &str, digits: &str| {
+        (digits_of(4, digits) && two_digits(0, 23, &digits[..2]) && two_digits(0, 59, &digits[2..]))
+            .then(|| format!("{sign}{}:{}", &digits[..2], &digits[2..]))
+    };
+    let offset = match zone.to_ascii_lowercase().as_str() {
+        "ut" | "gmt" | "z" => Some("Z".to_string()),
+        "est" => Some("-05:00".to_string()),
+        "edt" => Some("-04:00".to_string()),
+        "cst" => Some("-06:00".to_string()),
+        "cdt" => Some("-05:00".to_string()),
+        "mst" => Some("-07:00".to_string()),
+        "mdt" => Some("-06:00".to_string()),
+        "pst" => Some("-08:00".to_string()),
+        "pdt" => Some("-07:00".to_string()),
+        // A sign and four digits; the render splits the zone at its signs,
+        // so one with a second sign is no zone.
+        _ => match (zone.strip_prefix('+'), zone.strip_prefix('-')) {
+            (Some(digits), _) if !digits.contains('+') => numeric("+", digits),
+            (_, Some(digits)) if !zone.contains('+') && !digits.contains('-') => {
+                numeric("-", digits)
+            }
+            _ => None,
+        },
+    }?;
+    Some(format!("{year}-{month}-{day}T{}{offset}", hms.join(":")))
+}
+
+/// A date as the feed render writes it: its RFC 3339 form (`Ok`), or the
+/// text of one in neither form (`Err`), which it writes as the epoch with
+/// a category that keeps the text. A date with no text is a missing one.
+fn feed_date(v: &Datum) -> Result<String, String> {
+    match v {
+        Datum::String(s) if s.is_empty() => Ok(FEED_EPOCH.to_string()),
+        Datum::String(s) => {
+            let upper = s.replace('t', "T").replace('z', "Z");
+            if rfc3339(&upper) {
+                Ok(upper)
+            } else {
+                rfc822(s).ok_or_else(|| s.to_string())
+            }
+        }
+        v => Err(v.to_string()),
+    }
+}
+
+/// A feed's value as the reader builds it back: no member whose value is
+/// null, and a character XML 1.0 cannot carry as U+FFFD.
+fn feed_clean(d: &Datum) -> Datum {
+    match d {
+        Datum::String(s) => Datum::String(
+            s.chars()
+                .map(|c| match c {
+                    '\t' | '\n' | '\r' => c,
+                    c if (c as u32) < 0x20 || c == '\u{fffe}' || c == '\u{ffff}' => '\u{fffd}',
+                    c => c,
+                })
+                .collect::<String>()
+                .into(),
+        ),
+        Datum::Array(items) => Datum::Array(items.iter().map(feed_clean).collect()),
+        Datum::Object(members) => Datum::Object(
+            members
+                .iter()
+                .filter(|(_, v)| !matches!(v, Datum::Null))
+                .map(|(k, v)| (k.clone(), feed_clean(v)))
+                .collect(),
+        ),
+        d => d.clone(),
+    }
+}
+
+/// A text construct or a content as the feed render writes it: one of type
+/// xhtml as html, its value trimmed.
+fn feed_text(d: &Datum) -> Datum {
+    let cleaned = feed_clean(d);
+    match &cleaned {
+        Datum::Object(m) if m.get("type").and_then(Datum::as_str) == Some("xhtml") => {
+            Datum::Object(
+                m.iter()
+                    .map(|(k, v)| match (&**k, v) {
+                        ("type", _) => (k.clone(), Datum::String("html".into())),
+                        ("value", Datum::String(s)) => (k.clone(), Datum::String(s.trim().into())),
+                        _ => (k.clone(), v.clone()),
+                    })
+                    .collect(),
+            )
+        }
+        _ => cleaned,
+    }
+}
+
+/// Whether a feed or an entry has an author: a list of them that is not
+/// empty.
+fn feed_has_author(m: &Datum) -> bool {
+    matches!(m.as_object().and_then(|m| m.get("authors")), Some(Datum::Array(a)) if !a.is_empty())
+}
+
+/// A feed's or an entry's members as the feed render writes them and the
+/// reader builds them back (`feed_reading`): each date in RFC 3339's form,
+/// one the render cannot read as the epoch with a category keeping its
+/// text, which comes before the object's own categories where the date
+/// comes before them in the tree's order; text constructs as `feed_text`;
+/// an id, a title and an updated where the object has none, an entry's id
+/// with a slash and `position`; an entry's source not read back.
+fn feed_object(m: &Datum, position: Option<usize>) -> Vec<(Box<str>, Datum)> {
+    let members = m.as_object().expect("a feed and an entry are objects");
+    let mut out: Vec<(Box<str>, Datum)> = Vec::new();
+    let (mut before, mut after) = (Vec::new(), Vec::new());
+    let mut categories_met = false;
+    for (k, v) in members {
+        if matches!(v, Datum::Null) {
+            continue;
+        }
+        match &**k {
+            "categories" => categories_met = true,
+            "source" | "format" | "version" | "entries" => continue,
+            _ => {}
+        }
+        let value = match &**k {
+            "updated" | "published" => match feed_date(v) {
+                Ok(date) => Datum::String(date.into()),
+                Err(text) => {
+                    let category = Datum::Object(
+                        [
+                            ("term", Datum::String(k.clone())),
+                            (
+                                "scheme",
+                                Datum::String(format!("{FEED_RENDER}/date").into()),
+                            ),
+                            ("label", feed_clean(&Datum::String(text.into()))),
+                        ]
+                        .into_iter()
+                        .map(|(k, v)| (k.into(), v))
+                        .collect(),
+                    );
+                    if categories_met {
+                        after.push(category);
+                    } else {
+                        before.push(category);
+                    }
+                    Datum::String(FEED_EPOCH.into())
+                }
+            },
+            "title" | "subtitle" | "rights" | "summary" | "content" => feed_text(v),
+            _ => feed_clean(v),
+        };
+        out.push((k.clone(), value));
+    }
+    if !before.is_empty() || !after.is_empty() {
+        let own = match out.iter().position(|(k, _)| &**k == "categories") {
+            Some(i) => match out.remove(i).1 {
+                Datum::Array(items) => items,
+                _ => Vec::new(),
+            },
+            None => Vec::new(),
+        };
+        let all = before.into_iter().chain(own).chain(after).collect();
+        out.push(("categories".into(), Datum::Array(all)));
+    }
+    let has = |out: &[(Box<str>, Datum)], key: &str| out.iter().any(|(k, _)| &**k == key);
+    if !has(&out, "id") {
+        let id = match position {
+            Some(i) => format!("{FEED_RENDER}/{i}"),
+            None => FEED_RENDER.to_string(),
+        };
+        out.push(("id".into(), Datum::String(id.into())));
+    }
+    if !has(&out, "title") {
+        let title = Datum::Object(
+            [("type", "text"), ("value", "")]
+                .into_iter()
+                .map(|(k, v)| (k.into(), Datum::String(v.into())))
+                .collect(),
+        );
+        out.push(("title".into(), title));
+    }
+    if !has(&out, "updated") {
+        out.push(("updated".into(), Datum::String(FEED_EPOCH.into())));
+    }
+    out
+}
+
+/// What a feed reads back as, by its loss list: an Atom 1.0 feed of its
+/// members and its entries as `feed_object` writes them, and an author,
+/// named by the feed's title where that is text and not empty and
+/// `unknown` otherwise, where the feed has none, unless the render held its
+/// entries (a tree whose entries come before its other members, as the
+/// reader builds one) and each of them has one.
+fn feed_reading(d: &Datum) -> Datum {
+    let members = d.as_object().expect("a feed is an object");
+    let entries: Vec<Datum> = match members.get("entries") {
+        Some(Datum::Array(items)) => items
+            .iter()
+            .enumerate()
+            .map(|(i, e)| Datum::Object(feed_object(e, Some(i)).into_iter().collect()))
+            .collect(),
+        _ => Vec::new(),
+    };
+    let mut out = vec![
+        ("format".into(), Datum::String("atom".into())),
+        ("version".into(), Datum::String("1.0".into())),
+    ];
+    if members.contains_key("entries") {
+        out.push(("entries".into(), Datum::Array(entries.clone())));
+    }
+    out.extend(feed_object(d, None));
+    let feed_members = [
+        "id",
+        "title",
+        "subtitle",
+        "rights",
+        "updated",
+        "authors",
+        "contributors",
+        "categories",
+        "links",
+        "generator",
+        "icon",
+        "logo",
+    ];
+    let entries_at = members.get_index_of("entries");
+    let held = entries_at.is_some_and(|at| {
+        feed_members
+            .iter()
+            .any(|m| members.get_index_of(*m).is_none_or(|i| i > at))
+    });
+    let entries_authored = held && !entries.is_empty() && entries.iter().all(feed_has_author);
+    if !(feed_has_author(d) || entries_authored) {
+        let name = match members.get("title") {
+            Some(Datum::Object(t))
+                if t.get("type").and_then(Datum::as_str) == Some("text")
+                    && t.get("value")
+                        .and_then(Datum::as_str)
+                        .is_some_and(|v| !v.is_empty()) =>
+            {
+                t["value"].clone()
+            }
+            _ => Datum::String("unknown".into()),
+        };
+        let author = Datum::Object(
+            [("name", name), ("uri", Datum::String(FEED_RENDER.into()))]
+                .into_iter()
+                .map(|(k, v)| (k.into(), v))
+                .collect(),
+        );
+        out.retain(|(k, _)| &**k != "authors");
+        out.push(("authors".into(), Datum::Array(vec![author])));
+    }
+    Datum::Object(out.into_iter().collect())
+}
+
 /// Whether the document read back from `written` in `target` is what the
 /// target's conventions make of `source`, read as `from`.
 fn check(from: &Format, target: &Format, source: &Datum, written: &str) -> Result<(), String> {
@@ -604,22 +1354,32 @@ fn check(from: &Format, target: &Format, source: &Datum, written: &str) -> Resul
         format("yaml")
             .read(&json, &limits)
             .map_err(|f| format!("its records do not read back: {f}"))?
-    } else if id == "xml" && embedded {
-        // An embedding reads back through its reverse: the element tree,
-        // as JSON, unembedded, and written where a non-finite number has
-        // a spelling.
+    } else if (id == "xml" || id == "feed") && embedded {
+        // An embedding reads back through its reverse, which its file
+        // holds beside it (`xml-unembed`, `feed-unembed`): the format's
+        // tree, as JSON, unembedded, and written where a non-finite number
+        // has a spelling.
         let tree = target
             .read(written, &limits)
             .map_err(|f| format!("the written document does not read back: {f}"))?;
-        let embed = target.part.embed.as_ref().expect("xml has an embed");
-        let program = format!("{}\ndef export [input] (xml-unembed input)\n", embed.text);
+        let embed = target
+            .part
+            .embed
+            .as_ref()
+            .expect("an embedding target has an embed");
+        let reverse = embed
+            .entry
+            .strip_suffix("-embed")
+            .map(|name| format!("{name}-unembed"))
+            .expect("an embed's entry is named NAME-embed");
+        let program = format!("{}\ndef export [input] ({reverse} input)\n", embed.text);
         let yaml = translate_text(
             format("json"),
             format("yaml"),
             &tree.to_string(),
-            Some(("xml-unembed.alc", &program)),
+            Some((&format!("{reverse}.alc"), &program)),
         )
-        .map_err(|f| format!("the element tree does not unembed: {f}"))?;
+        .map_err(|f| format!("the tree does not unembed: {f}"))?;
         format("yaml")
             .read(&yaml, &limits)
             .map_err(|f| format!("the unembedded tree does not read back: {f}"))?
@@ -644,7 +1404,19 @@ fn check(from: &Format, target: &Format, source: &Datum, written: &str) -> Resul
         "jsonl" => map_non_finite(&wrap_array(source), &|_| Datum::Null),
         "toml" => without_nulls(&wrap_object(source, &key)),
         "zon" => zon_reading(source),
+        "expr" => expr_reading(source),
+        "semver" => semver_reading(source),
+        // A feed's own tree, written as Atom 1.0, with no member whose
+        // value is null (an embedded one reads back through its reverse,
+        // above, as it was).
+        "feed" if !embedded => feed_reading(source),
         _ => source.clone(),
+    };
+    // A null member a feed reads back with is one the render left out.
+    let back = if id == "feed" && !embedded {
+        feed_clean(&back)
+    } else {
+        back
     };
     let back = if id == "zon" { zon_back(&back) } else { back };
     if same(&expected, &back) {
@@ -675,60 +1447,94 @@ const DEPTH_BOUND: usize = 100;
 
 /// The cross product of `docs` and every format: each document read with
 /// its format's grammar, written in every format, and read back under the
-/// target's conventions. At least `floor` documents, and at most
-/// `too_deep_at_most` of them deeper than every format reads.
-fn matrix(docs: Vec<(String, &'static str, String)>, floor: usize, too_deep_at_most: usize) {
+/// target's conventions, or refused as the target declares. At least
+/// `floor` documents, at most `too_deep_at_most` of them deeper than every
+/// format reads, and at least `refusals_at_least` pairs refused as their
+/// target declares; a document of a format whose reader is a registered
+/// defect is left out as a source, and counted.
+fn matrix(
+    docs: Vec<(String, &'static str, String)>,
+    floor: usize,
+    too_deep_at_most: usize,
+    refusals_at_least: usize,
+) {
     let limits = Limits::default();
     let targets = translate::formats();
-    assert_eq!(targets.len(), 12, "the formats: {}", translate::names());
+    assert_eq!(targets.len(), 18, "the formats: {}", translate::names());
     let total = docs.len() * targets.len();
     let mut failures: Vec<String> = Vec::new();
     let mut refused_sources = Vec::new();
     let mut too_deep = Vec::new();
+    let mut defective = Vec::new();
+    let mut refusals: Vec<String> = Vec::new();
     let mut pairs = 0;
+    let started = Instant::now();
+    let mut reported = Instant::now();
     for (n, (name, from, text)) in docs.iter().enumerate() {
         let from = format(from);
-        let source = match from.read(text, &limits) {
-            Ok(d) => d,
-            Err(f) => {
-                refused_sources.push(format!("{name}: {f}"));
-                continue;
+        let source = if registered_defect(from.id()) {
+            defective.push(name.clone());
+            None
+        } else {
+            match from.read(text, &limits) {
+                Err(f) => {
+                    refused_sources.push(format!("{name}: {f}"));
+                    None
+                }
+                Ok(d) if depth(&d) > DEPTH_BOUND => {
+                    too_deep.push(format!("{name}: {} levels", depth(&d)));
+                    None
+                }
+                Ok(d) => Some(d),
             }
         };
-        if depth(&source) > DEPTH_BOUND {
-            too_deep.push(format!("{name}: {} levels", depth(&source)));
-            continue;
-        }
-        for to in targets {
+        for to in targets.iter().filter(|_| source.is_some()) {
+            let source = source.as_ref().expect("a document read");
             pairs += 1;
-            let outcome = translate_text(from, to, text, None)
-                .map_err(|f| format!("does not write: {f}"))
-                .and_then(|written| {
+            let pair = format!("{name} ({}) -> {}", from.id(), to.id());
+            let written = translate_text(from, to, text, None);
+            let outcome = match (expect(from, to, source), written) {
+                (Expect::Refused(code, reason), Err(f))
+                    if f.code == code && f.message.starts_with(&reason) =>
+                {
+                    refusals.push(format!("{pair}: {reason}"));
+                    Ok(())
+                }
+                (Expect::Refused(code, reason), Err(f)) => Err(format!(
+                    "is refused otherwise than declared ({code:?}, {reason}...): {f}"
+                )),
+                (Expect::Refused(code, reason), Ok(written)) => Err(format!(
+                    "is written, where it is declared refused ({code:?}, {reason}...): {written:?}"
+                )),
+                (Expect::Written, Err(f)) => Err(format!("does not write: {f}")),
+                (Expect::Written, Ok(written)) => {
                     // A records source read through its lift writes its
                     // table, not its tree: compare with the table.
                     let lifted = from.part.reads.first()
                         == Some(&tabnas_alchemy::translate::Shape::Records)
                         && to.part.writes == tabnas_alchemy::translate::Shape::Records;
                     if lifted {
-                        let back = to
-                            .read(&written, &limits)
+                        to.read(&written, &limits)
                             .map(|_| ())
-                            .map_err(|f| format!("the written document does not read back: {f}"));
-                        return back;
+                            .map_err(|f| format!("the written document does not read back: {f}"))
+                    } else {
+                        check(from, to, source, &written)
                     }
-                    check(from, to, &source, &written)
-                });
+                }
+            };
             if let Err(why) = outcome {
-                failures.push(format!("{name} ({}) -> {}: {why}", from.id(), to.id()));
+                failures.push(format!("{pair}: {why}"));
             }
         }
-        if (n + 1) % 25 == 0 || n + 1 == docs.len() {
+        if (n + 1) % 25 == 0 || n + 1 == docs.len() || reported.elapsed().as_secs() >= 20 {
+            reported = Instant::now();
             eprintln!(
-                "matrix: {} of {} documents ({}%), {} failures",
+                "matrix: {} of {} documents ({}%), {} failures, {}s",
                 n + 1,
                 docs.len(),
                 (n + 1) * 100 / docs.len(),
-                failures.len()
+                failures.len(),
+                started.elapsed().as_secs()
             );
         }
     }
@@ -741,14 +1547,23 @@ fn matrix(docs: Vec<(String, &'static str, String)>, floor: usize, too_deep_at_m
     for line in &failures {
         eprintln!("FAIL {line}");
     }
+    let schema_only = refusals
+        .iter()
+        .filter(|r| r.contains("schema_only:"))
+        .count();
     eprintln!(
-        "matrix: {pairs} pairs of {} documents; {} refused by their own reader, {} too deep",
+        "matrix: {pairs} pairs of {} documents; {} refused by their own reader, {} too deep, \
+         {} left out for a registered reader defect; {} pairs refused as their target declares \
+         ({schema_only} by a schema-only target, {} by Semantic Versioning's embedding)",
         docs.len(),
         refused_sources.len(),
-        too_deep.len()
+        too_deep.len(),
+        defective.len(),
+        refusals.len(),
+        refusals.len() - schema_only,
     );
     assert!(
-        pairs + (refused_sources.len() + too_deep.len()) * targets.len() == total
+        pairs + (refused_sources.len() + too_deep.len() + defective.len()) * targets.len() == total
             && docs.len() >= floor,
         "the corpora shrank: {} documents",
         docs.len()
@@ -757,6 +1572,12 @@ fn matrix(docs: Vec<(String, &'static str, String)>, floor: usize, too_deep_at_m
         too_deep.len() <= too_deep_at_most,
         "{} documents are deeper than every format reads (above)",
         too_deep.len()
+    );
+    assert!(
+        refusals.len() >= refusals_at_least,
+        "{} pairs are refused as their target declares, fewer than the {refusals_at_least} the \
+         corpora give",
+        refusals.len()
     );
     assert!(
         failures.is_empty(),
@@ -769,7 +1590,7 @@ fn matrix(docs: Vec<(String, &'static str, String)>, floor: usize, too_deep_at_m
 /// documents of JSONTestSuite every JSON parser must accept.
 #[test]
 fn every_document_translates_into_every_format() {
-    matrix(corpus(), 120, 0);
+    matrix(corpus(), 132, 0, 500);
 }
 
 /// Every format's own fixture corpus, into every format: thousands of
@@ -780,7 +1601,7 @@ fn every_document_translates_into_every_format() {
 fn every_fixture_of_every_format_translates_into_every_format() {
     let mut docs = Vec::new();
     spec_corpus(&mut docs);
-    matrix(docs, 2300, 1);
+    matrix(docs, 3868, 1, 13671);
 }
 
 /// A request from `from` to `to`, with no path and no program.

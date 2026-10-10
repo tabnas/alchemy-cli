@@ -1,6 +1,7 @@
-// The `alchemy` binary, run the way a script runs it: the five commands,
-// standard input as `-`, the statuses, and that nothing but the answer
-// reaches standard output.
+// The `alchemy` binary, run the way a script runs it: the five program
+// commands, and what `formats` and `translate` answer of the formats'
+// declared refusals; standard input as `-`, the statuses, and that nothing
+// but the answer reaches standard output.
 
 use std::io::Write;
 use std::path::PathBuf;
@@ -658,4 +659,203 @@ fn run_takes_an_output_limit() {
     );
     assert_eq!(output.status.code(), Some(2));
     assert_eq!(fail_json(&output)["code"], "INPUT_INVALID");
+}
+
+/// `formats` lists every format `translate` reads and writes, by id; those
+/// that write a schema's tree with no embedding into it are schema-only.
+#[test]
+fn formats_lists_the_formats_translate_reads_and_writes() {
+    let out = run(&["formats"], None);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let formats: serde_json::Value = serde_json::from_str(&stdout(&out)).expect("JSON");
+    let formats = formats.as_array().expect("an array");
+    let ids: Vec<&str> = formats.iter().map(|f| f["id"].as_str().unwrap()).collect();
+    assert_eq!(
+        ids.join(" "),
+        "css csv expr feed ini json json5 jsonc jsonic jsonl markdown pgn proto semver toml xml \
+         yaml zon"
+    );
+    let schema_only: Vec<&str> = formats
+        .iter()
+        .filter(|f| !f["schema"].is_null() && f["writes"] == "tree" && f["embed"].is_null())
+        .map(|f| f["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(schema_only, ["css", "pgn", "proto"]);
+    // Why a format's documents are read whole, where its manifest says:
+    // TOML's and INI's sentences as their manifests give them; JSON's none.
+    let by_id = |id: &str| formats.iter().find(|f| f["id"] == id).expect("a format");
+    for (id, manifest) in [
+        ("toml", tabnas_toml::translate().unwrap().manifest),
+        ("ini", tabnas_ini::translate().unwrap().manifest),
+    ] {
+        let manifest: serde_json::Value = serde_json::from_str(manifest).expect("JSON");
+        let whole = &manifest["translate"]["whole"];
+        assert!(whole.as_str().is_some_and(|w| !w.is_empty()), "{id}");
+        assert_eq!(&by_id(id)["whole"], whole, "{id}");
+    }
+    assert!(by_id("json")["whole"].is_null());
+    let keys: Vec<&str> = by_id("css")
+        .as_object()
+        .expect("an object")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        keys,
+        ["id", "reads", "writes", "root", "schema", "whole", "lift", "embed", "render", "loss"]
+    );
+}
+
+/// What a target declares it cannot carry it refuses before writing
+/// anything, status 1: a schema-only target refuses another format's tree
+/// when the route is composed, before the input is read, and Semantic
+/// Versioning's embedding refuses a tree that is not a version. Each takes
+/// its own format's documents, and a program that makes its tree. The
+/// TypeScript and Go commands write the same.
+#[test]
+fn translate_refuses_what_a_target_cannot_carry() {
+    let out = run(
+        &[
+            "translate",
+            "--from",
+            "json",
+            "--to",
+            "css",
+            "/nonexistent/input.json",
+        ],
+        None,
+    );
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "");
+    assert_eq!(
+        fail_json(&out),
+        serde_json::json!({
+            "code": "TARGET_VALUE_UNREPRESENTABLE",
+            "message": "schema_only: css writes a css-ast tree, the tree its own documents read as, \
+                        and this document is not one; a program that makes one can be composed with \
+                        the render",
+            "output": "none"
+        })
+    );
+    let out = run(
+        &["translate", "--from", "json", "--to", "semver", "-"],
+        Some(r#"{"major":1,"minor":2}"#),
+    );
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "");
+    assert_eq!(
+        fail_json(&out),
+        serde_json::json!({
+            "code": "TARGET_VALUE_UNREPRESENTABLE",
+            "message": "the document is not a version: it has no patch; a version is an object whose \
+                        major, minor and patch are whole numbers written in digits, with an optional \
+                        prerelease and build, each a list of identifiers or one string of them",
+            "row": 48,
+            "col": 3,
+            "file": "tabnas-semver/alchemy/embed.alc",
+            "output": "none"
+        })
+    );
+    let echo = temp_file("echo-css.alc", "def export [input] input\n");
+    let echo = echo.to_str().unwrap();
+    let tree = r#"{"type":"stylesheet","rules":[{"type":"rule","selectors":["a"],"declarations":[{"type":"declaration","property":"color","value":"red"}]}]}"#;
+    for (args, input, want) in [
+        (
+            &["--from", "json", "--to", "semver", "-"][..],
+            r#"{"major":1,"minor":2,"patch":3,"prerelease":"rc.1"}"#,
+            "1.2.3-rc.1",
+        ),
+        (
+            &["--from", "semver", "--to", "json", "-"][..],
+            "1.2.3-rc.1",
+            "{\"major\":1,\"minor\":2,\"patch\":3,\"prerelease\":[\"rc\",1],\"build\":[]}\n",
+        ),
+        (
+            &["--from", "css", "--to", "css", "-"][..],
+            "a{color:red}",
+            "a {\n  color: red;\n}\n",
+        ),
+        (
+            &["--from", "json", "--to", "css", "--with", echo, "-"][..],
+            tree,
+            "a {\n  color: red;\n}\n",
+        ),
+        (
+            &["--from", "pgn", "--to", "pgn", "-"][..],
+            "1. e4 e5 1-0",
+            "1. e4 e5 1-0\n",
+        ),
+        (
+            &["--from", "json", "--to", "expr", "-"][..],
+            r#"{"a":[1,-2]}"#,
+            "{\"a\":[1,-2]}\n",
+        ),
+        (
+            &["--from", "expr", "--to", "json", "-"][..],
+            "1+2*3\n",
+            "[\"+\",1,[\"*\",2,3]]\n",
+        ),
+    ] {
+        let out = run(&[&["translate"][..], args].concat(), Some(input));
+        assert_eq!(out.status.code(), Some(0), "{args:?}: {}", stderr(&out));
+        assert_eq!(stdout(&out), want, "{args:?}");
+        assert_eq!(stderr(&out), "", "{args:?}");
+    }
+}
+
+/// What a package's own parse checks before its parser runs, the command
+/// checks too, and refuses with status 1, writing nothing: a .proto file
+/// nesting past proto's cap is refused before the engine builds a tree that
+/// deep, whose drop could abort the process (`tabnas_proto::preflight`),
+/// and a JSON5 document holding no value with json5's own codes
+/// (`tabnas_json5::parse_with`), not the engine's `unexpected`. The Go
+/// command checks JSON5 so too, and TypeScript, whose json5 error carries
+/// no position; their proto packages have no cap to check.
+#[test]
+fn translate_checks_what_a_packages_parse_checks_first() {
+    let deep = format!(
+        "syntax = \"proto3\";\n{}{}\n",
+        "message M {".repeat(101),
+        "}".repeat(101)
+    );
+    let out = run(
+        &["translate", "--from", "proto", "--to", "json", "-"],
+        Some(&deep),
+    );
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "");
+    assert_eq!(
+        fail_json(&out),
+        serde_json::json!({
+            "code": "INPUT_INVALID",
+            "message": "proto: document nests 101 levels deep, past the 100 this parser accepts",
+            "output": "none"
+        })
+    );
+    for (input, code) in [("", "json5_empty"), ("// c\n", "json5_no_value")] {
+        let out = run(
+            &["translate", "--from", "json5", "--to", "json", "-"],
+            Some(input),
+        );
+        assert_eq!(out.status.code(), Some(1), "{input:?}: {}", stderr(&out));
+        assert_eq!(stdout(&out), "", "{input:?}");
+        assert_eq!(
+            fail_json(&out),
+            serde_json::json!({
+                "code": "INPUT_INVALID",
+                "message": format!("{code}: JSON5 input must contain a value"),
+                "row": 1,
+                "col": 1,
+                "output": "none"
+            }),
+            "{input:?}"
+        );
+    }
+    // A document that opens with a comment and holds a value is read.
+    let out = run(
+        &["translate", "--from", "json5", "--to", "json", "-"],
+        Some("// c\n{a:1}\n"),
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "{\"a\":1}\n");
 }
