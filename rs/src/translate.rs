@@ -354,21 +354,77 @@ pub fn run_compiled(
                 .row_selector()
                 .map_or(Prune::Never, |s| Prune::Under(s.clone())),
         };
-        match attempt(mode, Metrics::new()) {
+        // The incremental attempt counts into metrics of its own, which
+        // the caller's take on once it has succeeded: a run given up part
+        // way counts nothing.
+        let own = Metrics::new();
+        match attempt(mode, own.clone()) {
             Err(fail) if unfollowed(&fail) => attempt(SourceMode::Materialize, metrics)?,
-            outcome => outcome?,
+            outcome => {
+                let bytes = outcome?;
+                absorb(&metrics, &own);
+                bytes
+            }
         }
     } else {
         attempt(SourceMode::Materialize, metrics)?
     };
-    out.write_all(&bytes)
-        .and_then(|()| out.flush())
-        .map_err(|e| {
-            Fail::new(
-                Code::OutputFailed,
-                format!("the output could not be written: {e}"),
-            )
-        })
+    let mut written = 0;
+    write_out(&mut out, &bytes, &mut written).map_err(|e| {
+        let fail = Fail::new(
+            Code::OutputFailed,
+            format!("the output could not be written: {e}"),
+        );
+        // Bytes the writer took before it failed have left.
+        if written > 0 {
+            fail.committed()
+        } else {
+            fail
+        }
+    })
+}
+
+/// Write `bytes` to `out` and flush it, counting in `written` the bytes
+/// the writer took.
+fn write_out(out: &mut dyn Write, bytes: &[u8], written: &mut usize) -> std::io::Result<()> {
+    while *written < bytes.len() {
+        match out.write(&bytes[*written..]) {
+            Ok(0) => return Err(std::io::ErrorKind::WriteZero.into()),
+            Ok(n) => *written += n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e),
+        }
+    }
+    out.flush()
+}
+
+/// What an attempt counted, added to the caller's metrics: the counts
+/// summed and the high-water marks raised, so that the metrics a run hands
+/// back are those of the attempt whose output was written.
+fn absorb(into: &Metrics, from: &Metrics) {
+    // Every field by name, so that a field Metrics gains is not left out.
+    let Metrics {
+        events,
+        keys,
+        scalars,
+        rows,
+        captured_bytes,
+        captured_bytes_high,
+        retained_bytes_high,
+        output_bytes,
+    } = from;
+    for (to, n) in [
+        (&into.events, events),
+        (&into.keys, keys),
+        (&into.scalars, scalars),
+        (&into.rows, rows),
+        (&into.captured_bytes, captured_bytes),
+        (&into.output_bytes, output_bytes),
+    ] {
+        Metrics::add(to, Metrics::get(n));
+    }
+    Metrics::raise(&into.captured_bytes_high, Metrics::get(captured_bytes_high));
+    Metrics::raise(&into.retained_bytes_high, Metrics::get(retained_bytes_high));
 }
 
 /// The events of a document, collected into a value.

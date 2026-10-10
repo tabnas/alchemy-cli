@@ -21,6 +21,7 @@ package translate_test
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -821,14 +822,8 @@ const depthBound = 100
 // a defect outside this repository: by the name the matrix gives a pair,
 // each with its defect. The matrix holds each to failing, so an entry
 // cannot outlive the defect it records: one that passes, or that names no
-// pair of the corpus, fails the test until it is deleted.
-var divergent = map[string]string{
-	"transduce/unicode.jsonic (jsonic) -> zon": "ZON's Go reader builds an integer no float64 holds " +
-		"exactly (12345678901234567890) as a *big.Int, where its Rust reader builds " +
-		`{"$big": "<digits>"}, and transduce's Go source has no event for one: the incremental ` +
-		"adapter drops the element and the materialized walk writes the struct's fmt text, so the " +
-		"integer the render wrote does not read back. The ZON written is the Rust port's, byte for byte.",
-}
+// pair of the corpus, fails the test until it is deleted. There is none.
+var divergent = map[string]string{}
 
 // matrix is the cross product of docs and every format: each document read
 // with its format's grammar, written in every format, and read back under
@@ -955,4 +950,77 @@ func TestParsePathReadsKeysAndIndexes(t *testing.T) {
 // JSON parser must accept, into every format.
 func TestEveryDocumentTranslatesIntoEveryFormat(t *testing.T) {
 	matrix(t, corpus(t), 120, 0)
+}
+
+// request is a request from from to to, with no path and no program.
+func request(from, to *translate.Format) *translate.Request {
+	return &translate.Request{From: from, To: to, Options: at.DefaultOptions(), Limits: tt.DefaultLimits()}
+}
+
+// ZON's reader builds an integer no float64 holds exactly as a *big.Int,
+// which this command reads as the object {"$big": "<digits>"}, the digits
+// after a minus sign when it is negative, as ZON's part declares and its
+// Rust reader builds; ZON's render writes it back as the integer.
+func TestAZonIntegerNoFloatHoldsIsTheBigObject(t *testing.T) {
+	zon, json := format(t, "zon"), format(t, "json")
+	text := ".{ 1, 12345678901234567890, -12345678901234567890, 0xc1ce108124179e16 }\n"
+	want := `[1,{"$big":"12345678901234567890"},{"$big":"-12345678901234567890"},{"$big":"13965117641364839958"}]`
+	got, f := translateText(zon, json, text, nil)
+	if f != nil {
+		t.Fatal(f)
+	}
+	if strings.TrimRight(got, "\n") != want {
+		t.Fatalf("got %s, want %s", got, want)
+	}
+	back, f := translateText(zon, zon, text, nil)
+	if f != nil {
+		t.Fatal(f)
+	}
+	if got, f = translateText(zon, json, back, nil); f != nil || strings.TrimRight(got, "\n") != want {
+		t.Fatalf("read back from %q: got %s (%v), want %s", back, got, f, want)
+	}
+}
+
+// The metrics a run is given are its own, whether the incremental attempt
+// wrote the output or one it gave up was read again whole.
+func TestARunsMetricsAreThoseOfTheAttemptThatWroteTheOutput(t *testing.T) {
+	json := format(t, "json")
+	for _, text := range []string{`{"a": [1, 2]}`, `{"a": 1, "a": 2}`} {
+		var out bytes.Buffer
+		metrics := tt.NewMetrics()
+		if f := translate.Run(request(json, json), text, &out, metrics); f != nil {
+			t.Fatalf("%s: %v", text, f)
+		}
+		if out.Len() == 0 || metrics.OutputBytes.Load() != uint64(out.Len()) || metrics.Events.Load() == 0 {
+			t.Errorf("%s: wrote %d bytes; the metrics count %d output bytes and %d events",
+				text, out.Len(), metrics.OutputBytes.Load(), metrics.Events.Load())
+		}
+	}
+}
+
+// takes is a writer that takes n bytes, then fails.
+type takes struct{ n int }
+
+func (w *takes) Write(p []byte) (int, error) {
+	n := min(w.n, len(p))
+	w.n -= n
+	if n < len(p) {
+		return n, errors.New("the disk is full")
+	}
+	return n, nil
+}
+
+// A writer that fails once it has taken some of the output: the failure
+// says the output had left, and says it had not when it took none.
+func TestAnOutputFailureAfterBytesLeftIsCommitted(t *testing.T) {
+	json := format(t, "json")
+	for _, c := range []struct {
+		takes     int
+		committed bool
+	}{{0, false}, {3, true}} {
+		f := translate.Run(request(json, json), "[1, 2, 3]", &takes{c.takes}, tt.NewMetrics())
+		if f == nil || f.Code != tt.CodeOutputFailed || f.CommittedOutput != c.committed {
+			t.Errorf("taking %d bytes: %v", c.takes, f)
+		}
+	}
 }

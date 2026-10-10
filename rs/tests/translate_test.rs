@@ -22,7 +22,7 @@ use std::sync::{Arc, Mutex};
 use tabnas_alchemy::translate::{Composition, Options};
 use tabnas_alchemy::Program;
 use tabnas_alchemy_cli::translate::{self, Format, Request};
-use tabnas_transduce::{Datum, Fail, Limits, Metrics};
+use tabnas_transduce::{Code, Datum, Fail, Limits, Metrics};
 
 /// What a run wrote, shared with the test.
 #[derive(Clone, Default)]
@@ -145,11 +145,16 @@ fn format(id: &str) -> &'static Format {
     translate::format(id).unwrap_or_else(|| panic!("{id} is a format"))
 }
 
+/// A pair's source, target and program, by id and text.
+type PairKey = (String, String, Option<String>);
+
+/// A pair's composition, compiled.
+type Compiled = Rc<(Composition, Program)>;
+
 thread_local! {
     /// The compositions compiled so far, by source, target and program:
     /// one compiled composition serves every document of a pair.
-    static COMPILED: RefCell<HashMap<(String, String, Option<String>), Rc<(Composition, Program)>>> =
-        RefCell::new(HashMap::new());
+    static COMPILED: RefCell<HashMap<PairKey, Compiled>> = RefCell::new(HashMap::new());
 }
 
 /// Translate `text`, read as `from`, into `to`, with `program` in front
@@ -776,4 +781,90 @@ fn every_fixture_of_every_format_translates_into_every_format() {
     let mut docs = Vec::new();
     spec_corpus(&mut docs);
     matrix(docs, 2300, 1);
+}
+
+/// A request from `from` to `to`, with no path and no program.
+fn request<'f>(from: &'f Format, to: &'f Format) -> Request<'f> {
+    Request {
+        from,
+        to,
+        path: None,
+        options: Options::default(),
+        program: None,
+        limits: Limits::default(),
+    }
+}
+
+/// ZON's reader builds an integer no double holds exactly as the object
+/// `{"$big": "<digits>"}`, the digits after a minus sign when it is
+/// negative, and ZON's render writes that object back as the integer: the
+/// form every port reads it in.
+#[test]
+fn a_zon_integer_no_double_holds_is_the_big_object() {
+    let (zon, json) = (format("zon"), format("json"));
+    let text = ".{ 1, 12345678901234567890, -12345678901234567890, 0xc1ce108124179e16 }\n";
+    let want = r#"[1,{"$big":"12345678901234567890"},{"$big":"-12345678901234567890"},{"$big":"13965117641364839958"}]"#;
+    assert_eq!(
+        translate_text(zon, json, text, None).unwrap().trim_end(),
+        want
+    );
+    let back = translate_text(zon, zon, text, None).unwrap();
+    assert_eq!(
+        translate_text(zon, json, &back, None).unwrap().trim_end(),
+        want
+    );
+}
+
+/// The metrics a run is given are its own, whether the incremental attempt
+/// wrote the output or one it gave up was read again whole.
+#[test]
+fn a_runs_metrics_are_those_of_the_attempt_that_wrote_the_output() {
+    let json = format("json");
+    for text in [r#"{"a": [1, 2]}"#, r#"{"a": 1, "a": 2}"#] {
+        let out = Buffer::default();
+        let metrics = Metrics::new();
+        translate::run(
+            &request(json, json),
+            text,
+            Box::new(out.clone()),
+            metrics.clone(),
+        )
+        .unwrap();
+        let written = out.0.lock().unwrap().len() as u64;
+        assert!(written > 0, "{text}");
+        assert_eq!(Metrics::get(&metrics.output_bytes), written, "{text}");
+        assert!(Metrics::get(&metrics.events) > 0, "{text}");
+    }
+}
+
+/// A writer that fails once it has taken some of the output: the failure
+/// says the output had left, and says it had not when it took none.
+#[test]
+fn an_output_failure_after_bytes_left_is_committed() {
+    struct Takes(usize);
+    impl Write for Takes {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            if self.0 == 0 {
+                return Err(std::io::Error::other("the disk is full"));
+            }
+            let n = self.0.min(bytes.len());
+            self.0 -= n;
+            Ok(n)
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let json = format("json");
+    for (takes, committed) in [(0, false), (3, true)] {
+        let fail = translate::run(
+            &request(json, json),
+            "[1, 2, 3]",
+            Box::new(Takes(takes)),
+            Metrics::new(),
+        )
+        .unwrap_err();
+        assert_eq!(fail.code, Code::OutputFailed, "{takes}");
+        assert_eq!(fail.committed_output, committed, "{takes}");
+    }
 }

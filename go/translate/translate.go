@@ -34,10 +34,12 @@ import (
 	"bytes"
 	"io"
 	"math"
+	"math/big"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	alchemy "github.com/tabnas/alchemy/go"
 	at "github.com/tabnas/alchemy/go/translate"
@@ -49,6 +51,7 @@ import (
 	tabnasjsonic "github.com/tabnas/jsonic/go"
 	tabnasjsonl "github.com/tabnas/jsonl/go"
 	tabnasmarkdown "github.com/tabnas/markdown/go"
+	tabnas "github.com/tabnas/parser/go"
 	tr "github.com/tabnas/render/go"
 	tabnastoml "github.com/tabnas/toml/go"
 	tt "github.com/tabnas/transduce/go"
@@ -207,8 +210,27 @@ func modules() []module {
 		{func() at.Descriptor {
 			p := tabnaszon.Translate()
 			return descriptor("tabnas-zon", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
-		}, func(text string) *tt.ParserSource { return tt.NewParserSource(tabnaszon.MakeJsonic(), text) }},
+		}, func(text string) *tt.ParserSource { return tt.NewParserSource(zonParser(), text) }},
 	}
+}
+
+// bigKey is the member of the object that is ZON's reader's big integer.
+const bigKey = "$big"
+
+// zonParser is ZON's parser, with an integer no float64 holds exactly as
+// the object {"$big": "<digits>"}, the digits after a minus sign when it is
+// negative: the reader's big integer as ZON's translation part declares it
+// and its Rust reader builds it. The Go reader builds a *big.Int, which no
+// transduce event carries, so the token's value is replaced as it is read,
+// before a rule takes it, and the value and the events hold the object.
+func zonParser() *tabnas.Tabnas {
+	parser := tabnaszon.MakeJsonic()
+	parser.Sub(func(tkn *tabnas.Token, _ *tabnas.Rule, _ *tabnas.Context) {
+		if n, ok := tkn.Val.(*big.Int); ok {
+			tkn.Val = &tabnas.OrderedMap{Keys: []string{bigKey}, Vals: map[string]any{bigKey: n.String()}}
+		}
+	}, nil)
+	return parser
 }
 
 var (
@@ -452,9 +474,15 @@ func RunCompiled(r *Request, compiled *Compiled, input string, out io.Writer, me
 		if selector, ok := compiled.Program.RowSelector(); ok {
 			prune = tt.PruneUnderSelector(selector)
 		}
-		written, f = attempt(tt.IncrementalMode(prune), tt.NewMetrics())
+		// The incremental attempt counts into metrics of its own, which
+		// the caller's take on once it has succeeded: a run given up part
+		// way counts nothing.
+		own := tt.NewMetrics()
+		written, f = attempt(tt.IncrementalMode(prune), own)
 		if f != nil && unfollowed(f) {
 			written, f = attempt(tt.MaterializeMode(), metrics)
+		} else if f == nil {
+			absorb(metrics, own)
 		}
 	} else {
 		written, f = attempt(tt.MaterializeMode(), metrics)
@@ -465,10 +493,39 @@ func RunCompiled(r *Request, compiled *Compiled, input string, out io.Writer, me
 	if len(written) == 0 {
 		return nil
 	}
-	if _, err := out.Write(written); err != nil {
-		return tt.NewFail(tt.CodeOutputFailed, "the output could not be written: "+err.Error())
+	if n, err := out.Write(written); err != nil {
+		f := tt.NewFail(tt.CodeOutputFailed, "the output could not be written: "+err.Error())
+		// Bytes the writer took before it failed have left.
+		if n > 0 {
+			f.Committed()
+		}
+		return f
 	}
 	return nil
+}
+
+// absorb adds what an attempt counted to the caller's metrics: the counts
+// summed and the high-water marks raised, so that the metrics a run hands
+// back are those of the attempt whose output was written.
+func absorb(into, from *tt.Metrics) {
+	into.Events.Add(from.Events.Load())
+	into.Keys.Add(from.Keys.Load())
+	into.Scalars.Add(from.Scalars.Load())
+	into.Rows.Add(from.Rows.Load())
+	into.CapturedBytes.Add(from.CapturedBytes.Load())
+	into.OutputBytes.Add(from.OutputBytes.Load())
+	raise(&into.CapturedBytesHigh, from.CapturedBytesHigh.Load())
+	raise(&into.RetainedBytesHigh, from.RetainedBytesHigh.Load())
+}
+
+// raise lifts a high-water mark to v when v is higher.
+func raise(high *atomic.Uint64, v uint64) {
+	for {
+		now := high.Load()
+		if v <= now || high.CompareAndSwap(now, v) {
+			return
+		}
+	}
 }
 
 // collect is the events of a document, collected into a value.

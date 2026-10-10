@@ -133,8 +133,26 @@ function packages(): Array<[translate.Descriptor | undefined, () => Tabnas]> {
     [descriptor('tabnas-toml', tomlParts()), () => new Tabnas().use(jsonic).use(Toml)],
     [descriptor('tabnas-xml', xmlParts()), () => new Tabnas().use(Xml)],
     [descriptor('tabnas-yaml', yamlParts()), () => new Tabnas().use(jsonic).use(Yaml)],
-    [descriptor('tabnas-zon', zonParts()), () => new Tabnas().use(jsonic).use(Zon)],
+    [descriptor('tabnas-zon', zonParts()), () => zonParser()],
   ]
+}
+
+// ZON's parser, with an integer no double holds exactly as the object
+// `{"$big": "<digits>"}`, the digits after a minus sign when it is
+// negative: the reader's big integer as ZON's translation part declares it
+// and its Rust reader builds it. The TypeScript reader builds a bigint,
+// which transduce writes as the nearest double, so the token's value is
+// replaced as it is read, before a rule takes it, and the value and the
+// events hold the object.
+function zonParser(): Tabnas {
+  return new Tabnas()
+    .use(jsonic)
+    .use(Zon)
+    .sub({
+      lex: (tkn: { val: unknown }) => {
+        if ('bigint' === typeof tkn.val) tkn.val = { $big: tkn.val.toString() }
+      },
+    })
 }
 
 let registry: ReadonlyArray<Format> | undefined
@@ -270,8 +288,13 @@ export function runCompiled(
   if (incremental) {
     const selector = program.rowSelector()
     const mode = SourceMode.incremental(undefined === selector ? Prune.never() : Prune.under(selector))
+    // The incremental attempt counts into metrics of its own, which the
+    // caller's take on once it has succeeded: a run given up part way
+    // counts nothing.
+    const own = new Metrics()
     try {
-      bytes = attempt(mode, new Metrics())
+      bytes = attempt(mode, own)
+      absorb(metrics, own)
     } catch (err) {
       if (!unfollowed(err)) throw err
       bytes = attempt(SourceMode.materialize(), metrics)
@@ -279,18 +302,36 @@ export function runCompiled(
   } else {
     bytes = attempt(SourceMode.materialize(), metrics)
   }
+  let written = 0
   try {
     let rest: Uint8Array = bytes
     while (0 < rest.length) {
       const n = out.write(rest)
       if (n <= 0) throw new Error('failed to write whole buffer')
+      written += n
       rest = rest.subarray(n)
     }
     out.flush?.()
   } catch (err) {
     const why = err instanceof Error ? err.message : String(err)
-    throw new Fail('OUTPUT_FAILED', `the output could not be written: ${why}`)
+    const fail = new Fail('OUTPUT_FAILED', `the output could not be written: ${why}`)
+    // Bytes the writer took before it failed have left.
+    throw 0 < written ? fail.committed() : fail
   }
+}
+
+// What an attempt counted, added to the caller's metrics: the counts
+// summed and the high-water marks raised, so that the metrics a run hands
+// back are those of the attempt whose output was written.
+function absorb(into: Metrics, from: Metrics): void {
+  into.events += from.events
+  into.keys += from.keys
+  into.scalars += from.scalars
+  into.rows += from.rows
+  into.captured_bytes += from.captured_bytes
+  into.output_bytes += from.output_bytes
+  into.captured_bytes_high = Math.max(into.captured_bytes_high, from.captured_bytes_high)
+  into.retained_bytes_high = Math.max(into.retained_bytes_high, from.retained_bytes_high)
 }
 
 // The events of a document, collected into a value.

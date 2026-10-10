@@ -254,10 +254,17 @@ fn run(args: &[String]) -> Result<String, Exit> {
                 limits,
             };
             // The composition is compiled before the input is read, so a
-            // route that cannot be composed never waits on standard input.
-            translate::compile(&request)?;
+            // route that cannot be composed never waits on standard input,
+            // and once.
+            let compiled = translate::compile(&request)?;
             let input = read(&options.input)?;
-            translate::run(&request, &input, Box::new(io::stdout()), Metrics::new())?;
+            translate::run_compiled(
+                &request,
+                &compiled,
+                &input,
+                Box::new(io::stdout()),
+                Metrics::new(),
+            )?;
             Ok(String::new())
         }
         "formats" => {

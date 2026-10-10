@@ -29,6 +29,8 @@ require (
 // documents with the grammars above and run fixtures: the engine and the
 // shared fixture runner. They were alchemy's own tests, which ran programs
 // on transduce and render; alchemy depends on neither, so they are here.
+// translate imports the engine too, to read ZON's big integers in the form
+// ZON's translation part declares (zonParser).
 require (
 	github.com/tabnas/parser/go v0.12.11
 	github.com/tabnas/support/go v0.3.9

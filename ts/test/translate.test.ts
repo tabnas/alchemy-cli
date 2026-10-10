@@ -26,6 +26,7 @@ import { extname, join } from 'node:path'
 
 import { translate as alchemyTranslate } from '@tabnas/alchemy'
 import { BytesWriter } from '@tabnas/render'
+import type { Writer } from '@tabnas/render'
 import { Limits, Metrics, toText } from '@tabnas/transduce'
 import type { Datum } from '@tabnas/transduce'
 
@@ -701,10 +702,78 @@ function matrix(docs: Doc[], floor: number, tooDeepAtMost: number): void {
   assert.ok(0 === failures.length, `${failures.length} of ${pairs} pairs failed (above)`)
 }
 
+// A request from `from` to `to`, with no path and no program.
+function request(from: Format, to: Format): Request {
+  return { from, to, options: alchemyTranslate.Options.default(), program: undefined, limits: Limits.default() }
+}
+
+function named(id: string): Format {
+  const found = formatNamed(id)
+  assert.ok(undefined !== found, `${id} is a format`)
+  return found
+}
+
 describe('translate', () => {
   // transduce's fixtures, one document per format at least, and the
   // documents of JSONTestSuite every JSON parser must accept.
   it('every document translates into every format', () => {
     matrix(corpus(), 120, 0)
+  })
+
+  // ZON's reader builds an integer no double holds exactly as a bigint,
+  // which this command reads as the object {"$big": "<digits>"}, the
+  // digits after a minus sign when it is negative, as ZON's part declares
+  // and its Rust reader builds; ZON's render writes it back as the
+  // integer.
+  it('a ZON integer no double holds is the $big object', () => {
+    const [zon, json] = [named('zon'), named('json')]
+    const text = '.{ 1, 12345678901234567890, -12345678901234567890, 0xc1ce108124179e16 }\n'
+    const want =
+      '[1,{"$big":"12345678901234567890"},{"$big":"-12345678901234567890"},{"$big":"13965117641364839958"}]'
+    assert.strictEqual(translateText(zon, json, text).trimEnd(), want)
+    assert.strictEqual(translateText(zon, json, translateText(zon, zon, text)).trimEnd(), want)
+  })
+
+  // The metrics a run is given are its own, whether the incremental
+  // attempt wrote the output or one it gave up was read again whole.
+  it("a run's metrics are those of the attempt that wrote the output", () => {
+    const json = named('json')
+    for (const text of ['{"a": [1, 2]}', '{"a": 1, "a": 2}']) {
+      const out = new BytesWriter()
+      const metrics = new Metrics()
+      const r = request(json, json)
+      runCompiled(r, compile(r), text, out, metrics)
+      const written = out.bytes().length
+      assert.ok(0 < written, text)
+      assert.strictEqual(metrics.output_bytes, written, text)
+      assert.ok(0 < metrics.events, text)
+    }
+  })
+
+  // A writer that fails once it has taken some of the output: the failure
+  // says the output had left, and says it had not when it took none.
+  it('an output failure after bytes left is committed', () => {
+    const json = named('json')
+    for (const [takes, committed] of [
+      [0, false],
+      [3, true],
+    ] as const) {
+      let left: number = takes
+      const out: Writer = {
+        write(bytes: Uint8Array): number {
+          if (0 === left) throw new Error('the disk is full')
+          const n = Math.min(left, bytes.length)
+          left -= n
+          return n
+        },
+      }
+      const r = request(json, json)
+      assert.throws(
+        () => runCompiled(r, compile(r), '[1, 2, 3]', out, new Metrics()),
+        (err: { code?: string; committedOutput?: boolean }) =>
+          'OUTPUT_FAILED' === err.code && committed === err.committedOutput,
+        String(takes),
+      )
+    }
   })
 })
