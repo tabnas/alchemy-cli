@@ -4,7 +4,7 @@ go 1.24.7
 
 // The language, the stages its programs run on (transduce's routers and
 // render's renderers), and the grammars: the JSON one `run` reads its
-// document with, and the twelve `translate` reads and writes, each with
+// document with, and the eighteen `translate` reads and writes, each with
 // its translation parts. The shared types, and the Routers and Renderers
 // that transduce and render build on them, are in all three from v0.2.0.
 require (
