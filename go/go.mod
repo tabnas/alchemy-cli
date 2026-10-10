@@ -25,8 +25,8 @@ require (
 	github.com/tabnas/render/go v0.2.4
 	github.com/tabnas/semver/go v0.0.10
 	github.com/tabnas/toml/go v0.5.17
-	github.com/tabnas/transduce/go v0.2.6
-	github.com/tabnas/xml/go v0.7.16
+	github.com/tabnas/transduce/go v0.2.7
+	github.com/tabnas/xml/go v0.7.17
 	github.com/tabnas/yaml/go v0.5.23
 	github.com/tabnas/zon/go v0.5.16
 )
