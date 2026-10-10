@@ -48,11 +48,6 @@ import (
 	"github.com/tabnas/alchemy-cli/go/translate"
 	alchemy "github.com/tabnas/alchemy/go"
 	at "github.com/tabnas/alchemy/go/translate"
-	tabnaschess "github.com/tabnas/chess/go"
-	tabnasexpr "github.com/tabnas/expr/go"
-	tabnasfeed "github.com/tabnas/feed/go"
-	tabnas "github.com/tabnas/parser/go"
-	tabnasproto "github.com/tabnas/proto/go"
 	tt "github.com/tabnas/transduce/go"
 )
 
@@ -190,16 +185,6 @@ func translateText(from, to *translate.Format, text string, program *alchemy.Sou
 // example document, so an entry fails once its reader is repaired, and must
 // then be deleted.
 var readerDefects = map[string]string{
-	"expr": "tabnasexpr's parser puts an operator's *Op in the operation's list, which transduce's walker " +
-		"writes as its fmt text, so 1+2*3 reads as [\"{addition-infix + ...}\",1,[...]]; the list its parts " +
-		"declare has the operator's description or its source text there, which Simplify gives",
-	"proto": "tabnasproto's parser builds the grammar's syntax tree, and the descriptor its parts declare " +
-		"(the schema proto-descriptor) is what its Parse and ToDescriptor build from it; transduce walks " +
-		"the syntax tree, which proto's own render refuses as no FileDescriptorProto",
-	"feed": "tabnasfeed's parser builds a typed AtomFeed, which transduce's walker writes as its fmt text, " +
-		"pointers and all; the tree its parts declare is the one its JSON tags name",
-	"pgn": "tabnaschess's parser builds a typed Database, whose games transduce's walker writes as their " +
-		"fmt text, pointers and all; the tree its parts declare is the one its JSON tags name",
 	"semver": "tabnassemver's reader builds a number past 2^53 - 1 as a *big.Int, which transduce's walker " +
 		"writes as its fmt text, so 99999999999999999999.1.2 is refused by its own render; the Rust reader " +
 		"keeps the digits, as the format's render takes them (its part's alchemy/render.alc). The format " +
@@ -213,139 +198,58 @@ func registeredDefect(id string) bool {
 	return ok
 }
 
-// jsonTree is a typed value as the tree its JSON encoding names.
-func jsonTree(t testing.TB, value any) tt.Datum {
-	t.Helper()
-	text, err := json.Marshal(value)
-	if err != nil {
-		t.Fatal(err)
-	}
-	d, err := tt.DatumFromJSON(string(text))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return d
-}
-
-// exprRead is an expression document as expr's shared fixtures read one,
-// with its own API: its tree, each operator reduced to its source text.
-func exprRead(text string) (tt.Datum, error) {
-	value, err := tabnasexpr.Parse(text)
-	if err != nil {
-		return tt.Datum{}, err
-	}
-	return tt.DatumFromValue(tabnasexpr.Simplify(value)), nil
-}
-
-// feedRead is a feed as its module builds it, the typed AtomFeed, as the
-// tree its JSON tags name.
-func feedRead(t testing.TB, text string) (tt.Datum, error) {
-	t.Helper()
-	parser := tabnas.Make()
-	if err := parser.UseDefaults(tabnasfeed.Feed, tabnasfeed.Defaults); err != nil {
-		t.Fatal(err)
-	}
-	value, err := parser.Parse(text)
-	if err != nil {
-		return tt.Datum{}, err
-	}
-	return jsonTree(t, value), nil
-}
-
 // TestARegisteredReaderDefectStillStands holds each registered reader
-// defect to an example: the tree this command reads it as is not the one
-// the format's module builds with its own API, the tree its parts declare,
-// or a version past 2^53 - 1 does not survive its own round trip. Once a
-// reader is repaired this fails, until its entry in readerDefects is
-// deleted.
+// defect to an example: a version past 2^53 - 1 does not survive its own
+// round trip. Once a reader is repaired this fails, until its entry in
+// readerDefects is deleted.
 func TestARegisteredReaderDefectStillStands(t *testing.T) {
-	limits := tt.DefaultLimits()
 	for id, defect := range readerDefects {
-		var example string
-		var read, declared tt.Datum
-		var f *tt.Fail
 		switch id {
-		case "expr":
-			example = "1+2*3\n"
-			if read, f = format(t, id).Read(example, limits); f != nil {
-				t.Fatal(f)
-			}
-			read = exprSimplify(read)
-			var err error
-			if declared, err = exprRead(example); err != nil {
-				t.Fatal(err)
-			}
-		case "proto":
-			example = "syntax = \"proto3\";\nmessage M { int32 a = 1; }\n"
-			if read, f = format(t, id).Read(example, limits); f != nil {
-				t.Fatal(f)
-			}
-			descriptor, err := tabnasproto.Parse(example, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			declared = jsonTree(t, descriptor)
-			// A .proto file is refused by its own render.
-			_, f := translateText(format(t, id), format(t, id), example, nil)
-			if f == nil || f.Code != tt.CodeTargetValueUnrepresentable ||
-				!strings.HasPrefix(f.Message, "the tree is not a FileDescriptorProto") {
-				t.Errorf("proto into proto: %v", f)
-			}
-		case "feed":
-			example = "<rss version=\"2.0\"><channel><title>News</title><item><title>A</title></item></channel></rss>"
-			if read, f = format(t, id).Read(example, limits); f != nil {
-				t.Fatal(f)
-			}
-			var err error
-			if declared, err = feedRead(t, example); err != nil {
-				t.Fatal(err)
-			}
-		case "pgn":
-			example = "[Event \"X\"]\n\n1. e4 e5 1-0\n"
-			if read, f = format(t, id).Read(example, limits); f != nil {
-				t.Fatal(f)
-			}
-			database, err := tabnaschess.Make().Parse(example)
-			if err != nil {
-				t.Fatal(err)
-			}
-			declared = jsonTree(t, database)
 		case "semver":
-			example = "99999999999999999999.1.2"
+			example := "99999999999999999999.1.2"
 			back, f := translateText(format(t, id), format(t, id), example, nil)
 			if f == nil && back == example {
 				t.Errorf("%s now keeps a version past 2^53 - 1: delete its entry (%s)", id, defect)
 			}
-			continue
 		default:
 			t.Fatalf("%s: a registered defect needs an example here", id)
-		}
-		if same(&read, &declared) {
-			t.Errorf("%s now reads %q as the tree its module builds, %s: delete its entry (%s)", id, example, declared, defect)
 		}
 	}
 }
 
-// orderDivergent is the formats whose Go reader builds plain maps, which
-// transduce's walker gives in sorted key order, so a translation from one
-// writes its members in another order than the Rust and TypeScript
-// commands, which write them as the reader met them: each with an example
-// and the JSON this command writes of it. The matrix compares values, which
-// keep no order, so it cannot see this; TestAPlainMapsMembersAreSorted
-// holds each entry to its example, and fails once the module keeps its
-// members' order, when the entry is deleted. (proto's maps are sorted too,
-// and its reader is a registered defect besides.)
+// orderDivergent is the formats whose Go reader gives an object's members
+// in another order than the Rust and TypeScript readers do, so that a
+// translation from one writes them so: each id with an example document
+// and its JSON as this command writes it. A plain map keeps no order, and
+// transduce's walker gives its members in sorted key order (semver's
+// version, css's nodes, an expression's objects, which expr's Simplify
+// makes plain maps, and a PGN game's tags); a module's typed value is
+// written in its fields' order, where the Rust and TypeScript readers keep
+// the document's (a feed) or the descriptor's own (proto, in TypeScript's
+// order; the Rust reader of proto is a registered defect). The values are
+// the same, and the matrix, comparing values, cannot see the order;
+// TestAReadersMemberOrderIsPinned holds each entry to its example.
 var orderDivergent = map[string][2]string{
 	"semver": {"1.2.3-rc.1", `{"build":[],"major":1,"minor":2,"patch":3,"prerelease":["rc",1]}`},
 	"css": {"a{color:red}", `{"rules":[{"declarations":[{"property":"color","type":"declaration","value":"red"}],` +
 		`"selectors":["a"],"type":"rule"}],"type":"stylesheet"}`},
+	"expr": {"b:1,a:2", `{"a":2,"b":1}`},
+	"pgn": {"[White \"W\"]\n[Black \"B\"]\n\n1. e4 1-0\n",
+		`[{"tags":{"Black":"B","White":"W"},"moves":[{"san":"e4","piece":"P","to":"e4","number":1,"side":"w"}],"result":"1-0"}]`},
+	"feed": {`<feed xmlns="http://www.w3.org/2005/Atom"><title>T</title><entry><title>A</title></entry></feed>`,
+		`{"format":"atom","version":"1.0","title":{"type":"text","value":"T"},"entries":[{"title":{"type":"text","value":"A"}}]}`},
+	"proto": {"syntax = \"proto3\";\noption java_package = \"x\";\n",
+		`{"dependency":[],"publicDependency":[],"weakDependency":[],"messageType":[],"enumType":[],"service":[],` +
+			`"extension":[],"options":{"java_package":"x"},"syntax":"proto3"}`},
 }
 
-// TestAPlainMapsMembersAreSorted holds each orderDivergent entry to its
-// example: the Rust and TypeScript commands write semver's example as
-// {"major":1,"minor":2,"patch":3,"prerelease":["rc",1],"build":[]}, and
-// css's with each node's type first.
-func TestAPlainMapsMembersAreSorted(t *testing.T) {
+// TestAReadersMemberOrderIsPinned holds each orderDivergent entry to its
+// example. The Rust and TypeScript commands write semver's example as
+// {"major":1,"minor":2,"patch":3,"prerelease":["rc",1],"build":[]}, css's
+// with each node's type first, expr's as {"b":1,"a":2}, the game's tags as
+// {"White":"W","Black":"B"}, the feed with its entries before its title,
+// and (TypeScript) the descriptor with its syntax before its options.
+func TestAReadersMemberOrderIsPinned(t *testing.T) {
 	for id, c := range orderDivergent {
 		got, f := translateText(format(t, id), format(t, "json"), c[0], nil)
 		if f != nil || strings.TrimSuffix(got, "\n") != c[1] {
@@ -1634,19 +1538,9 @@ func check(t testing.TB, from, target *translate.Format, source tt.Datum, writte
 		// An embedding reads back through its reverse, which its file holds
 		// beside it (xml-unembed, feed-unembed): the format's tree, as JSON,
 		// unembedded, and written where a non-finite number has a spelling.
-		// feed's reader is a registered defect here, so a feed is read back
-		// as its module builds it, the tree its JSON tags name.
-		var tree tt.Datum
-		if id == "feed" {
-			var err error
-			if tree, err = feedRead(t, written); err != nil {
-				return fmt.Errorf("the written document does not read back: %v", err)
-			}
-		} else {
-			var f *tt.Fail
-			if tree, f = target.Read(written, limits); f != nil {
-				return fmt.Errorf("the written document does not read back: %v", f)
-			}
+		tree, f := target.Read(written, limits)
+		if f != nil {
+			return fmt.Errorf("the written document does not read back: %v", f)
 		}
 		embed := target.Part.Embed
 		if embed == nil || !strings.HasSuffix(embed.Entry, "-embed") {
@@ -1660,15 +1554,6 @@ func check(t testing.TB, from, target *translate.Format, source tt.Datum, writte
 		}
 		if back, f = format(t, "yaml").Read(yaml, limits); f != nil {
 			return fmt.Errorf("the unembedded tree does not read back: %v", f)
-		}
-	case id == "expr":
-		// expr's reader, as this command reads through transduce, is a
-		// registered defect here, so the written document is read back as
-		// expr's fixtures read one, with its own API: its tree, each
-		// operator reduced to its source text.
-		var err error
-		if back, err = exprRead(written); err != nil {
-			return fmt.Errorf("the written document does not read back: %v", err)
 		}
 	default:
 		var f *tt.Fail
@@ -1912,7 +1797,7 @@ func TestParsePathReadsKeysAndIndexes(t *testing.T) {
 // document per format at least, and the documents of JSONTestSuite every
 // JSON parser must accept, into every format.
 func TestEveryDocumentTranslatesIntoEveryFormat(t *testing.T) {
-	matrix(t, corpus(t), 132, 0, 496)
+	matrix(t, corpus(t), 132, 0, 500)
 }
 
 // request is a request from from to to, with no path and no program.

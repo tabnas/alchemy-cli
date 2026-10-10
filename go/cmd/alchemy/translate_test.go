@@ -272,6 +272,10 @@ func TestTranslateRefusesWhatATargetCannotCarry(t *testing.T) {
 		{[]string{"--from", "css", "--to", "css", "-"}, "a{color:red}", "a {\n  color: red;\n}\n"},
 		{[]string{"--from", "json", "--to", "css", "--with", echo, "-"}, tree, "a {\n  color: red;\n}\n"},
 		{[]string{"--from", "json", "--to", "expr", "-"}, `{"a":[1,-2]}`, `{"a":[1,-2]}` + "\n"},
+		{[]string{"--from", "expr", "--to", "json", "-"}, "1+2*3\n", `["+",1,["*",2,3]]` + "\n"},
+		{[]string{"--from", "pgn", "--to", "pgn", "-"}, "1. e4 e5 1-0\n", "1. e4 e5 1-0\n"},
+		{[]string{"--from", "proto", "--to", "proto", "-"}, "syntax = \"proto3\";\nmessage M { int32 a = 1; }\n",
+			"syntax = \"proto3\";\nmessage M {\n  int32 a = 1;\n}\n"},
 	} {
 		wantSuccess(t, invoke(t, append([]string{"translate"}, c.args...), text(c.stdin)), c.want)
 	}
