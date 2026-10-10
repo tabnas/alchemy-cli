@@ -45,6 +45,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"unicode"
 
 	alchemy "github.com/tabnas/alchemy/go"
 	at "github.com/tabnas/alchemy/go/translate"
@@ -85,16 +86,26 @@ type Format struct {
 	// declare (an expression's operators, or a typed value). It is nil
 	// where reader is not.
 	tree func(text string) (any, *tt.Fail)
+	// check is what the module's own parse checks before its parser runs,
+	// which the parser does not check itself: a document it refuses is not
+	// parsed. Nil where the module checks nothing first.
+	check func(text string) *tt.Fail
 }
 
 // ID is the manifest's languageId.
 func (f *Format) ID() string { return f.Part.ID }
 
-// run drives sink with a document's events as the format reads it: its
+// run drives sink with a document's events as the format reads it, after
+// the check its module's own parse makes first, where it makes one: its
 // parser's, through transduce's ParserSource in mode, or the tree its
 // module's API reads, read whole whatever the mode and walked as the
 // ParserSource walks a parser's value, under the same limits and counts.
 func (f *Format) run(input string, mode tt.SourceMode, limits tt.Limits, metrics *tt.Metrics, sink tt.Sink) (tt.Flow, *tt.Fail) {
+	if f.check != nil {
+		if fail := f.check(input); fail != nil {
+			return tt.Continue, fail
+		}
+	}
 	if f.tree == nil {
 		return f.reader(input).Grammar(f.ID()).Mode(mode).Limits(limits).Metrics(metrics).Run(sink)
 	}
@@ -169,12 +180,13 @@ func installed(name string, err error) {
 	}
 }
 
-// module is a grammar module this command carries: its parts, and its
-// reader or its tree (Format's).
+// module is a grammar module this command carries: its parts, its reader
+// or its tree, and its check (Format's).
 type module struct {
 	descriptor func() at.Descriptor
 	reader     func(text string) *tt.ParserSource
 	tree       func(text string) (any, *tt.Fail)
+	check      func(text string) *tt.Fail
 }
 
 // modules is every grammar module this command carries, each with how its
@@ -219,10 +231,8 @@ func modules() []module {
 			p := tabnasjson5.Translate()
 			return descriptor("tabnas-json5", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
 		}, reader: func(text string) *tt.ParserSource {
-			parser := tabnasjsonic.Make()
-			installed("tabnas-json5", parser.UseDefaults(tabnasjson5.Json5, tabnasjson5.Defaults()))
-			return tt.NewParserSource(parser, text)
-		}},
+			return tt.NewParserSource(json5Parser(), text)
+		}, check: json5Check},
 		{descriptor: func() at.Descriptor {
 			p := tabnasjsonc.Translate()
 			return descriptor("tabnas-jsonc", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
@@ -313,6 +323,30 @@ var (
 		return parser
 	})
 )
+
+// json5Parser is json5's parser with its default options, on jsonic's.
+func json5Parser() *tabnas.Tabnas {
+	parser := tabnasjsonic.Make()
+	installed("tabnas-json5", parser.UseDefaults(tabnasjson5.Json5, tabnasjson5.Defaults()))
+	return parser
+}
+
+// json5Check is what json5's Parse checks before its parser runs, which
+// the parser does not check itself: a document holding no value is refused
+// as json5_empty or json5_no_value, rather than as the engine's unexpected.
+// Only a document that may hold none, one that is empty or opens, after
+// whitespace, with a comment, is put to the module's Parse.
+func json5Check(text string) *tt.Fail {
+	rest := strings.TrimLeftFunc(text, func(r rune) bool { return unicode.IsSpace(r) || r == '\ufeff' })
+	if rest != "" && !strings.HasPrefix(rest, "/") {
+		return nil
+	}
+	_, err := tabnasjson5.Parse(json5Parser(), text)
+	if te, ok := err.(*tabnas.TabnasError); ok && (te.Code == "json5_empty" || te.Code == "json5_no_value") {
+		return engineFailure(te)
+	}
+	return nil
+}
 
 // exprTree is an expression as expr's module reads one for its shared
 // fixtures, the tree its parts declare: each operation a list whose first
@@ -406,7 +440,7 @@ func Formats() []*Format {
 			if part == nil {
 				continue
 			}
-			registry = append(registry, &Format{Part: part, reader: m.reader, tree: m.tree})
+			registry = append(registry, &Format{Part: part, reader: m.reader, tree: m.tree, check: m.check})
 		}
 		sort.SliceStable(registry, func(i, j int) bool { return registry[i].Part.ID < registry[j].Part.ID })
 	})

@@ -87,10 +87,14 @@ type Parts = {
 }
 
 // How a format's documents are read: with its grammar's parser, a fresh
-// one per source (a source owns its parser); or as the tree its package's
-// own API reads a document as, where its parser's value is not yet the
-// tree its parts declare.
-type Reading = (() => Tabnas) | { readonly tree: (text: string) => unknown }
+// one per source (a source owns its parser), after a check its package's
+// own parse makes first where the source would skip it; or as the tree its
+// package's own API reads a document as, where its parser's value is not
+// yet the tree its parts declare.
+type Reading =
+  | (() => Tabnas)
+  | { readonly parser: () => Tabnas; readonly check: (text: string) => void }
+  | { readonly tree: (text: string) => unknown }
 
 // A document's events, as a format reads it: the builder transduce's
 // ParserSource has, which TreeSource has too.
@@ -148,6 +152,45 @@ class TreeSource implements DocumentSource {
   }
 }
 
+// A ParserSource run after a check its package's own parse makes first,
+// which the source skips; a document the check refuses is not parsed, and
+// the refusal is reported as the ParserSource reports an engine error.
+class CheckedSource implements DocumentSource {
+  constructor(
+    private readonly check: () => void,
+    private source: DocumentSource,
+  ) {}
+
+  grammar(name: string): this {
+    this.source = this.source.grammar(name)
+    return this
+  }
+
+  mode(mode: SourceMode): this {
+    this.source = this.source.mode(mode)
+    return this
+  }
+
+  limits(limits: Limits): this {
+    this.source = this.source.limits(limits)
+    return this
+  }
+
+  metrics(metrics: Metrics): this {
+    this.source = this.source.metrics(metrics)
+    return this
+  }
+
+  run(sink: Sink): Flow {
+    try {
+      this.check()
+    } catch (err) {
+      throw engineFailure(err, new AbortFlag())
+    }
+    return this.source.run(sink)
+  }
+}
+
 // One format this command reads and writes: its parts, as its package's
 // manifest names them, and how its documents are read.
 export class Format {
@@ -165,7 +208,8 @@ export class Format {
   reader(text: string): DocumentSource {
     const reading = this.reading
     if ('function' === typeof reading) return new ParserSource(reading(), text)
-    return new TreeSource(() => reading.tree(text))
+    if ('tree' in reading) return new TreeSource(() => reading.tree(text))
+    return new CheckedSource(() => reading.check(text), new ParserSource(reading.parser(), text))
   }
 
   // A document read whole with this format's grammar, as a value: its
@@ -207,7 +251,7 @@ function packages(): Array<[translate.Descriptor | undefined, Reading]> {
     [descriptor('tabnas-feed', feedParts()), () => new Tabnas().use(Feed)],
     [descriptor('tabnas-ini', iniParts()), () => new Tabnas().use(jsonic).use(Ini)],
     [descriptor('tabnas-json', jsonParts()), () => makeJson()],
-    [descriptor('tabnas-json5', json5Parts()), () => new Tabnas().use(jsonic).use(Json5)],
+    [descriptor('tabnas-json5', json5Parts()), { parser: json5Parser, check: json5Check }],
     [descriptor('tabnas-jsonc', jsoncParts()), () => new Tabnas().use(jsonic).use(Jsonc)],
     [descriptor('tabnas-jsonic', jsonicParts()), () => new Tabnas().use(jsonic)],
     [descriptor('tabnas-jsonl', jsonlParts()), () => makeJsonl()],
@@ -219,6 +263,28 @@ function packages(): Array<[translate.Descriptor | undefined, Reading]> {
     [descriptor('tabnas-yaml', yamlParts()), () => new Tabnas().use(jsonic).use(Yaml)],
     [descriptor('tabnas-zon', zonParts()), () => zonParser()],
   ]
+}
+
+// json5's parser with its default options, on jsonic's.
+function json5Parser(): Tabnas {
+  return new Tabnas().use(jsonic).use(Json5)
+}
+
+// What json5's parse checks before its rules run, which the ParserSource
+// skips (configuring the parser for a run rebuilds the engine the plugin
+// put its check on): a document holding no value is refused as json5_empty
+// or json5_no_value, rather than as the engine's unexpected. Only a
+// document that may hold none, one that is empty or opens, after
+// whitespace, with a comment, is put to the package's parse.
+function json5Check(text: string): void {
+  const rest = text.replace(/^[\s\uFEFF]+/, '')
+  if ('' !== rest && !rest.startsWith('/')) return
+  try {
+    json5Parser().parse(text)
+  } catch (err) {
+    const code = (err as { code?: unknown }).code
+    if ('json5_empty' === code || 'json5_no_value' === code) throw err
+  }
 }
 
 // A .proto file as proto's package reads one, the descriptor its parts

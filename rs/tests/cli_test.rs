@@ -802,3 +802,60 @@ fn translate_refuses_what_a_target_cannot_carry() {
         assert_eq!(stderr(&out), "", "{args:?}");
     }
 }
+
+/// What a package's own parse checks before its parser runs, the command
+/// checks too, and refuses with status 1, writing nothing: a .proto file
+/// nesting past proto's cap is refused before the engine builds a tree that
+/// deep, whose drop could abort the process (`tabnas_proto::preflight`),
+/// and a JSON5 document holding no value with json5's own codes
+/// (`tabnas_json5::parse_with`), not the engine's `unexpected`. The Go
+/// command checks JSON5 so too, and TypeScript, whose json5 error carries
+/// no position; their proto packages have no cap to check.
+#[test]
+fn translate_checks_what_a_packages_parse_checks_first() {
+    let deep = format!(
+        "syntax = \"proto3\";\n{}{}\n",
+        "message M {".repeat(101),
+        "}".repeat(101)
+    );
+    let out = run(
+        &["translate", "--from", "proto", "--to", "json", "-"],
+        Some(&deep),
+    );
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "");
+    assert_eq!(
+        fail_json(&out),
+        serde_json::json!({
+            "code": "INPUT_INVALID",
+            "message": "proto: document nests 101 levels deep, past the 100 this parser accepts",
+            "output": "none"
+        })
+    );
+    for (input, code) in [("", "json5_empty"), ("// c\n", "json5_no_value")] {
+        let out = run(
+            &["translate", "--from", "json5", "--to", "json", "-"],
+            Some(input),
+        );
+        assert_eq!(out.status.code(), Some(1), "{input:?}: {}", stderr(&out));
+        assert_eq!(stdout(&out), "", "{input:?}");
+        assert_eq!(
+            fail_json(&out),
+            serde_json::json!({
+                "code": "INPUT_INVALID",
+                "message": format!("{code}: JSON5 input must contain a value"),
+                "row": 1,
+                "col": 1,
+                "output": "none"
+            }),
+            "{input:?}"
+        );
+    }
+    // A document that opens with a comment and holds a value is read.
+    let out = run(
+        &["translate", "--from", "json5", "--to", "json", "-"],
+        Some("// c\n{a:1}\n"),
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "{\"a\":1}\n");
+}

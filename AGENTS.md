@@ -148,7 +148,14 @@ PGN databases, whose modules build typed values, through their JSON
 encoding (`plainTree`). TypeScript's expr package exports no simplifier,
 so TypeScript reads an expression as its parse builds it, each operator
 the object that describes it, which expr's parts take by its `src`; a
-test pins that, and fails once the package exports one.
+test pins that, and fails once the package exports one. Where a
+package's own parse checks a document before its parser runs, and the
+parser does not check it itself, the reader makes the same check first
+(`Reader::Checked` in Rust, `check` in Go, `{ parser, check }` in
+TypeScript): proto's Rust crate refuses a document nesting past its cap
+before the engine builds a tree whose drop could abort the process
+(`preflight`), and json5 refuses a document holding no value with its
+own codes in every runtime.
 
 A format whose reader, as this command reads a document through
 transduce, does not build the tree its parts declare is registered in

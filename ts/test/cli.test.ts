@@ -668,6 +668,46 @@ describe('cli translate', () => {
   // when the route is composed, before the input is read, and Semantic
   // Versioning's embedding refuses a tree that is not a version. Each takes
   // its own format's documents, and a program that makes its tree.
+  // What a package's own parse checks before its rules run, the command
+  // checks too: a JSON5 document holding no value is refused with json5's
+  // own codes, not the engine's unexpected, status 1, as the Rust and Go
+  // commands refuse it (json5's TypeScript error carries no position, theirs
+  // 1:1). proto's TypeScript package has no cap to check: a .proto file
+  // nested past the cap proto's Rust reader holds documents to (100) is
+  // translated, and one nested 300 deep is refused with a structured
+  // failure, the depth limit transduce holds a walk to, not a crash.
+  it('translate checks what a package checks before its parse', () => {
+    for (const [input, code] of [
+      ['', 'json5_empty'],
+      ['// c\n', 'json5_no_value'],
+    ]) {
+      const out = alchemy(['translate', '--from', 'json5', '--to', 'json', '-'], input)
+      assert.equal(out.status, 1, out.stderr)
+      assert.equal(out.stdout, '')
+      assert.deepStrictEqual(failJson(out), {
+        code: 'INPUT_INVALID',
+        message: `${code}: JSON5 input must contain a value`,
+        output: 'none',
+      })
+    }
+    let out = alchemy(['translate', '--from', 'json5', '--to', 'json', '-'], '// c\n{a:1}\n')
+    assert.equal(out.status, 0, out.stderr)
+    assert.equal(out.stdout, '{"a":1}\n')
+    const deep = (n: number): string =>
+      'syntax = "proto3";\n' + 'message M {'.repeat(n) + '}'.repeat(n) + '\n'
+    out = alchemy(['translate', '--from', 'proto', '--to', 'json', '-'], deep(101))
+    assert.equal(out.status, 0, out.stderr)
+    out = alchemy(['translate', '--from', 'proto', '--to', 'json', '-'], deep(300))
+    assert.equal(out.status, 5, out.stderr)
+    assert.equal(out.stdout, '')
+    assert.deepStrictEqual(failJson(out), {
+      code: 'RESOURCE_LIMIT_EXCEEDED',
+      message: 'a container is nested deeper than 256',
+      limit: { name: 'max_depth', value: 256 },
+      output: 'none',
+    })
+  })
+
   it('translate refuses what a target declares it cannot carry', () => {
     let out = alchemy(['translate', '--from', 'json', '--to', 'css', '/nonexistent/input.json'])
     assert.equal(out.status, 1, out.stderr)

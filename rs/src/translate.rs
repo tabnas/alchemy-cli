@@ -42,6 +42,13 @@ use tabnas_transduce::{
 enum Reader {
     /// With the grammar's parser, as a source over a text.
     Parser(for<'s> fn(&'s str) -> ParserSource<'s>),
+    /// With the grammar's parser, after a check the package's own parse
+    /// makes before the parser runs, which the parser does not make
+    /// itself: a document the check refuses is not parsed.
+    Checked(
+        fn(&str) -> Result<(), Fail>,
+        for<'s> fn(&'s str) -> ParserSource<'s>,
+    ),
     /// As the tree the package's own API reads a document as, where its
     /// parser's value is not yet the tree its parts declare: read whole,
     /// and walked as a parser's value is.
@@ -127,6 +134,42 @@ fn read_pgn(text: &str) -> ParserSource<'_> {
     ParserSource::new(parser, text)
 }
 
+/// proto's check before its parser runs, which its `parse` and `parse_with`
+/// make and its parser does not: a document nesting deeper than its cap
+/// (`tabnas_proto::MAX_NESTING_DEPTH`) is refused before the engine builds
+/// a tree that deep, whose drop could abort the process.
+fn proto_preflight(text: &str) -> Result<(), Fail> {
+    tabnas_proto::preflight(text).map_err(|error| Fail::input(error.to_string()))
+}
+
+/// The reader of proto's grammar, run after [`proto_preflight`].
+fn read_proto(text: &str) -> ParserSource<'_> {
+    ParserSource::new(tabnas_proto::make(), text)
+}
+
+/// json5's check before its parser runs, which its `parse_with` makes and
+/// its parser does not: a document holding no value is refused as
+/// `json5_empty` or `json5_no_value`, rather than as the engine's
+/// `unexpected`. Only a document that may hold none, one that is empty or
+/// opens, after whitespace, with a comment, is put to the package's parse.
+fn json5_value_check(text: &str) -> Result<(), Fail> {
+    let rest = text.trim_start_matches(|c: char| c.is_whitespace() || c == '\u{feff}');
+    if !(rest.is_empty() || rest.starts_with('/')) {
+        return Ok(());
+    }
+    match tabnas_json5::parse_with(&tabnas_json5::make(), text) {
+        Err(error) if error.code == "json5_empty" || error.code == "json5_no_value" => {
+            Err(Fail::from_tabnas(&error))
+        }
+        _ => Ok(()),
+    }
+}
+
+/// The reader of json5's grammar, run after [`json5_value_check`].
+fn read_json5(text: &str) -> ParserSource<'_> {
+    ParserSource::new(tabnas_json5::make(), text)
+}
+
 /// An expression as expr's API reads one for its shared fixtures, the tree
 /// its parts declare: each operation a list whose first element is the
 /// operator's source text (`parse_simplified`). The parser's own value
@@ -186,7 +229,7 @@ fn packages() -> Vec<(Option<Descriptor>, Reader)> {
         ),
         (
             descriptor!("tabnas-json5", tabnas_json5, embed),
-            reader!(tabnas_json5),
+            Reader::Checked(json5_value_check, read_json5),
         ),
         (
             descriptor!("tabnas-jsonc", tabnas_jsonc, embed),
@@ -206,7 +249,7 @@ fn packages() -> Vec<(Option<Descriptor>, Reader)> {
         ),
         (
             descriptor!("tabnas-proto", tabnas_proto, embed),
-            reader!(tabnas_proto),
+            Reader::Checked(proto_preflight, read_proto),
         ),
         (
             descriptor!("tabnas-semver", tabnas_semver, embed),
@@ -503,8 +546,9 @@ impl Sink for Collect {
 
 /// A document's events as a format reads it, into `sink`, which comes back
 /// with the outcome: its parser's, through transduce's parser source in
-/// `mode`, or the tree its package's API reads, read whole whatever the
-/// mode and walked under the same limits and counts.
+/// `mode` (after the check its package's parse makes first, where it makes
+/// one), or the tree its package's API reads, read whole whatever the mode
+/// and walked under the same limits and counts.
 fn source<S: Sink + Send + 'static>(
     format: &Format,
     input: &str,
@@ -520,6 +564,15 @@ fn source<S: Sink + Send + 'static>(
             .limits(limits.clone())
             .metrics(metrics)
             .run_owned(sink),
+        Reader::Checked(check, read) => match check(input) {
+            Err(refused) => (Err(refused), sink),
+            Ok(()) => read(input)
+                .grammar(format.id())
+                .mode(mode)
+                .limits(limits.clone())
+                .metrics(metrics)
+                .run_owned(sink),
+        },
         Reader::Tree(read) => {
             let mut guarded = Guarded::new(sink, limits, AbortFlag::new(), metrics);
             let outcome = read(input).and_then(|tree| match walk_datum(&tree, &mut guarded)? {

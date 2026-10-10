@@ -281,6 +281,36 @@ func TestTranslateRefusesWhatATargetCannotCarry(t *testing.T) {
 	}
 }
 
+// What a module's own parse checks before its parser runs, the command
+// checks too: a JSON5 document holding no value is refused with json5's own
+// codes (its Parse), not the engine's unexpected, status 1, as the Rust
+// and TypeScript commands refuse it. proto's Go module has no cap to check:
+// a .proto file nested past the cap proto's Rust reader holds documents to
+// (100) is translated, and one nested 300 deep is refused with a
+// structured failure, the depth limit transduce holds a walk to, not a
+// crash.
+func TestTranslateChecksWhatAModulesParseChecksFirst(t *testing.T) {
+	for _, c := range []struct{ input, code string }{{"", "json5_empty"}, {"// c\n", "json5_no_value"}} {
+		f := wantFailure(t, invoke(t, []string{"translate", "--from", "json5", "--to", "json", "-"}, text(c.input)),
+			1, "INPUT_INVALID", c.code+": JSON5 input must contain a value")
+		if f["row"] != 1.0 || f["col"] != 1.0 || f["output"] != "none" {
+			t.Errorf("%q: %v", c.input, f)
+		}
+	}
+	wantSuccess(t, invoke(t, []string{"translate", "--from", "json5", "--to", "json", "-"}, text("// c\n{a:1}\n")), `{"a":1}`+"\n")
+	deep := func(n int) *string {
+		return text("syntax = \"proto3\";\n" + strings.Repeat("message M {", n) + strings.Repeat("}", n) + "\n")
+	}
+	if o := invoke(t, []string{"translate", "--from", "proto", "--to", "json", "-"}, deep(101)); o.status != 0 {
+		t.Errorf("101 deep: status %d, %s", o.status, o.stderr)
+	}
+	f := wantFailure(t, invoke(t, []string{"translate", "--from", "proto", "--to", "json", "-"}, deep(300)),
+		5, "RESOURCE_LIMIT_EXCEEDED", "a container is nested deeper than 256")
+	if limit, _ := f["limit"].(map[string]any); limit["name"] != "max_depth" || f["output"] != "none" {
+		t.Errorf("300 deep: %v", f)
+	}
+}
+
 // The statuses follow the code, and every failure is one JSON object on
 // standard error with nothing on standard output: what a run writes is
 // held until it has succeeded.
