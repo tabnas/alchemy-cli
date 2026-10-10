@@ -64,8 +64,8 @@ func TestFormatsPrintsTheRegistryAsJSON(t *testing.T) {
 	if o.status != 0 || o.stderr != "" || o.stdout != translate.FormatsJSON()+"\n" || strings.Count(o.stdout, "\n") != 1 {
 		t.Fatalf("%+v", o)
 	}
-	// Each format's fields in their order, csv's whole up to its loss.
-	if !strings.HasPrefix(o.stdout, `[{"id":"csv","reads":["tree"],"writes":"records","root":"array","schema":null,"lift":null,"embed":null,"render":"csv","loss":["`) {
+	// Each format's fields in their order, css's whole up to its loss.
+	if !strings.HasPrefix(o.stdout, `[{"id":"css","reads":["tree"],"writes":"tree","root":"object","schema":"css-ast","lift":null,"embed":null,"render":"css-render","loss":["`) {
 		t.Errorf("%s", o.stdout)
 	}
 	var formats []map[string]any
@@ -88,7 +88,7 @@ func TestFormatsPrintsTheRegistryAsJSON(t *testing.T) {
 			}
 		}
 	}
-	if strings.Join(ids, " ") != "csv ini json json5 jsonc jsonic jsonl markdown toml xml yaml zon" {
+	if strings.Join(ids, " ") != "css csv expr feed ini json json5 jsonc jsonic jsonl markdown pgn proto semver toml xml yaml zon" {
 		t.Errorf("%v", ids)
 	}
 	byID := map[string]map[string]any{}
@@ -104,6 +104,21 @@ func TestFormatsPrintsTheRegistryAsJSON(t *testing.T) {
 	}
 	if toml := byID["toml"]; toml["root"] != "object" || toml["render"] != "toml-render" {
 		t.Errorf("%v", toml)
+	}
+	// The formats that write a schema's tree with no embedding into it are
+	// schema-only: the composition refuses any other format's tree for them.
+	var schemaOnly []string
+	for _, f := range formats {
+		if f["schema"] != nil && f["writes"] == "tree" && f["embed"] == nil {
+			schemaOnly = append(schemaOnly, f["id"].(string))
+		}
+	}
+	if strings.Join(schemaOnly, " ") != "css pgn proto" {
+		t.Errorf("%v", schemaOnly)
+	}
+	if byID["pgn"]["schema"] != "pgn-database" || byID["semver"]["embed"] != "semver-embed" ||
+		byID["feed"]["embed"] != "feed-embed" || byID["expr"]["embed"] != "expr-embed" {
+		t.Errorf("%v %v %v %v", byID["pgn"], byID["semver"], byID["feed"], byID["expr"])
 	}
 	if o := invoke(t, []string{"formats", "x"}, nil); o.status != 2 || !strings.Contains(failJSON(t, o)["message"].(string), "usage:") {
 		t.Errorf("%+v", o)
@@ -208,6 +223,43 @@ func TestTranslateRunsAProgramFirst(t *testing.T) {
 	}
 }
 
+// What a target declares it cannot carry it refuses before writing
+// anything, status 1: a schema-only target refuses another format's tree
+// when the route is composed, before the input is read, and Semantic
+// Versioning's embedding refuses a tree that is not a version. Each takes
+// its own format's documents, and a program that makes its tree. (PGN's
+// own documents are not among them here: its Go reader is a registered
+// defect, go/translate's readerDefects.)
+func TestTranslateRefusesWhatATargetCannotCarry(t *testing.T) {
+	f := wantFailure(t, invoke(t, []string{"translate", "--from", "json", "--to", "css", "/nonexistent/input.json"}, nil),
+		1, "TARGET_VALUE_UNREPRESENTABLE", "")
+	if f["message"] != "schema_only: css writes a css-ast tree, the tree its own documents read as, and this document is "+
+		"not one; a program that makes one can be composed with the render" || f["output"] != "none" || len(f) != 3 {
+		t.Errorf("%v", f)
+	}
+	f = wantFailure(t, invoke(t, []string{"translate", "--from", "json", "--to", "semver", "-"}, text(`{"major":1,"minor":2}`)),
+		1, "TARGET_VALUE_UNREPRESENTABLE", "")
+	if f["message"] != "the document is not a version: it has no patch; a version is an object whose major, minor and "+
+		"patch are whole numbers written in digits, with an optional prerelease and build, each a list of identifiers "+
+		"or one string of them" || f["row"] != 48.0 || f["col"] != 3.0 || f["file"] != "tabnas-semver/alchemy/embed.alc" {
+		t.Errorf("%v", f)
+	}
+	echo := tempFile(t, "echo-css.alc", "def export [input] input\n")
+	tree := `{"type":"stylesheet","rules":[{"type":"rule","selectors":["a"],"declarations":` +
+		`[{"type":"declaration","property":"color","value":"red"}]}]}`
+	for _, c := range []struct {
+		args        []string
+		stdin, want string
+	}{
+		{[]string{"--from", "json", "--to", "semver", "-"}, `{"major":1,"minor":2,"patch":3,"prerelease":"rc.1"}`, "1.2.3-rc.1"},
+		{[]string{"--from", "css", "--to", "css", "-"}, "a{color:red}", "a {\n  color: red;\n}\n"},
+		{[]string{"--from", "json", "--to", "css", "--with", echo, "-"}, tree, "a {\n  color: red;\n}\n"},
+		{[]string{"--from", "json", "--to", "expr", "-"}, `{"a":[1,-2]}`, `{"a":[1,-2]}` + "\n"},
+	} {
+		wantSuccess(t, invoke(t, append([]string{"translate"}, c.args...), text(c.stdin)), c.want)
+	}
+}
+
 // The statuses follow the code, and every failure is one JSON object on
 // standard error with nothing on standard output: what a run writes is
 // held until it has succeeded.
@@ -228,7 +280,7 @@ func TestTranslateFailuresAndStatuses(t *testing.T) {
 			t.Errorf("%v: %v", args, f)
 		}
 	}
-	names := "csv, ini, json, json5, jsonc, jsonic, jsonl, markdown, toml, xml, yaml or zon"
+	names := "css, csv, expr, feed, ini, json, json5, jsonc, jsonic, jsonl, markdown, pgn, proto, semver, toml, xml, yaml or zon"
 	for _, c := range []struct {
 		args []string
 		want string

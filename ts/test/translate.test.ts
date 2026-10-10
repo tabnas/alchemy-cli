@@ -9,15 +9,25 @@
 // reads back as anything but the conventions say is a failure, and so is a
 // corpus that shrinks.
 //
-// The corpus is the sibling checkouts': transduce's fixtures (aless's, one
-// document per format at least, and more for YAML and ZON) and the
-// documents of JSONTestSuite every JSON parser must accept, from the copy
-// jsonc vendors (`jsonc/test/JSONTestSuite`), as the Go and Rust tests
-// read them: json fetches its copy for its own suite, and a checkout of it
-// does not hold one. A fixture its own grammar refuses (ZON's repeated
-// fields) is no document, and is counted as one refused. The Rust crate's
-// second matrix, every format's own fixture corpus in release, stays
-// Rust's.
+// A pair whose target declares that it refuses the document is held to
+// that refusal, its code and the start of its message, and counted: a
+// schema-only target (one that writes a schema's tree with no embedding
+// into it: CSS, PGN, proto) refuses another format's tree, and Semantic
+// Versioning's embedding refuses a tree that is not a version. A refusal of
+// another kind, or a document written where a refusal is declared, is a
+// failure.
+//
+// The corpus is the sibling checkouts': transduce's fixtures (aless's: a
+// document of every format but CSS, expressions, PGN, proto and Semantic
+// Versioning, and more for YAML and ZON) and the documents of JSONTestSuite
+// every JSON parser must accept, from the copy jsonc vendors
+// (`jsonc/test/JSONTestSuite`), as the Go and Rust tests read them: json
+// fetches its copy for its own suite, and a checkout of it does not hold
+// one. A fixture its own grammar refuses (ZON's repeated fields) is no
+// document, and is counted as one refused; so is a document of a format
+// whose reader is a registered defect (READER_DEFECTS), counted apart. The
+// Rust crate's second matrix, every format's own fixture corpus in release,
+// stays Rust's.
 
 import { describe, it } from 'node:test'
 import assert from 'node:assert'
@@ -27,8 +37,8 @@ import { extname, join } from 'node:path'
 import { translate as alchemyTranslate } from '@tabnas/alchemy'
 import { BytesWriter } from '@tabnas/render'
 import type { Writer } from '@tabnas/render'
-import { Limits, Metrics, toText } from '@tabnas/transduce'
-import type { Datum } from '@tabnas/transduce'
+import { parse as protoParse } from '@tabnas/proto'
+import { Datum, Limits, Metrics, toText } from '@tabnas/transduce'
 
 import {
   Compiled,
@@ -62,6 +72,9 @@ function formatOf(extension: string): string | undefined {
       return extension
     case 'md':
       return 'markdown'
+    case 'rss':
+    case 'atom':
+      return 'feed'
     default:
       return undefined
   }
@@ -129,6 +142,127 @@ function translateText(from: Format, to: Format, text: string, program?: { file:
 // position, or what else was thrown.
 function why(err: unknown): string {
   return String(err)
+}
+
+// ---------------------------------------------------------------------
+// The readers registered as defective
+// ---------------------------------------------------------------------
+
+// The formats whose reader, as this command reads a document through
+// transduce, does not build the tree the format's parts declare, for a
+// defect of the format's package: each id with its defect (the Rust
+// crate's READER_DEFECTS, for this runtime's readers). The matrix reads no
+// document of a registered format as a source, and counts the documents it
+// leaves out; every format is still a target. 'a registered reader defect
+// still stands' holds each entry to an example document, so an entry fails
+// once its reader is repaired, and must then be deleted.
+const READER_DEFECTS: ReadonlyArray<[string, string]> = [
+  [
+    'proto',
+    "@tabnas/proto's parser builds the grammar's syntax tree, and the descriptor its parts declare " +
+      '(the schema proto-descriptor) is what its parse and toDescriptor build from it; transduce walks the ' +
+      "syntax tree, which proto's own render refuses as no FileDescriptorProto",
+  ],
+  [
+    'semver',
+    "@tabnas/semver's reader builds a number past 2^53 - 1 as a bigint, which transduce rounds to a " +
+      'double, so 99999999999999999999.1.2 is written as 100000000000000000000.1.2; the Rust reader ' +
+      "keeps the digits, as the format's render takes them (its part's alchemy/render.alc). The format is " +
+      'left out whole while it is registered',
+  ],
+]
+
+// Whether documents of `id` are left out as sources for a registered reader
+// defect.
+function registeredDefect(id: string): boolean {
+  return READER_DEFECTS.some(([defective]) => defective === id)
+}
+
+// ---------------------------------------------------------------------
+// The refusals the targets declare
+// ---------------------------------------------------------------------
+
+// What a pair is held to: written, and read back under the target's
+// conventions; or refused as the target declares, with the code and the
+// start of the message alchemy's composition or the target's part gives.
+type Expect = { written: true } | { written: false; code: string; reason: string }
+
+// What `from`'s document, read as `source`, into `to` is held to. A
+// schema-only target (one that writes from a tree, with a schema and no
+// embed: CSS, PGN, proto) refuses a tree of another schema before any
+// output, as alchemy's composition declares; Semantic Versioning's
+// embedding refuses a tree that is not a version, as its part declares.
+// Every other pair is written, Markdown's table among them: it writes from
+// records, which any tree makes.
+function expect(from: Format, to: Format, source: Datum): Expect {
+  const target = to.part
+  const foreign = 'tree' === target.writes && undefined !== target.schema && from.part.schema !== target.schema
+  if (foreign && undefined === target.embed) {
+    return {
+      written: false,
+      code: 'TARGET_VALUE_UNREPRESENTABLE',
+      reason: `schema_only: ${target.id} writes a ${target.schema} tree, `,
+    }
+  }
+  if (foreign && 'semver' === to.id && !semverVersion(source)) {
+    return { written: false, code: 'TARGET_VALUE_UNREPRESENTABLE', reason: 'the document is not a version: ' }
+  }
+  return { written: true }
+}
+
+// The text a number is written with when it is digits alone: its lexeme,
+// or the text JSON writes for it, ECMAScript's, which spells a whole number
+// below 10^21 with its digits.
+function writtenDigits(d: Datum): string | undefined {
+  if ('number' !== d.type) return undefined
+  let text: string
+  if (null !== d.lexeme) text = d.lexeme
+  else if (Number.isFinite(d.value) && Number.isInteger(d.value) && !Object.is(d.value, -0) && 0 <= d.value && d.value < 1e21)
+    text = BigInt(d.value).toString()
+  else return undefined
+  return /^[0-9]+$/.test(text) ? text : undefined
+}
+
+// Whether a string is digits with no leading zero, but for `0` itself.
+function digitString(s: string): boolean {
+  return /^[0-9]+$/.test(s) && ('0' === s || !s.startsWith('0'))
+}
+
+// Whether a value is a prerelease (`prerelease`) or build identifier: a
+// number written in digits, or a string of 0-9, A-Z, a-z and -, not empty,
+// which for a prerelease is no number of digits that begins with a zero.
+function semverIdentifier(d: Datum, prerelease: boolean): boolean {
+  if ('number' === d.type) return undefined !== writtenDigits(d)
+  if ('string' !== d.type) return false
+  const s = d.value
+  return /^[0-9A-Za-z-]+$/.test(s) && !(prerelease && /^[0-9]+$/.test(s) && !digitString(s))
+}
+
+// Whether a value is a version as Semantic Versioning's embedding takes one
+// (its part's alchemy/embed.alc): an object whose major, minor and patch
+// are whole numbers written in digits (a number whose text is digits alone,
+// or a string of digits with no leading zero), and whose prerelease and
+// build, where it has them, are null, the empty string, or a list of
+// identifiers or one string of them joined by dots.
+function semverVersion(d: Datum): boolean {
+  if ('object' !== d.type) return false
+  const m = d.members
+  const core = (key: string): boolean => {
+    const v = m.get(key)
+    if (undefined === v) return false
+    if ('number' === v.type) return undefined !== writtenDigits(v)
+    return 'string' === v.type && digitString(v.value)
+  }
+  const identifiers = (key: string, prerelease: boolean): boolean => {
+    const v = m.get(key)
+    if (undefined === v || 'null' === v.type) return true
+    if ('string' === v.type) {
+      return '' === v.value || v.value.split('.').every((id) => semverIdentifier({ type: 'string', value: id }, prerelease))
+    }
+    if ('array' === v.type) return v.items.every((i) => semverIdentifier(i, prerelease))
+    return false
+  }
+  return core('major') && core('minor') && core('patch') && identifiers('prerelease', true) && identifiers('build', false)
 }
 
 // ---------------------------------------------------------------------
@@ -516,6 +650,394 @@ function zonBack(d: Datum): Datum {
   return d
 }
 
+// The default operators' source texts, as expr's render reads an operator:
+// `+`, `-`, `*`, `/`, `%`, and `(` for a group.
+const EXPR_OPERATORS = ['+', '-', '*', '/', '%', '(']
+
+// A tree with each operator reduced to its source text, as expr's shared
+// fixtures and its render read one: a list whose first element is an object
+// whose `src` is a default operator's source text has that text in the
+// object's place.
+function exprSimplify(d: Datum): Datum {
+  if ('array' === d.type) {
+    return arr(
+      d.items.map((item, i) => {
+        if (0 === i && 'object' === item.type) {
+          const src = item.members.get('src')
+          if (undefined !== src && 'string' === src.type && EXPR_OPERATORS.includes(src.value)) return src
+        }
+        return exprSimplify(item)
+      }),
+    )
+  }
+  if ('object' === d.type) return obj([...d.members].map(([k, v]): [string, Datum] => [k, exprSimplify(v)]))
+  return d
+}
+
+// What expr's conventions make of a tree it is given (its loss list): an
+// operator's description reads back as its source text; a negative number,
+// written with its sign, as the operator `-` applied to its magnitude; and a
+// number that is not finite as the string Infinity, -Infinity or NaN.
+function exprReading(d: Datum): Datum {
+  const numbers = (d: Datum): Datum => {
+    if ('number' === d.type) {
+      if (Number.isNaN(d.value)) return { type: 'string', value: 'NaN' }
+      if (!Number.isFinite(d.value)) return { type: 'string', value: 0 < d.value ? 'Infinity' : '-Infinity' }
+      // JavaScript writes -0 with no sign; a lexeme keeps the one it had.
+      const signed = null !== d.lexeme ? d.lexeme.startsWith('-') : d.value < 0
+      if (signed) return arr([{ type: 'string', value: '-' }, { type: 'number', value: Math.abs(d.value), lexeme: null }])
+      return d
+    }
+    if ('array' === d.type) return arr(d.items.map(numbers))
+    if ('object' === d.type) return obj([...d.members].map(([k, v]): [string, Datum] => [k, numbers(v)]))
+    return d
+  }
+  return numbers(exprSimplify(d))
+}
+
+// The largest integer every runtime's reader of a version keeps as a
+// number, 2^53 - 1; Semantic Versioning's Rust reader keeps one past it as
+// its digits.
+const MAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER
+
+// A version's number as Semantic Versioning's reader builds it from its
+// digits: a number up to 2^53 - 1, and its digits past it.
+function semverNumber(digits: string): Datum {
+  const value = Number(digits)
+  return value <= MAX_SAFE_INTEGER ? { type: 'number', value, lexeme: null } : { type: 'string', value: digits }
+}
+
+// What a version reads back as, by Semantic Versioning's loss list: its
+// major, minor and patch, each the number its digits make; its prerelease
+// and build as lists, empty where they are absent, null or empty, one string
+// split at its dots; a prerelease identifier of digits as the number they
+// make and a build identifier as its text; and no other member.
+function semverReading(d: Datum): Datum {
+  if ('object' !== d.type) throw new Error('a version is an object')
+  const m = d.members
+  const text = (v: Datum): string => {
+    if ('string' === v.type) return v.value
+    const digits = writtenDigits(v)
+    if (undefined === digits) throw new Error("a version's numbers are written in digits")
+    return digits
+  }
+  const identifiers = (key: string, prerelease: boolean): Datum => {
+    const v = m.get(key)
+    const items: Datum[] =
+      undefined !== v && 'string' === v.type && '' !== v.value
+        ? v.value.split('.').map((id): Datum => ({ type: 'string', value: id }))
+        : undefined !== v && 'array' === v.type
+          ? v.items
+          : []
+    return arr(
+      items.map((item): Datum => {
+        const id = text(item)
+        return prerelease && /^[0-9]+$/.test(id) ? semverNumber(id) : { type: 'string', value: id }
+      }),
+    )
+  }
+  const core = (key: string): Datum => {
+    const v = m.get(key)
+    if (undefined === v) throw new Error(`a version has a ${key}`)
+    return semverNumber(text(v))
+  }
+  return obj([
+    ['major', core('major')],
+    ['minor', core('minor')],
+    ['patch', core('patch')],
+    ['prerelease', identifiers('prerelease', true)],
+    ['build', identifiers('build', false)],
+  ])
+}
+
+// The id, and an author's uri, the feed render supplies where a feed has
+// none.
+const FEED_RENDER = 'tag:tabnas.dev,2026:feed-render'
+
+// The date the feed render supplies where a feed or an entry has none, the
+// one its embedding gives a plain tree.
+const FEED_EPOCH = '1970-01-01T00:00:00Z'
+
+// Whether `s` is `n` decimal digits.
+function digitsOf(n: number, s: string): boolean {
+  return s.length === n && /^[0-9]*$/.test(s)
+}
+
+// Whether `s` is two digits from `lo` to `hi`.
+function twoDigits(lo: number, hi: number, s: string): boolean {
+  return digitsOf(2, s) && lo <= Number(s) && Number(s) <= hi
+}
+
+// Whether `s` is an RFC 3339 date-time with the upper-case T and Z Atom asks
+// for, as the feed render reads one: a full date; a time, whose seconds may
+// have a fraction; and Z or an offset.
+function rfc3339(s: string): boolean {
+  const second = (sec: string): boolean => {
+    const p = sec.split('.')
+    if (1 === p.length) return twoDigits(0, 60, sec)
+    return 2 === p.length && twoDigits(0, 60, p[0]) && /^[0-9]+$/.test(p[1])
+  }
+  const time = (t: string): boolean => {
+    const p = t.split(':')
+    return 3 === p.length && twoDigits(0, 23, p[0]) && twoDigits(0, 59, p[1]) && second(p[2])
+  }
+  const offset = (o: string): boolean => {
+    const p = o.split(':')
+    return 2 === p.length && twoDigits(0, 23, p[0]) && twoDigits(0, 59, p[1])
+  }
+  const parts = s.split('T')
+  if (2 !== parts.length) return false
+  const [date, rest] = parts
+  const d = date.split('-')
+  if (!(3 === d.length && digitsOf(4, d[0]) && twoDigits(1, 12, d[1]) && twoDigits(1, 31, d[2]))) return false
+  const z = rest.split('Z')
+  if (2 === z.length) return '' === z[1] && time(z[0])
+  if (1 !== z.length) return false
+  const plus = rest.split('+')
+  if (2 === plus.length) return time(plus[0]) && offset(plus[1])
+  if (1 !== plus.length) return false
+  const minus = rest.split('-')
+  return 2 === minus.length && time(minus[0]) && offset(minus[1])
+}
+
+// An RSS date, RFC 822's date-time with a four-digit year allowed and its
+// names in any case, as the same instant in RFC 3339's form, as the feed
+// render writes one: a day of the week and a comma at most, then the day,
+// the month, the year (two digits before 50 in the 2000s, else in the
+// 1900s), the time (seconds 00 where it has none) and the zone (Z for UT,
+// GMT and Z, the US zones' offsets, or a sign and four digits). Its tabs and
+// line breaks are spaces.
+function rfc822(s: string): string | undefined {
+  const words = (t: string): string[] =>
+    t
+      .replace(/[\n\r\t]/g, ' ')
+      .split(' ')
+      .filter((w) => '' !== w)
+  const parts = s.split(',')
+  let w: string[]
+  if (1 === parts.length) w = words(s)
+  else if (2 === parts.length) {
+    const d = words(parts[0])
+    if (!(1 === d.length && ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'].includes(asciiLower(d[0])))) {
+      return undefined
+    }
+    w = words(parts[1])
+  } else return undefined
+  if (5 !== w.length) return undefined
+  const [day0, month0, year0, time0, zone] = w
+  let year: string
+  if (digitsOf(4, year0)) year = year0
+  else if (digitsOf(2, year0)) year = (year0 < '50' ? '20' : '19') + year0
+  else return undefined
+  const m = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'].indexOf(
+    asciiLower(month0),
+  )
+  if (m < 0) return undefined
+  const month = String(m + 1).padStart(2, '0')
+  const day = digitsOf(1, day0) ? `0${day0}` : day0
+  if (!twoDigits(1, 31, day)) return undefined
+  const hms = time0.split(':')
+  if (2 === hms.length) hms.push('00')
+  if (!(3 === hms.length && twoDigits(0, 23, hms[0]) && twoDigits(0, 59, hms[1]) && twoDigits(0, 60, hms[2]))) {
+    return undefined
+  }
+  const numeric = (sign: string, digits: string): string | undefined =>
+    digitsOf(4, digits) && twoDigits(0, 23, digits.slice(0, 2)) && twoDigits(0, 59, digits.slice(2))
+      ? `${sign}${digits.slice(0, 2)}:${digits.slice(2)}`
+      : undefined
+  const zones: Record<string, string> = {
+    ut: 'Z',
+    gmt: 'Z',
+    z: 'Z',
+    est: '-05:00',
+    edt: '-04:00',
+    cst: '-06:00',
+    cdt: '-05:00',
+    mst: '-07:00',
+    mdt: '-06:00',
+    pst: '-08:00',
+    pdt: '-07:00',
+  }
+  // A sign and four digits; the render splits the zone at its signs, so one
+  // with a second sign is no zone.
+  const plus = zone.split('+')
+  const minus = zone.split('-')
+  const offset = Object.prototype.hasOwnProperty.call(zones, asciiLower(zone))
+    ? zones[asciiLower(zone)]
+    : 2 === plus.length && '' === plus[0]
+      ? numeric('+', plus[1])
+      : 2 === minus.length && '' === minus[0]
+        ? numeric('-', minus[1])
+        : undefined
+  if (undefined === offset) return undefined
+  return `${year}-${month}-${day}T${hms.join(':')}${offset}`
+}
+
+// A string with its ASCII letters in lower case, as RFC 822's names may be
+// in any case.
+function asciiLower(s: string): string {
+  return s.replace(/[A-Z]/g, (c) => c.toLowerCase())
+}
+
+// A date as the feed render writes it: its RFC 3339 form, or the text of
+// one in neither form (`kept`), which it writes as the epoch with a
+// category that keeps the text. A date with no text is a missing one.
+function feedDate(v: Datum): { date: string } | { kept: string } {
+  if ('string' !== v.type) return { kept: toText(v) }
+  if ('' === v.value) return { date: FEED_EPOCH }
+  const upper = v.value.replace(/t/g, 'T').replace(/z/g, 'Z')
+  if (rfc3339(upper)) return { date: upper }
+  const c = rfc822(v.value)
+  return undefined === c ? { kept: v.value } : { date: c }
+}
+
+// A feed's value as the reader builds it back: no member whose value is
+// null, and a character XML 1.0 cannot carry as U+FFFD.
+function feedClean(d: Datum): Datum {
+  if ('string' === d.type) {
+    // eslint-disable-next-line no-control-regex
+    return { type: 'string', value: d.value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\ufffe\uffff]/g, '\ufffd') }
+  }
+  if ('array' === d.type) return arr(d.items.map(feedClean))
+  if ('object' === d.type) {
+    return obj([...d.members].filter(([, v]) => 'null' !== v.type).map(([k, v]): [string, Datum] => [k, feedClean(v)]))
+  }
+  return d
+}
+
+// A text construct or a content as the feed render writes it: one of type
+// xhtml as html, its value trimmed.
+function feedText(d: Datum): Datum {
+  const cleaned = feedClean(d)
+  if ('object' !== cleaned.type) return cleaned
+  const type = cleaned.members.get('type')
+  if (undefined === type || 'string' !== type.type || 'xhtml' !== type.value) return cleaned
+  return obj(
+    [...cleaned.members].map(([k, v]): [string, Datum] => {
+      if ('type' === k) return [k, { type: 'string', value: 'html' }]
+      if ('value' === k && 'string' === v.type) return [k, { type: 'string', value: v.value.trim() }]
+      return [k, v]
+    }),
+  )
+}
+
+// Whether a feed or an entry has an author: a list of them that is not
+// empty.
+function feedHasAuthor(d: Datum): boolean {
+  if ('object' !== d.type) return false
+  const authors = d.members.get('authors')
+  return undefined !== authors && 'array' === authors.type && 0 < authors.items.length
+}
+
+// A feed's or an entry's members as the feed render writes them and the
+// reader builds them back (`feedReading`): each date in RFC 3339's form, one
+// the render cannot read as the epoch with a category keeping its text,
+// which comes before the object's own categories where the date comes
+// before them in the tree's order; text constructs as `feedText`; an id, a
+// title and an updated where the object has none, an entry's id with a
+// slash and `position`; an entry's source not read back.
+function feedObject(d: Datum, position: number | undefined): Array<[string, Datum]> {
+  if ('object' !== d.type) throw new Error('a feed and an entry are objects')
+  const out: Array<[string, Datum]> = []
+  const before: Datum[] = []
+  const after: Datum[] = []
+  let categoriesMet = false
+  for (const [k, v] of d.members) {
+    if ('null' === v.type) continue
+    if ('categories' === k) categoriesMet = true
+    if ('source' === k || 'format' === k || 'version' === k || 'entries' === k) continue
+    let value: Datum
+    if ('updated' === k || 'published' === k) {
+      const date = feedDate(v)
+      if ('date' in date) value = { type: 'string', value: date.date }
+      else {
+        const category = obj([
+          ['term', { type: 'string', value: k }],
+          ['scheme', { type: 'string', value: `${FEED_RENDER}/date` }],
+          ['label', feedClean({ type: 'string', value: date.kept })],
+        ])
+        if (categoriesMet) after.push(category)
+        else before.push(category)
+        value = { type: 'string', value: FEED_EPOCH }
+      }
+    } else if (['title', 'subtitle', 'rights', 'summary', 'content'].includes(k)) value = feedText(v)
+    else value = feedClean(v)
+    out.push([k, value])
+  }
+  if (0 < before.length || 0 < after.length) {
+    const at = out.findIndex(([k]) => 'categories' === k)
+    let own: Datum[] = []
+    if (0 <= at) {
+      const [, categories] = out.splice(at, 1)[0]
+      if ('array' === categories.type) own = categories.items
+    }
+    out.push(['categories', arr([...before, ...own, ...after])])
+  }
+  const has = (key: string): boolean => out.some(([k]) => key === k)
+  if (!has('id')) out.push(['id', { type: 'string', value: undefined === position ? FEED_RENDER : `${FEED_RENDER}/${position}` }])
+  if (!has('title')) {
+    out.push([
+      'title',
+      obj([
+        ['type', { type: 'string', value: 'text' }],
+        ['value', { type: 'string', value: '' }],
+      ]),
+    ])
+  }
+  if (!has('updated')) out.push(['updated', { type: 'string', value: FEED_EPOCH }])
+  return out
+}
+
+// What a feed reads back as, by its loss list: an Atom 1.0 feed of its
+// members and its entries as `feedObject` writes them, and an author, named
+// by the feed's title where that is text and not empty and `unknown`
+// otherwise, where the feed has none, unless the render held its entries (a
+// tree whose entries come before its other members, as the reader builds
+// one) and each of them has one.
+function feedReading(d: Datum): Datum {
+  if ('object' !== d.type) throw new Error('a feed is an object')
+  const members = d.members
+  const given = members.get('entries')
+  const entries =
+    undefined !== given && 'array' === given.type ? given.items.map((e, i) => obj(feedObject(e, i))) : []
+  const out: Array<[string, Datum]> = [
+    ['format', { type: 'string', value: 'atom' }],
+    ['version', { type: 'string', value: '1.0' }],
+  ]
+  if (members.has('entries')) out.push(['entries', arr(entries)])
+  out.push(...feedObject(d, undefined))
+  const keys = [...members.keys()]
+  const entriesAt = keys.indexOf('entries')
+  const feedMembers = ['id', 'title', 'subtitle', 'rights', 'updated', 'authors', 'contributors', 'categories', 'links', 'generator', 'icon', 'logo']
+  const held = 0 <= entriesAt && feedMembers.some((m) => keys.indexOf(m) < 0 || keys.indexOf(m) > entriesAt)
+  if (!feedHasAuthor(d) && !(held && 0 < entries.length && entries.every(feedHasAuthor))) {
+    const title = members.get('title')
+    let name: Datum = { type: 'string', value: 'unknown' }
+    if (undefined !== title && 'object' === title.type) {
+      const type = title.members.get('type')
+      const value = title.members.get('value')
+      if (
+        undefined !== type &&
+        'string' === type.type &&
+        'text' === type.value &&
+        undefined !== value &&
+        'string' === value.type &&
+        '' !== value.value
+      ) {
+        name = value
+      }
+    }
+    const author = obj([
+      ['name', name],
+      ['uri', { type: 'string', value: FEED_RENDER }],
+    ])
+    const at = out.findIndex(([k]) => 'authors' === k)
+    if (0 <= at) out.splice(at, 1)
+    out.push(['authors', arr([author])])
+  }
+  return obj(out)
+}
+
 // Whether the document read back from `written` in `target` is what the
 // target's conventions make of `source`, read as `from`: undefined when it
 // is, why not when it is not.
@@ -543,10 +1065,10 @@ function check(from: Format, target: Format, source: Datum, written: string): st
     } catch (err) {
       return `its records do not read back: ${why(err)}`
     }
-  } else if ('xml' === id && embedded) {
-    // An embedding reads back through its reverse: the element tree, as
-    // JSON, unembedded, and written where a non-finite number has a
-    // spelling.
+  } else if (('xml' === id || 'feed' === id) && embedded) {
+    // An embedding reads back through its reverse, which its file holds
+    // beside it (`xml-unembed`, `feed-unembed`): the format's tree, as JSON,
+    // unembedded, and written where a non-finite number has a spelling.
     let tree: Datum
     try {
       tree = target.read(written, limits)
@@ -554,18 +1076,29 @@ function check(from: Format, target: Format, source: Datum, written: string): st
       return `the written document does not read back: ${why(err)}`
     }
     const embed = target.part.embed
-    assert.ok(embed, 'xml has an embed')
-    const program = `${embed.text}\ndef export [input] (xml-unembed input)\n`
+    assert.ok(embed, 'an embedding target has an embed')
+    assert.ok(embed.entry.endsWith('-embed'), "an embed's entry is named NAME-embed")
+    const reverse = `${embed.entry.slice(0, -'-embed'.length)}-unembed`
+    const program = `${embed.text}\ndef export [input] (${reverse} input)\n`
     let yaml: string
     try {
-      yaml = translateText(format('json'), format('yaml'), toText(tree), { file: 'xml-unembed.alc', text: program })
+      yaml = translateText(format('json'), format('yaml'), toText(tree), { file: `${reverse}.alc`, text: program })
     } catch (err) {
-      return `the element tree does not unembed: ${why(err)}`
+      return `the tree does not unembed: ${why(err)}`
     }
     try {
       back = format('yaml').read(yaml, limits)
     } catch (err) {
       return `the unembedded tree does not read back: ${why(err)}`
+    }
+  } else if ('expr' === id) {
+    // An expression document reads back as expr's fixtures read one: its
+    // tree, each operator reduced to its source text (the Rust and Go ports
+    // read it with expr's own API, since their readers are registered).
+    try {
+      back = exprSimplify(target.read(written, limits))
+    } catch (err) {
+      return `the written document does not read back: ${why(err)}`
     }
   } else {
     try {
@@ -599,6 +1132,21 @@ function check(from: Format, target: Format, source: Datum, written: string): st
     case 'zon':
       expected = zonReading(source)
       break
+    case 'expr':
+      expected = exprReading(source)
+      break
+    case 'semver':
+      expected = semverReading(source)
+      break
+    case 'feed':
+      // A feed's own tree, written as Atom 1.0, with no member whose value
+      // is null, so a null member read back is one left out (an embedded
+      // tree reads back through its reverse, above, as it was).
+      if (!embedded) {
+        expected = feedReading(source)
+        back = feedClean(back)
+      } else expected = source
+      break
     default:
       expected = source
   }
@@ -625,80 +1173,108 @@ const DEPTH_BOUND = 100
 
 // The cross product of `docs` and every format: each document read with
 // its format's grammar, written in every format, and read back under the
-// target's conventions. At least `floor` documents, and at most
-// `tooDeepAtMost` of them deeper than every format reads.
-function matrix(docs: Doc[], floor: number, tooDeepAtMost: number): void {
+// target's conventions, or refused as the target declares. At least `floor`
+// documents, at most `tooDeepAtMost` of them deeper than every format
+// reads, and at least `refusalsAtLeast` pairs refused as their target
+// declares; a document of a format whose reader is a registered defect is
+// left out as a source, and counted.
+function matrix(docs: Doc[], floor: number, tooDeepAtMost: number, refusalsAtLeast: number): void {
   const limits = Limits.default()
   const targets = formats()
-  assert.equal(targets.length, 12, `the formats: ${names()}`)
+  assert.equal(targets.length, 18, `the formats: ${names()}`)
   const total = docs.length * targets.length
   const failures: string[] = []
   const refusedSources: string[] = []
   const tooDeep: string[] = []
+  const defective: string[] = []
+  const refusals: string[] = []
   let pairs = 0
+  const started = Date.now()
   let reported = Date.now()
   docs.forEach(({ name, id, text }, n) => {
     const from = format(id)
-    let source: Datum
-    try {
-      source = from.read(text, limits)
-    } catch (err) {
-      refusedSources.push(`${name}: ${why(err)}`)
-      return
+    let source: Datum | undefined
+    if (registeredDefect(from.id)) {
+      defective.push(name)
+    } else {
+      try {
+        source = from.read(text, limits)
+      } catch (err) {
+        refusedSources.push(`${name}: ${why(err)}`)
+      }
+      if (undefined !== source && depth(source) > DEPTH_BOUND) {
+        tooDeep.push(`${name}: ${depth(source)} levels`)
+        source = undefined
+      }
     }
-    if (depth(source) > DEPTH_BOUND) {
-      tooDeep.push(`${name}: ${depth(source)} levels`)
-      return
-    }
-    for (const to of targets) {
+    for (const to of undefined === source ? [] : targets) {
       pairs += 1
+      const pair = `${name} (${from.id}) -> ${to.id}`
+      const held = expect(from, to, source as Datum)
       let failure: string | undefined
       let written: string | undefined
+      let refused: unknown
       try {
         written = translateText(from, to, text)
       } catch (err) {
-        failure = `does not write: ${why(err)}`
+        refused = err
       }
-      if (undefined !== written) {
+      if (!held.written) {
+        const fail = refused as { code?: string; message?: string } | undefined
+        if (undefined !== written) {
+          failure = `is written, where it is declared refused (${held.code}, ${held.reason}...): ${JSON.stringify(written)}`
+        } else if (held.code === fail?.code && String(fail?.message).startsWith(held.reason)) {
+          refusals.push(`${pair}: ${held.reason}`)
+        } else {
+          failure = `is refused otherwise than declared (${held.code}, ${held.reason}...): ${why(refused)}`
+        }
+      } else if (undefined === written) {
+        failure = `does not write: ${why(refused)}`
+      } else if ('records' === from.part.reads[0] && 'records' === to.part.writes) {
         // A records source read through its lift writes its table, not its
         // tree: compare with the table.
-        const lifted = 'records' === from.part.reads[0] && 'records' === to.part.writes
-        if (lifted) {
-          try {
-            to.read(written, limits)
-          } catch (err) {
-            failure = `the written document does not read back: ${why(err)}`
-          }
-        } else {
-          try {
-            failure = check(from, to, source, written)
-          } catch (err) {
-            failure = `the check failed: ${why(err)}`
-          }
+        try {
+          to.read(written, limits)
+        } catch (err) {
+          failure = `the written document does not read back: ${why(err)}`
+        }
+      } else {
+        try {
+          failure = check(from, to, source as Datum, written)
+        } catch (err) {
+          failure = `the check failed: ${why(err)}`
         }
       }
-      if (undefined !== failure) failures.push(`${name} (${from.id}) -> ${to.id}: ${failure}`)
+      if (undefined !== failure) failures.push(`${pair}: ${failure}`)
     }
     if ((n + 1) % 25 === 0 || n + 1 === docs.length || Date.now() - reported > 20_000) {
       reported = Date.now()
       process.stderr.write(
         `matrix: ${n + 1} of ${docs.length} documents (${Math.floor(((n + 1) * 100) / docs.length)}%), ` +
-          `${failures.length} failures\n`,
+          `${failures.length} failures, ${Math.floor((Date.now() - started) / 1000)}s\n`,
       )
     }
   })
   for (const line of refusedSources) process.stderr.write(`refused source: ${line}\n`)
   for (const line of tooDeep) process.stderr.write(`deeper than every format reads: ${line}\n`)
   for (const line of failures) process.stderr.write(`FAIL ${line}\n`)
+  const schemaOnly = refusals.filter((r) => r.includes('schema_only:')).length
   process.stderr.write(
     `matrix: ${pairs} pairs of ${docs.length} documents; ${refusedSources.length} refused by their own ` +
-      `reader, ${tooDeep.length} too deep\n`,
+      `reader, ${tooDeep.length} too deep, ${defective.length} left out for a registered reader defect; ` +
+      `${refusals.length} pairs refused as their target declares (${schemaOnly} by a schema-only target, ` +
+      `${refusals.length - schemaOnly} by Semantic Versioning's embedding)\n`,
   )
   assert.ok(
-    pairs + (refusedSources.length + tooDeep.length) * targets.length === total && docs.length >= floor,
+    pairs + (refusedSources.length + tooDeep.length + defective.length) * targets.length === total &&
+      docs.length >= floor,
     `the corpus shrank: ${docs.length} documents`,
   )
   assert.ok(tooDeep.length <= tooDeepAtMost, `${tooDeep.length} documents are deeper than every format reads (above)`)
+  assert.ok(
+    refusals.length >= refusalsAtLeast,
+    `${refusals.length} pairs are refused as their target declares, fewer than the ${refusalsAtLeast} the corpus gives`,
+  )
   assert.ok(0 === failures.length, `${failures.length} of ${pairs} pairs failed (above)`)
 }
 
@@ -717,7 +1293,51 @@ describe('translate', () => {
   // transduce's fixtures, one document per format at least, and the
   // documents of JSONTestSuite every JSON parser must accept.
   it('every document translates into every format', () => {
-    matrix(corpus(), 120, 0)
+    matrix(corpus(), 132, 0, 500)
+  })
+
+  // Each registered reader defect still stands: the tree this command reads
+  // an example document as is not the one the format's package builds with
+  // its own API, the tree its parts declare, or a version past 2^53 - 1
+  // does not survive its own round trip. Once a reader is repaired this
+  // fails, until its entry in READER_DEFECTS is deleted.
+  it('a registered reader defect still stands', () => {
+    const limits = Limits.default()
+    for (const [id, defect] of READER_DEFECTS) {
+      if ('proto' === id) {
+        const text = 'syntax = "proto3";\nmessage M { int32 a = 1; }\n'
+        const declared = Datum.fromJSON(JSON.parse(JSON.stringify(protoParse(text))))
+        const read = named(id).read(text, limits)
+        assert.ok(!same(read, declared), `${id} now reads the declared tree, ${toText(declared)}: delete its entry (${defect})`)
+        // A .proto file is refused by its own render.
+        assert.throws(
+          () => translateText(named(id), named(id), text),
+          (err: { code?: string; message?: string }) =>
+            'TARGET_VALUE_UNREPRESENTABLE' === err.code &&
+            String(err.message).startsWith('the tree is not a FileDescriptorProto'),
+        )
+      } else if ('semver' === id) {
+        const text = '99999999999999999999.1.2'
+        const back = translateText(named(id), named(id), text)
+        assert.notStrictEqual(back, text, `${id} now keeps a version past 2^53 - 1: delete its entry (${defect})`)
+      } else {
+        assert.fail(`${id}: a registered defect needs an example here`)
+      }
+    }
+  })
+
+  // feed's TypeScript reader builds a person's absent uri and email as
+  // null, where its Rust and Go readers leave them out, so a translation
+  // from a feed writes them as null in this runtime alone. feed's render
+  // writes no member whose value is null, so the matrix reads a written feed
+  // back with its null members left out. This fails once the readers agree,
+  // and is then deleted.
+  it("feed's reader builds a person's absent members as null", () => {
+    const text =
+      '<feed xmlns="http://www.w3.org/2005/Atom"><title>T</title><id>i</id>' +
+      '<updated>2003-12-13T18:30:02Z</updated><author><name>A</name></author></feed>'
+    const json = translateText(named('feed'), named('json'), text)
+    assert.ok(json.includes('"authors":[{"name":"A","uri":null,"email":null}]'), json)
   })
 
   // ZON's reader builds an integer no double holds exactly as a bigint,

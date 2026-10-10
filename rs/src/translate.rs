@@ -109,12 +109,36 @@ macro_rules! reader {
     }};
 }
 
+/// The reader of chess's grammar with its default options, which its
+/// `make` takes: they always install, so a failure is the package's defect.
+fn read_pgn(text: &str) -> ParserSource<'_> {
+    let parser = tabnas_chess::make(&tabnas_chess::ChessOptions::default())
+        .unwrap_or_else(|e| panic!("tabnas-chess: the grammar does not install: {e}"));
+    ParserSource::new(parser, text)
+}
+
 /// Every grammar package this command carries, with its reader.
 fn packages() -> Vec<(Option<Descriptor>, Reader)> {
     vec![
         (
+            descriptor!("tabnas-chess", tabnas_chess, embed),
+            read_pgn as Reader,
+        ),
+        (
+            descriptor!("tabnas-css", tabnas_css, embed),
+            reader!(tabnas_css),
+        ),
+        (
             descriptor!("tabnas-csv", tabnas_csv, embed),
             reader!(tabnas_csv),
+        ),
+        (
+            descriptor!("tabnas-expr", tabnas_expr, embed),
+            reader!(tabnas_expr),
+        ),
+        (
+            descriptor!("tabnas-feed", tabnas_feed, embed),
+            reader!(tabnas_feed),
         ),
         (
             descriptor!("tabnas-ini", tabnas_ini, embed),
@@ -143,6 +167,14 @@ fn packages() -> Vec<(Option<Descriptor>, Reader)> {
         (
             descriptor!("tabnas-markdown", tabnas_markdown, embed),
             reader!(tabnas_markdown),
+        ),
+        (
+            descriptor!("tabnas-proto", tabnas_proto, embed),
+            reader!(tabnas_proto),
+        ),
+        (
+            descriptor!("tabnas-semver", tabnas_semver, embed),
+            reader!(tabnas_semver),
         ),
         (
             descriptor!("tabnas-toml", tabnas_toml, embed),

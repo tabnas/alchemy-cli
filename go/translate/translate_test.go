@@ -11,11 +11,21 @@ package translate_test
 // that reads back as anything but the conventions say is a failure, and so
 // is a corpus that shrinks.
 //
-// The corpora are the sibling checkouts': transduce's fixtures (aless's,
-// one document per format at least, and more for YAML and ZON) and the
-// documents of JSONTestSuite every JSON parser must accept (jsonc's
-// conformance pins). A fixture its own grammar refuses is no document, and
-// is counted as one refused. The Rust suite's cross product of every
+// A pair whose target declares that it refuses the document is held to
+// that refusal, its code and the start of its message, and counted: a
+// schema-only target (one that writes a schema's tree with no embedding
+// into it: CSS, PGN, proto) refuses another format's tree, and Semantic
+// Versioning's embedding refuses a tree that is not a version. A refusal of
+// another kind, or a document written where a refusal is declared, is a
+// failure.
+//
+// The corpora are the sibling checkouts': transduce's fixtures (aless's: a
+// document of every format but CSS, expressions, PGN, proto and Semantic
+// Versioning, and more for YAML and ZON) and the documents of JSONTestSuite
+// every JSON parser must accept (jsonc's conformance pins). A fixture its
+// own grammar refuses is no document, and is counted as one refused; so is
+// a document of a format whose reader is a registered defect
+// (readerDefects), counted apart. The Rust suite's cross product of every
 // format's own fixture corpus, which it runs in release, stays Rust's.
 
 import (
@@ -31,12 +41,18 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
 	"github.com/tabnas/alchemy-cli/go/translate"
 	alchemy "github.com/tabnas/alchemy/go"
 	at "github.com/tabnas/alchemy/go/translate"
+	tabnaschess "github.com/tabnas/chess/go"
+	tabnasexpr "github.com/tabnas/expr/go"
+	tabnasfeed "github.com/tabnas/feed/go"
+	tabnas "github.com/tabnas/parser/go"
+	tabnasproto "github.com/tabnas/proto/go"
 	tt "github.com/tabnas/transduce/go"
 )
 
@@ -58,6 +74,8 @@ func formatOf(extension string) string {
 		return extension
 	case "md":
 		return "markdown"
+	case "rss", "atom":
+		return "feed"
 	}
 	return ""
 }
@@ -156,6 +174,330 @@ func translateText(from, to *translate.Format, text string, program *alchemy.Sou
 		return "", f
 	}
 	return out.String(), nil
+}
+
+// ---------------------------------------------------------------------
+// The readers registered as defective
+// ---------------------------------------------------------------------
+
+// readerDefects is the formats whose reader, as this command reads a
+// document through transduce, does not build the tree the format's parts
+// declare, for a defect of the format's module: each id with its defect
+// (rs/tests/translate_test.rs's READER_DEFECTS, for this runtime's
+// readers). The matrix reads no document of a registered format as a
+// source, and counts the documents it leaves out; every format is still a
+// target. TestARegisteredReaderDefectStillStands holds each entry to an
+// example document, so an entry fails once its reader is repaired, and must
+// then be deleted.
+var readerDefects = map[string]string{
+	"expr": "tabnasexpr's parser puts an operator's *Op in the operation's list, which transduce's walker " +
+		"writes as its fmt text, so 1+2*3 reads as [\"{addition-infix + ...}\",1,[...]]; the list its parts " +
+		"declare has the operator's description or its source text there, which Simplify gives",
+	"proto": "tabnasproto's parser builds the grammar's syntax tree, and the descriptor its parts declare " +
+		"(the schema proto-descriptor) is what its Parse and ToDescriptor build from it; transduce walks " +
+		"the syntax tree, which proto's own render refuses as no FileDescriptorProto",
+	"feed": "tabnasfeed's parser builds a typed AtomFeed, which transduce's walker writes as its fmt text, " +
+		"pointers and all; the tree its parts declare is the one its JSON tags name",
+	"pgn": "tabnaschess's parser builds a typed Database, whose games transduce's walker writes as their " +
+		"fmt text, pointers and all; the tree its parts declare is the one its JSON tags name",
+	"semver": "tabnassemver's reader builds a number past 2^53 - 1 as a *big.Int, which transduce's walker " +
+		"writes as its fmt text, so 99999999999999999999.1.2 is refused by its own render; the Rust reader " +
+		"keeps the digits, as the format's render takes them (its part's alchemy/render.alc). The format " +
+		"is left out whole while it is registered",
+}
+
+// registeredDefect is whether documents of id are left out as sources for a
+// registered reader defect.
+func registeredDefect(id string) bool {
+	_, ok := readerDefects[id]
+	return ok
+}
+
+// jsonTree is a typed value as the tree its JSON encoding names.
+func jsonTree(t testing.TB, value any) tt.Datum {
+	t.Helper()
+	text, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := tt.DatumFromJSON(string(text))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return d
+}
+
+// exprRead is an expression document as expr's shared fixtures read one,
+// with its own API: its tree, each operator reduced to its source text.
+func exprRead(text string) (tt.Datum, error) {
+	value, err := tabnasexpr.Parse(text)
+	if err != nil {
+		return tt.Datum{}, err
+	}
+	return tt.DatumFromValue(tabnasexpr.Simplify(value)), nil
+}
+
+// feedRead is a feed as its module builds it, the typed AtomFeed, as the
+// tree its JSON tags name.
+func feedRead(t testing.TB, text string) (tt.Datum, error) {
+	t.Helper()
+	parser := tabnas.Make()
+	if err := parser.UseDefaults(tabnasfeed.Feed, tabnasfeed.Defaults); err != nil {
+		t.Fatal(err)
+	}
+	value, err := parser.Parse(text)
+	if err != nil {
+		return tt.Datum{}, err
+	}
+	return jsonTree(t, value), nil
+}
+
+// TestARegisteredReaderDefectStillStands holds each registered reader
+// defect to an example: the tree this command reads it as is not the one
+// the format's module builds with its own API, the tree its parts declare,
+// or a version past 2^53 - 1 does not survive its own round trip. Once a
+// reader is repaired this fails, until its entry in readerDefects is
+// deleted.
+func TestARegisteredReaderDefectStillStands(t *testing.T) {
+	limits := tt.DefaultLimits()
+	for id, defect := range readerDefects {
+		var example string
+		var read, declared tt.Datum
+		var f *tt.Fail
+		switch id {
+		case "expr":
+			example = "1+2*3\n"
+			if read, f = format(t, id).Read(example, limits); f != nil {
+				t.Fatal(f)
+			}
+			read = exprSimplify(read)
+			var err error
+			if declared, err = exprRead(example); err != nil {
+				t.Fatal(err)
+			}
+		case "proto":
+			example = "syntax = \"proto3\";\nmessage M { int32 a = 1; }\n"
+			if read, f = format(t, id).Read(example, limits); f != nil {
+				t.Fatal(f)
+			}
+			descriptor, err := tabnasproto.Parse(example, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			declared = jsonTree(t, descriptor)
+			// A .proto file is refused by its own render.
+			_, f := translateText(format(t, id), format(t, id), example, nil)
+			if f == nil || f.Code != tt.CodeTargetValueUnrepresentable ||
+				!strings.HasPrefix(f.Message, "the tree is not a FileDescriptorProto") {
+				t.Errorf("proto into proto: %v", f)
+			}
+		case "feed":
+			example = "<rss version=\"2.0\"><channel><title>News</title><item><title>A</title></item></channel></rss>"
+			if read, f = format(t, id).Read(example, limits); f != nil {
+				t.Fatal(f)
+			}
+			var err error
+			if declared, err = feedRead(t, example); err != nil {
+				t.Fatal(err)
+			}
+		case "pgn":
+			example = "[Event \"X\"]\n\n1. e4 e5 1-0\n"
+			if read, f = format(t, id).Read(example, limits); f != nil {
+				t.Fatal(f)
+			}
+			database, err := tabnaschess.Make().Parse(example)
+			if err != nil {
+				t.Fatal(err)
+			}
+			declared = jsonTree(t, database)
+		case "semver":
+			example = "99999999999999999999.1.2"
+			back, f := translateText(format(t, id), format(t, id), example, nil)
+			if f == nil && back == example {
+				t.Errorf("%s now keeps a version past 2^53 - 1: delete its entry (%s)", id, defect)
+			}
+			continue
+		default:
+			t.Fatalf("%s: a registered defect needs an example here", id)
+		}
+		if same(&read, &declared) {
+			t.Errorf("%s now reads %q as the tree its module builds, %s: delete its entry (%s)", id, example, declared, defect)
+		}
+	}
+}
+
+// orderDivergent is the formats whose Go reader builds plain maps, which
+// transduce's walker gives in sorted key order, so a translation from one
+// writes its members in another order than the Rust and TypeScript
+// commands, which write them as the reader met them: each with an example
+// and the JSON this command writes of it. The matrix compares values, which
+// keep no order, so it cannot see this; TestAPlainMapsMembersAreSorted
+// holds each entry to its example, and fails once the module keeps its
+// members' order, when the entry is deleted. (proto's maps are sorted too,
+// and its reader is a registered defect besides.)
+var orderDivergent = map[string][2]string{
+	"semver": {"1.2.3-rc.1", `{"build":[],"major":1,"minor":2,"patch":3,"prerelease":["rc",1]}`},
+	"css": {"a{color:red}", `{"rules":[{"declarations":[{"property":"color","type":"declaration","value":"red"}],` +
+		`"selectors":["a"],"type":"rule"}],"type":"stylesheet"}`},
+}
+
+// TestAPlainMapsMembersAreSorted holds each orderDivergent entry to its
+// example: the Rust and TypeScript commands write semver's example as
+// {"major":1,"minor":2,"patch":3,"prerelease":["rc",1],"build":[]}, and
+// css's with each node's type first.
+func TestAPlainMapsMembersAreSorted(t *testing.T) {
+	for id, c := range orderDivergent {
+		got, f := translateText(format(t, id), format(t, "json"), c[0], nil)
+		if f != nil || strings.TrimSuffix(got, "\n") != c[1] {
+			t.Errorf("%s now writes %q as %s (%v), not as registered: delete its entry if its members keep their order", id, c[0], got, f)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------
+// The refusals the targets declare
+// ---------------------------------------------------------------------
+
+// expectation is what a pair is held to: written, and read back under the
+// target's conventions; or refused as the target declares, with the code
+// and the start of the message alchemy's composition or the target's part
+// gives.
+type expectation struct {
+	written bool
+	code    tt.Code
+	reason  string
+}
+
+// expect is what from's document, read as source, into to is held to. A
+// schema-only target (one that writes from a tree, with a schema and no
+// embed: CSS, PGN, proto) refuses a tree of another schema before any
+// output, as alchemy's composition declares; Semantic Versioning's
+// embedding refuses a tree that is not a version, as its part declares.
+// Every other pair is written, Markdown's table among them: it writes from
+// records, which any tree makes.
+func expect(from, to *translate.Format, source *tt.Datum) expectation {
+	target := to.Part
+	foreign := target.Writes == at.ShapeTree && target.Schema != "" && from.Part.Schema != target.Schema
+	switch {
+	case foreign && target.Embed == nil:
+		return expectation{code: tt.CodeTargetValueUnrepresentable,
+			reason: "schema_only: " + target.ID + " writes a " + target.Schema + " tree, "}
+	case foreign && to.ID() == "semver" && !semverVersion(source):
+		return expectation{code: tt.CodeTargetValueUnrepresentable, reason: "the document is not a version: "}
+	}
+	return expectation{written: true}
+}
+
+// allDigits is whether s is digits alone, and not empty.
+func allDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// writtenDigits is the text a number is written with when it is digits
+// alone: its lexeme, or the text JSON writes for it, ECMAScript's, which
+// spells a whole number below 10^21 with its digits.
+func writtenDigits(d *tt.Datum) (string, bool) {
+	if d.Kind != tt.DatumNumber {
+		return "", false
+	}
+	text := d.Lexeme
+	if !d.HasLexeme {
+		v := d.Value
+		if math.IsInf(v, 0) || math.IsNaN(v) || v != math.Trunc(v) || math.Signbit(v) || v >= 1e21 {
+			return "", false
+		}
+		text = strconv.FormatFloat(v, 'f', 0, 64)
+	}
+	return text, allDigits(text)
+}
+
+// digitString is whether s is digits with no leading zero, but for 0
+// itself.
+func digitString(s string) bool {
+	return allDigits(s) && (s == "0" || s[0] != '0')
+}
+
+// semverIdentifier is whether a value is a prerelease (prerelease) or
+// build identifier: a number written in digits, or a string of 0-9, A-Z,
+// a-z and -, not empty, which for a prerelease is no number of digits that
+// begins with a zero.
+func semverIdentifier(d *tt.Datum, prerelease bool) bool {
+	switch d.Kind {
+	case tt.DatumNumber:
+		_, ok := writtenDigits(d)
+		return ok
+	case tt.DatumString:
+		s := d.Text
+		if s == "" {
+			return false
+		}
+		for i := 0; i < len(s); i++ {
+			c := s[i]
+			if !(c == '-' || ('0' <= c && c <= '9') || ('A' <= c && c <= 'Z') || ('a' <= c && c <= 'z')) {
+				return false
+			}
+		}
+		return !(prerelease && allDigits(s) && !digitString(s))
+	}
+	return false
+}
+
+// semverVersion is whether a value is a version as Semantic Versioning's
+// embedding takes one (its part's alchemy/embed.alc): an object whose
+// major, minor and patch are whole numbers written in digits (a number
+// whose text is digits alone, or a string of digits with no leading zero),
+// and whose prerelease and build, where it has them, are null, the empty
+// string, or a list of identifiers or one string of them joined by dots.
+func semverVersion(d *tt.Datum) bool {
+	if d.Kind != tt.DatumObject {
+		return false
+	}
+	core := func(key string) bool {
+		v, ok := d.Get(key)
+		switch {
+		case !ok:
+			return false
+		case v.Kind == tt.DatumNumber:
+			_, digits := writtenDigits(v)
+			return digits
+		}
+		return v.Kind == tt.DatumString && digitString(v.Text)
+	}
+	identifiers := func(key string, prerelease bool) bool {
+		v, ok := d.Get(key)
+		switch {
+		case !ok || v.Kind == tt.DatumNull:
+			return true
+		case v.Kind == tt.DatumString:
+			if v.Text == "" {
+				return true
+			}
+			for _, id := range strings.Split(v.Text, ".") {
+				item := tt.StringDatum(id)
+				if !semverIdentifier(&item, prerelease) {
+					return false
+				}
+			}
+			return true
+		case v.Kind == tt.DatumArray:
+			for i := range v.Items {
+				if !semverIdentifier(&v.Items[i], prerelease) {
+					return false
+				}
+			}
+			return true
+		}
+		return false
+	}
+	return core("major") && core("minor") && core("patch") && identifiers("prerelease", true) && identifiers("build", false)
 }
 
 // ---------------------------------------------------------------------
@@ -707,6 +1049,562 @@ func zonBack(d tt.Datum) tt.Datum {
 	return d
 }
 
+// exprOperators is the default operators' source texts, as expr's render
+// reads an operator: +, -, *, /, %, and ( for a group.
+var exprOperators = map[string]bool{"+": true, "-": true, "*": true, "/": true, "%": true, "(": true}
+
+// exprSimplify is a tree with each operator reduced to its source text, as
+// expr's shared fixtures and its render read one: a list whose first
+// element is an object whose src is a default operator's source text has
+// that text in the object's place.
+func exprSimplify(d tt.Datum) tt.Datum {
+	switch d.Kind {
+	case tt.DatumArray:
+		items := make([]tt.Datum, len(d.Items))
+		for i, item := range d.Items {
+			if i == 0 && item.Kind == tt.DatumObject {
+				if src, ok := item.Get("src"); ok && src.Kind == tt.DatumString && exprOperators[src.Text] {
+					items[i] = tt.StringDatum(src.Text)
+					continue
+				}
+			}
+			items[i] = exprSimplify(item)
+		}
+		return tt.ArrayDatum(items...)
+	case tt.DatumObject:
+		members := make([]tt.Member, len(d.Members))
+		for i, m := range d.Members {
+			members[i] = tt.Member{Key: m.Key, Value: exprSimplify(m.Value)}
+		}
+		return tt.ObjectDatum(members...)
+	}
+	return d
+}
+
+// exprReading is what expr's conventions make of a tree it is given (its
+// loss list): an operator's description reads back as its source text; a
+// negative number, written with its sign, as the operator - applied to its
+// magnitude; and a number that is not finite as the string Infinity,
+// -Infinity or NaN.
+func exprReading(d tt.Datum) tt.Datum {
+	var numbers func(d tt.Datum) tt.Datum
+	numbers = func(d tt.Datum) tt.Datum {
+		switch d.Kind {
+		case tt.DatumNumber:
+			switch {
+			case math.IsNaN(d.Value):
+				return tt.StringDatum("NaN")
+			case math.IsInf(d.Value, 1):
+				return tt.StringDatum("Infinity")
+			case math.IsInf(d.Value, -1):
+				return tt.StringDatum("-Infinity")
+			}
+			signed := math.Signbit(d.Value)
+			if d.HasLexeme {
+				signed = strings.HasPrefix(d.Lexeme, "-")
+			}
+			if signed {
+				return tt.ArrayDatum(tt.StringDatum("-"), tt.NumberDatum(math.Abs(d.Value)))
+			}
+			return d
+		case tt.DatumArray:
+			items := make([]tt.Datum, len(d.Items))
+			for i, item := range d.Items {
+				items[i] = numbers(item)
+			}
+			return tt.ArrayDatum(items...)
+		case tt.DatumObject:
+			members := make([]tt.Member, len(d.Members))
+			for i, m := range d.Members {
+				members[i] = tt.Member{Key: m.Key, Value: numbers(m.Value)}
+			}
+			return tt.ObjectDatum(members...)
+		}
+		return d
+	}
+	return numbers(exprSimplify(d))
+}
+
+// maxSafeInteger is the largest integer every runtime's reader of a
+// version keeps as a number, 2^53 - 1; Semantic Versioning's Rust reader
+// keeps one past it as its digits.
+const maxSafeInteger = 9007199254740991
+
+// semverNumber is a version's number as Semantic Versioning's reader
+// builds it from its digits: a number up to 2^53 - 1, and its digits past
+// it.
+func semverNumber(digits string) tt.Datum {
+	value, err := strconv.ParseFloat(digits, 64)
+	if err == nil && value <= maxSafeInteger {
+		return tt.NumberDatum(value)
+	}
+	return tt.StringDatum(digits)
+}
+
+// semverReading is what a version reads back as, by Semantic Versioning's
+// loss list: its major, minor and patch, each the number its digits make;
+// its prerelease and build as lists, empty where they are absent, null or
+// empty, one string split at its dots; a prerelease identifier of digits as
+// the number they make and a build identifier as its text; and no other
+// member.
+func semverReading(d tt.Datum) tt.Datum {
+	text := func(v *tt.Datum) string {
+		if v.Kind == tt.DatumString {
+			return v.Text
+		}
+		digits, _ := writtenDigits(v)
+		return digits
+	}
+	identifiers := func(key string, prerelease bool) tt.Datum {
+		var items []tt.Datum
+		if v, ok := d.Get(key); ok {
+			switch {
+			case v.Kind == tt.DatumString && v.Text != "":
+				for _, id := range strings.Split(v.Text, ".") {
+					items = append(items, tt.StringDatum(id))
+				}
+			case v.Kind == tt.DatumArray:
+				items = v.Items
+			}
+		}
+		out := make([]tt.Datum, len(items))
+		for i := range items {
+			id := text(&items[i])
+			if prerelease && allDigits(id) {
+				out[i] = semverNumber(id)
+			} else {
+				out[i] = tt.StringDatum(id)
+			}
+		}
+		return tt.ArrayDatum(out...)
+	}
+	core := func(key string) tt.Datum {
+		v, _ := d.Get(key)
+		return semverNumber(text(v))
+	}
+	return tt.ObjectDatum(
+		tt.Member{Key: "major", Value: core("major")},
+		tt.Member{Key: "minor", Value: core("minor")},
+		tt.Member{Key: "patch", Value: core("patch")},
+		tt.Member{Key: "prerelease", Value: identifiers("prerelease", true)},
+		tt.Member{Key: "build", Value: identifiers("build", false)},
+	)
+}
+
+// feedRender is the id, and an author's uri, the feed render supplies
+// where a feed has none.
+const feedRender = "tag:tabnas.dev,2026:feed-render"
+
+// feedEpoch is the date the feed render supplies where a feed or an entry
+// has none, the one its embedding gives a plain tree.
+const feedEpoch = "1970-01-01T00:00:00Z"
+
+// digitsOf is whether s is n decimal digits.
+func digitsOf(n int, s string) bool {
+	return len(s) == n && (n == 0 || allDigits(s))
+}
+
+// twoDigits is whether s is two digits from lo to hi.
+func twoDigits(lo, hi int, s string) bool {
+	if !digitsOf(2, s) {
+		return false
+	}
+	n, _ := strconv.Atoi(s)
+	return lo <= n && n <= hi
+}
+
+// rfc3339 is whether s is an RFC 3339 date-time with the upper-case T and
+// Z Atom asks for, as the feed render reads one: a full date; a time, whose
+// seconds may have a fraction; and Z or an offset.
+func rfc3339(s string) bool {
+	second := func(sec string) bool {
+		p := strings.Split(sec, ".")
+		switch len(p) {
+		case 1:
+			return twoDigits(0, 60, sec)
+		case 2:
+			return twoDigits(0, 60, p[0]) && allDigits(p[1])
+		}
+		return false
+	}
+	clock := func(t string) bool {
+		p := strings.Split(t, ":")
+		return len(p) == 3 && twoDigits(0, 23, p[0]) && twoDigits(0, 59, p[1]) && second(p[2])
+	}
+	offset := func(o string) bool {
+		p := strings.Split(o, ":")
+		return len(p) == 2 && twoDigits(0, 23, p[0]) && twoDigits(0, 59, p[1])
+	}
+	parts := strings.Split(s, "T")
+	if len(parts) != 2 {
+		return false
+	}
+	d := strings.Split(parts[0], "-")
+	if !(len(d) == 3 && digitsOf(4, d[0]) && twoDigits(1, 12, d[1]) && twoDigits(1, 31, d[2])) {
+		return false
+	}
+	rest := parts[1]
+	switch z := strings.Split(rest, "Z"); len(z) {
+	case 2:
+		return z[1] == "" && clock(z[0])
+	case 1:
+		switch plus := strings.Split(rest, "+"); len(plus) {
+		case 2:
+			return clock(plus[0]) && offset(plus[1])
+		case 1:
+			minus := strings.Split(rest, "-")
+			return len(minus) == 2 && clock(minus[0]) && offset(minus[1])
+		}
+	}
+	return false
+}
+
+// rfc822Zones is RFC 822's named zones as RFC 3339 offsets, in lower case.
+var rfc822Zones = map[string]string{
+	"ut": "Z", "gmt": "Z", "z": "Z",
+	"est": "-05:00", "edt": "-04:00", "cst": "-06:00", "cdt": "-05:00",
+	"mst": "-07:00", "mdt": "-06:00", "pst": "-08:00", "pdt": "-07:00",
+}
+
+// asciiLower is s with its ASCII letters in lower case, as RFC 822's names
+// may be in any case.
+func asciiLower(s string) string {
+	b := []byte(s)
+	for i, c := range b {
+		if 'A' <= c && c <= 'Z' {
+			b[i] = c + ('a' - 'A')
+		}
+	}
+	return string(b)
+}
+
+// rfc822 is an RSS date, RFC 822's date-time with a four-digit year
+// allowed and its names in any case, as the same instant in RFC 3339's
+// form, as the feed render writes one: a day of the week and a comma at
+// most, then the day, the month, the year (two digits before 50 in the
+// 2000s, else in the 1900s), the time (seconds 00 where it has none) and
+// the zone (Z for UT, GMT and Z, the US zones' offsets, or a sign and four
+// digits). Its tabs and line breaks are spaces.
+func rfc822(s string) (string, bool) {
+	words := func(t string) []string {
+		var out []string
+		for _, w := range strings.Split(strings.NewReplacer("\n", " ", "\r", " ", "\t", " ").Replace(t), " ") {
+			if w != "" {
+				out = append(out, w)
+			}
+		}
+		return out
+	}
+	var w []string
+	switch parts := strings.Split(s, ","); len(parts) {
+	case 1:
+		w = words(s)
+	case 2:
+		d := words(parts[0])
+		days := map[string]bool{"mon": true, "tue": true, "wed": true, "thu": true, "fri": true, "sat": true, "sun": true}
+		if len(d) != 1 || !days[asciiLower(d[0])] {
+			return "", false
+		}
+		w = words(parts[1])
+	default:
+		return "", false
+	}
+	if len(w) != 5 {
+		return "", false
+	}
+	day, month, year, clock, zone := w[0], w[1], w[2], w[3], w[4]
+	switch {
+	case digitsOf(4, year):
+	case digitsOf(2, year) && year < "50":
+		year = "20" + year
+	case digitsOf(2, year):
+		year = "19" + year
+	default:
+		return "", false
+	}
+	months := []string{"jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"}
+	m := -1
+	for i, name := range months {
+		if name == asciiLower(month) {
+			m = i
+		}
+	}
+	if m < 0 {
+		return "", false
+	}
+	if digitsOf(1, day) {
+		day = "0" + day
+	}
+	if !twoDigits(1, 31, day) {
+		return "", false
+	}
+	hms := strings.Split(clock, ":")
+	if len(hms) == 2 {
+		hms = append(hms, "00")
+	}
+	if !(len(hms) == 3 && twoDigits(0, 23, hms[0]) && twoDigits(0, 59, hms[1]) && twoDigits(0, 60, hms[2])) {
+		return "", false
+	}
+	numeric := func(sign, digits string) (string, bool) {
+		if digitsOf(4, digits) && twoDigits(0, 23, digits[:2]) && twoDigits(0, 59, digits[2:]) {
+			return sign + digits[:2] + ":" + digits[2:], true
+		}
+		return "", false
+	}
+	// A sign and four digits; the render splits the zone at its signs, so
+	// one with a second sign is no zone.
+	offset, ok := rfc822Zones[asciiLower(zone)]
+	if !ok {
+		if plus := strings.Split(zone, "+"); len(plus) == 2 && plus[0] == "" {
+			offset, ok = numeric("+", plus[1])
+		} else if minus := strings.Split(zone, "-"); len(minus) == 2 && minus[0] == "" {
+			offset, ok = numeric("-", minus[1])
+		}
+	}
+	if !ok {
+		return "", false
+	}
+	return fmt.Sprintf("%s-%02d-%sT%s%s", year, m+1, day, strings.Join(hms, ":"), offset), true
+}
+
+// feedDate is a date as the feed render writes it: its RFC 3339 form, or,
+// with ok false, the text of one in neither form, which it writes as the
+// epoch with a category that keeps the text. A date with no text is a
+// missing one.
+func feedDate(v *tt.Datum) (string, bool) {
+	if v.Kind != tt.DatumString {
+		return v.String(), false
+	}
+	if v.Text == "" {
+		return feedEpoch, true
+	}
+	upper := strings.NewReplacer("t", "T", "z", "Z").Replace(v.Text)
+	if rfc3339(upper) {
+		return upper, true
+	}
+	if c, ok := rfc822(v.Text); ok {
+		return c, true
+	}
+	return v.Text, false
+}
+
+// feedClean is a feed's value as the reader builds it back: no member
+// whose value is null, and a character XML 1.0 cannot carry as U+FFFD.
+func feedClean(d tt.Datum) tt.Datum {
+	switch d.Kind {
+	case tt.DatumString:
+		return tt.StringDatum(strings.Map(func(c rune) rune {
+			if (c < 0x20 && c != '\t' && c != '\n' && c != '\r') || c == 0xFFFE || c == 0xFFFF {
+				return 0xFFFD
+			}
+			return c
+		}, d.Text))
+	case tt.DatumArray:
+		items := make([]tt.Datum, len(d.Items))
+		for i, item := range d.Items {
+			items[i] = feedClean(item)
+		}
+		return tt.ArrayDatum(items...)
+	case tt.DatumObject:
+		members := []tt.Member{}
+		for _, m := range d.Members {
+			if m.Value.Kind != tt.DatumNull {
+				members = append(members, tt.Member{Key: m.Key, Value: feedClean(m.Value)})
+			}
+		}
+		return tt.ObjectDatum(members...)
+	}
+	return d
+}
+
+// feedText is a text construct or a content as the feed render writes it:
+// one of type xhtml as html, its value trimmed.
+func feedText(d tt.Datum) tt.Datum {
+	cleaned := feedClean(d)
+	if cleaned.Kind != tt.DatumObject {
+		return cleaned
+	}
+	if t, ok := cleaned.Get("type"); !ok || t.Kind != tt.DatumString || t.Text != "xhtml" {
+		return cleaned
+	}
+	members := make([]tt.Member, len(cleaned.Members))
+	for i, m := range cleaned.Members {
+		switch {
+		case m.Key == "type":
+			m.Value = tt.StringDatum("html")
+		case m.Key == "value" && m.Value.Kind == tt.DatumString:
+			m.Value = tt.StringDatum(strings.TrimSpace(m.Value.Text))
+		}
+		members[i] = m
+	}
+	return tt.ObjectDatum(members...)
+}
+
+// feedHasAuthor is whether a feed or an entry has an author: a list of them
+// that is not empty.
+func feedHasAuthor(d *tt.Datum) bool {
+	if d.Kind != tt.DatumObject {
+		return false
+	}
+	authors, ok := d.Get("authors")
+	return ok && authors.Kind == tt.DatumArray && len(authors.Items) > 0
+}
+
+// feedObject is a feed's or an entry's members as the feed render writes
+// them and the reader builds them back (feedReading): each date in RFC
+// 3339's form, one the render cannot read as the epoch with a category
+// keeping its text, which comes before the object's own categories where
+// the date comes before them in the tree's order; text constructs as
+// feedText; an id, a title and an updated where the object has none, an
+// entry's id with a slash and position (negative for the feed); an entry's
+// source not read back.
+func feedObject(d tt.Datum, position int) []tt.Member {
+	var out []tt.Member
+	var before, after []tt.Datum
+	categoriesMet := false
+	for _, m := range d.Members {
+		if m.Value.Kind == tt.DatumNull {
+			continue
+		}
+		switch m.Key {
+		case "categories":
+			categoriesMet = true
+		case "source", "format", "version", "entries":
+			continue
+		}
+		var value tt.Datum
+		switch m.Key {
+		case "updated", "published":
+			date, ok := feedDate(&m.Value)
+			if ok {
+				value = tt.StringDatum(date)
+				break
+			}
+			category := tt.ObjectDatum(
+				tt.Member{Key: "term", Value: tt.StringDatum(m.Key)},
+				tt.Member{Key: "scheme", Value: tt.StringDatum(feedRender + "/date")},
+				tt.Member{Key: "label", Value: feedClean(tt.StringDatum(date))},
+			)
+			if categoriesMet {
+				after = append(after, category)
+			} else {
+				before = append(before, category)
+			}
+			value = tt.StringDatum(feedEpoch)
+		case "title", "subtitle", "rights", "summary", "content":
+			value = feedText(m.Value)
+		default:
+			value = feedClean(m.Value)
+		}
+		out = append(out, tt.Member{Key: m.Key, Value: value})
+	}
+	if len(before) > 0 || len(after) > 0 {
+		var own []tt.Datum
+		for i, m := range out {
+			if m.Key == "categories" {
+				own = m.Value.Items
+				out = append(out[:i], out[i+1:]...)
+				break
+			}
+		}
+		all := append(append(before, own...), after...)
+		out = append(out, tt.Member{Key: "categories", Value: tt.ArrayDatum(all...)})
+	}
+	has := func(key string) bool {
+		for _, m := range out {
+			if m.Key == key {
+				return true
+			}
+		}
+		return false
+	}
+	if !has("id") {
+		id := feedRender
+		if position >= 0 {
+			id = feedRender + "/" + strconv.Itoa(position)
+		}
+		out = append(out, tt.Member{Key: "id", Value: tt.StringDatum(id)})
+	}
+	if !has("title") {
+		out = append(out, tt.Member{Key: "title", Value: tt.ObjectDatum(
+			tt.Member{Key: "type", Value: tt.StringDatum("text")},
+			tt.Member{Key: "value", Value: tt.StringDatum("")},
+		)})
+	}
+	if !has("updated") {
+		out = append(out, tt.Member{Key: "updated", Value: tt.StringDatum(feedEpoch)})
+	}
+	return out
+}
+
+// feedReading is what a feed reads back as, by its loss list: an Atom 1.0
+// feed of its members and its entries as feedObject writes them, and an
+// author, named by the feed's title where that is text and not empty and
+// unknown otherwise, where the feed has none, unless the render held its
+// entries (a tree whose entries come before its other members, as the
+// reader builds one) and each of them has one. Go's feed reader is a
+// registered defect, so no feed is a source here until it is repaired.
+func feedReading(d tt.Datum) tt.Datum {
+	var entries []tt.Datum
+	given, hasEntries := d.Get("entries")
+	if hasEntries && given.Kind == tt.DatumArray {
+		for i, e := range given.Items {
+			entries = append(entries, tt.ObjectDatum(feedObject(e, i)...))
+		}
+	}
+	out := []tt.Member{
+		{Key: "format", Value: tt.StringDatum("atom")},
+		{Key: "version", Value: tt.StringDatum("1.0")},
+	}
+	if hasEntries {
+		out = append(out, tt.Member{Key: "entries", Value: tt.ArrayDatum(entries...)})
+	}
+	out = append(out, feedObject(d, -1)...)
+	index := func(key string) int {
+		for i, m := range d.Members {
+			if m.Key == key {
+				return i
+			}
+		}
+		return -1
+	}
+	held := false
+	if at := index("entries"); at >= 0 {
+		for _, m := range []string{"id", "title", "subtitle", "rights", "updated", "authors", "contributors",
+			"categories", "links", "generator", "icon", "logo"} {
+			if i := index(m); i < 0 || i > at {
+				held = true
+			}
+		}
+	}
+	allAuthored := held && len(entries) > 0
+	for i := range entries {
+		allAuthored = allAuthored && feedHasAuthor(&entries[i])
+	}
+	if !feedHasAuthor(&d) && !allAuthored {
+		name := tt.StringDatum("unknown")
+		if title, ok := d.Get("title"); ok && title.Kind == tt.DatumObject {
+			typ, _ := title.Get("type")
+			value, _ := title.Get("value")
+			if typ != nil && typ.Kind == tt.DatumString && typ.Text == "text" &&
+				value != nil && value.Kind == tt.DatumString && value.Text != "" {
+				name = *value
+			}
+		}
+		kept := out[:0]
+		for _, m := range out {
+			if m.Key != "authors" {
+				kept = append(kept, m)
+			}
+		}
+		out = append(kept, tt.Member{Key: "authors", Value: tt.ArrayDatum(tt.ObjectDatum(
+			tt.Member{Key: "name", Value: name},
+			tt.Member{Key: "uri", Value: tt.StringDatum(feedRender)},
+		))})
+	}
+	return tt.ObjectDatum(out...)
+}
+
 // check is whether the document read back from written in target is what
 // the target's conventions make of source, read as from.
 func check(t testing.TB, from, target *translate.Format, source tt.Datum, written string) error {
@@ -732,25 +1630,45 @@ func check(t testing.TB, from, target *translate.Format, source tt.Datum, writte
 		if back, f = format(t, "yaml").Read(yaml, limits); f != nil {
 			return fmt.Errorf("its records do not read back: %v", f)
 		}
-	case id == "xml" && embedded:
-		// An embedding reads back through its reverse: the element tree, as
-		// JSON, unembedded, and written where a non-finite number has a
-		// spelling.
-		tree, f := target.Read(written, limits)
-		if f != nil {
-			return fmt.Errorf("the written document does not read back: %v", f)
+	case (id == "xml" || id == "feed") && embedded:
+		// An embedding reads back through its reverse, which its file holds
+		// beside it (xml-unembed, feed-unembed): the format's tree, as JSON,
+		// unembedded, and written where a non-finite number has a spelling.
+		// feed's reader is a registered defect here, so a feed is read back
+		// as its module builds it, the tree its JSON tags name.
+		var tree tt.Datum
+		if id == "feed" {
+			var err error
+			if tree, err = feedRead(t, written); err != nil {
+				return fmt.Errorf("the written document does not read back: %v", err)
+			}
+		} else {
+			var f *tt.Fail
+			if tree, f = target.Read(written, limits); f != nil {
+				return fmt.Errorf("the written document does not read back: %v", f)
+			}
 		}
 		embed := target.Part.Embed
-		if embed == nil {
-			t.Fatal("xml has an embed")
+		if embed == nil || !strings.HasSuffix(embed.Entry, "-embed") {
+			t.Fatalf("%s: an embedding target has an embed named NAME-embed", id)
 		}
-		program := embed.Text + "\ndef export [input] (xml-unembed input)\n"
-		yaml, f := translateText(format(t, "json"), format(t, "yaml"), tree.String(), &alchemy.Source{File: "xml-unembed.alc", Text: program})
+		reverse := strings.TrimSuffix(embed.Entry, "-embed") + "-unembed"
+		program := embed.Text + "\ndef export [input] (" + reverse + " input)\n"
+		yaml, f := translateText(format(t, "json"), format(t, "yaml"), tree.String(), &alchemy.Source{File: reverse + ".alc", Text: program})
 		if f != nil {
-			return fmt.Errorf("the element tree does not unembed: %v", f)
+			return fmt.Errorf("the tree does not unembed: %v", f)
 		}
 		if back, f = format(t, "yaml").Read(yaml, limits); f != nil {
 			return fmt.Errorf("the unembedded tree does not read back: %v", f)
+		}
+	case id == "expr":
+		// expr's reader, as this command reads through transduce, is a
+		// registered defect here, so the written document is read back as
+		// expr's fixtures read one, with its own API: its tree, each
+		// operator reduced to its source text.
+		var err error
+		if back, err = exprRead(written); err != nil {
+			return fmt.Errorf("the written document does not read back: %v", err)
 		}
 	default:
 		var f *tt.Fail
@@ -781,6 +1699,20 @@ func check(t testing.TB, from, target *translate.Format, source tt.Datum, writte
 	case "zon":
 		expected = zonReading(source)
 		back = zonBack(back)
+	case "expr":
+		expected = exprReading(source)
+	case "semver":
+		expected = semverReading(source)
+	case "feed":
+		// A feed's own tree, written as Atom 1.0, with no member whose value
+		// is null, so a null member read back is one left out (an embedded
+		// tree reads back through its reverse, above, as it was).
+		if embedded {
+			expected = source
+		} else {
+			expected = feedReading(source)
+			back = feedClean(back)
+		}
 	default:
 		expected = source
 	}
@@ -827,34 +1759,52 @@ var divergent = map[string]string{}
 
 // matrix is the cross product of docs and every format: each document read
 // with its format's grammar, written in every format, and read back under
-// the target's conventions. At least floor documents, and at most
-// tooDeepAtMost of them deeper than every format reads.
-func matrix(t *testing.T, docs []document, floor, tooDeepAtMost int) {
+// the target's conventions, or refused as the target declares. At least
+// floor documents, at most tooDeepAtMost of them deeper than every format
+// reads, and at least refusalsAtLeast pairs refused as their target
+// declares; a document of a format whose reader is a registered defect is
+// left out as a source, and counted.
+func matrix(t *testing.T, docs []document, floor, tooDeepAtMost, refusalsAtLeast int) {
 	limits := tt.DefaultLimits()
 	targets := translate.Formats()
-	if len(targets) != 12 {
+	if len(targets) != 18 {
 		t.Fatalf("the formats: %s", translate.Names())
 	}
 	total := len(docs) * len(targets)
-	var failures, refusedSources, tooDeep, diverged, repaired []string
+	var failures, refusedSources, tooDeep, defective, refusals, diverged, repaired []string
 	met := map[string]bool{}
 	pairs := 0
+	started := time.Now()
+	reported := time.Now()
 	for n, doc := range docs {
 		from := format(t, doc.format)
-		source, f := from.Read(doc.text, limits)
-		if f != nil {
+		var source tt.Datum
+		read := false
+		if registeredDefect(from.ID()) {
+			defective = append(defective, doc.name)
+		} else if value, f := from.Read(doc.text, limits); f != nil {
 			refusedSources = append(refusedSources, fmt.Sprintf("%s: %v", doc.name, f))
-			continue
-		}
-		if d := depth(&source); d > depthBound {
+		} else if d := depth(&value); d > depthBound {
 			tooDeep = append(tooDeep, fmt.Sprintf("%s: %d levels", doc.name, d))
-			continue
+		} else {
+			source, read = value, true
 		}
 		for _, to := range targets {
+			if !read {
+				break
+			}
 			pairs++
+			name := fmt.Sprintf("%s (%s) -> %s", doc.name, from.ID(), to.ID())
+			held := expect(from, to, &source)
 			written, f := translateText(from, to, doc.text, nil)
 			var why error
 			switch {
+			case !held.written && f == nil:
+				why = fmt.Errorf("is written, where it is declared refused (%s, %s...): %q", held.code, held.reason, written)
+			case !held.written && (f.Code != held.code || !strings.HasPrefix(f.Message, held.reason)):
+				why = fmt.Errorf("is refused otherwise than declared (%s, %s...): %v", held.code, held.reason, f)
+			case !held.written:
+				refusals = append(refusals, name+": "+held.reason)
 			case f != nil:
 				why = fmt.Errorf("does not write: %v", f)
 			// A records source read through its lift writes its table, not
@@ -866,7 +1816,6 @@ func matrix(t *testing.T, docs []document, floor, tooDeepAtMost int) {
 			default:
 				why = check(t, from, to, source, written)
 			}
-			name := fmt.Sprintf("%s (%s) -> %s", doc.name, from.ID(), to.ID())
 			_, known := divergent[name]
 			if known {
 				met[name] = true
@@ -880,8 +1829,10 @@ func matrix(t *testing.T, docs []document, floor, tooDeepAtMost int) {
 				repaired = append(repaired, name)
 			}
 		}
-		if (n+1)%25 == 0 || n+1 == len(docs) {
-			t.Logf("matrix: %d of %d documents (%d%%), %d failures", n+1, len(docs), (n+1)*100/len(docs), len(failures))
+		if (n+1)%25 == 0 || n+1 == len(docs) || time.Since(reported) > 20*time.Second {
+			reported = time.Now()
+			t.Logf("matrix: %d of %d documents (%d%%), %d failures, %ds", n+1, len(docs), (n+1)*100/len(docs), len(failures),
+				int(time.Since(started).Seconds()))
 		}
 	}
 	for _, line := range refusedSources {
@@ -896,13 +1847,25 @@ func matrix(t *testing.T, docs []document, floor, tooDeepAtMost int) {
 	for _, line := range failures {
 		t.Logf("FAIL %s", line)
 	}
-	t.Logf("matrix: %d pairs of %d documents; %d refused by their own reader, %d too deep, %d divergent as registered",
-		pairs, len(docs), len(refusedSources), len(tooDeep), len(diverged))
-	if pairs+(len(refusedSources)+len(tooDeep))*len(targets) != total || len(docs) < floor {
+	schemaOnly := 0
+	for _, r := range refusals {
+		if strings.Contains(r, "schema_only:") {
+			schemaOnly++
+		}
+	}
+	t.Logf("matrix: %d pairs of %d documents; %d refused by their own reader, %d too deep, %d left out for a registered "+
+		"reader defect, %d divergent as registered; %d pairs refused as their target declares (%d by a schema-only "+
+		"target, %d by Semantic Versioning's embedding)",
+		pairs, len(docs), len(refusedSources), len(tooDeep), len(defective), len(diverged), len(refusals), schemaOnly,
+		len(refusals)-schemaOnly)
+	if pairs+(len(refusedSources)+len(tooDeep)+len(defective))*len(targets) != total || len(docs) < floor {
 		t.Fatalf("the corpora shrank: %d documents", len(docs))
 	}
 	if len(tooDeep) > tooDeepAtMost {
 		t.Fatalf("%d documents are deeper than every format reads (above)", len(tooDeep))
+	}
+	if len(refusals) < refusalsAtLeast {
+		t.Fatalf("%d pairs are refused as their target declares, fewer than the %d the corpora give", len(refusals), refusalsAtLeast)
 	}
 	for name := range divergent {
 		if !met[name] {
@@ -949,7 +1912,7 @@ func TestParsePathReadsKeysAndIndexes(t *testing.T) {
 // document per format at least, and the documents of JSONTestSuite every
 // JSON parser must accept, into every format.
 func TestEveryDocumentTranslatesIntoEveryFormat(t *testing.T) {
-	matrix(t, corpus(t), 120, 0)
+	matrix(t, corpus(t), 132, 0, 496)
 }
 
 // request is a request from from to to, with no path and no program.

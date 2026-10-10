@@ -25,7 +25,11 @@
 
 import { Program, compile as compileProgram, isFail, translate } from '@tabnas/alchemy'
 import type { CompileOptions } from '@tabnas/alchemy'
+import { Chess, translate as chessParts } from '@tabnas/chess'
+import { Css, translate as cssParts } from '@tabnas/css'
 import { make as makeCsv, translate as csvParts } from '@tabnas/csv'
+import { Expr, translate as exprParts } from '@tabnas/expr'
+import { Feed, translate as feedParts } from '@tabnas/feed'
 import { Ini, translate as iniParts } from '@tabnas/ini'
 import { make as makeJson, translate as jsonParts } from '@tabnas/json'
 import { Json5, translate as json5Parts } from '@tabnas/json5'
@@ -34,8 +38,10 @@ import { jsonic, translate as jsonicParts } from '@tabnas/jsonic'
 import { make as makeJsonl, translate as jsonlParts } from '@tabnas/jsonl'
 import { Markdown, translate as markdownParts } from '@tabnas/markdown'
 import { Tabnas } from '@tabnas/parser'
+import { Proto, translate as protoParts } from '@tabnas/proto'
 import { BytesWriter, renderers } from '@tabnas/render'
 import type { Writer } from '@tabnas/render'
+import { Semver, translate as semverParts } from '@tabnas/semver'
 import { Toml, translate as tomlParts } from '@tabnas/toml'
 import {
   Datum,
@@ -122,7 +128,11 @@ function descriptor(pkg: string, parts: Parts | undefined): translate.Descriptor
 // jsonic's base) and as transduce's differential suite reads it.
 function packages(): Array<[translate.Descriptor | undefined, () => Tabnas]> {
   return [
+    [descriptor('tabnas-chess', chessParts()), () => new Tabnas().use(Chess)],
+    [descriptor('tabnas-css', cssParts()), () => new Tabnas().use(jsonic).use(Css)],
     [descriptor('tabnas-csv', csvParts()), () => makeCsv()],
+    [descriptor('tabnas-expr', exprParts()), () => new Tabnas().use(jsonic).use(Expr)],
+    [descriptor('tabnas-feed', feedParts()), () => new Tabnas().use(Feed)],
     [descriptor('tabnas-ini', iniParts()), () => new Tabnas().use(jsonic).use(Ini)],
     [descriptor('tabnas-json', jsonParts()), () => makeJson()],
     [descriptor('tabnas-json5', json5Parts()), () => new Tabnas().use(jsonic).use(Json5)],
@@ -130,6 +140,8 @@ function packages(): Array<[translate.Descriptor | undefined, () => Tabnas]> {
     [descriptor('tabnas-jsonic', jsonicParts()), () => new Tabnas().use(jsonic)],
     [descriptor('tabnas-jsonl', jsonlParts()), () => makeJsonl()],
     [descriptor('tabnas-markdown', markdownParts()), () => new Tabnas().use(Markdown)],
+    [descriptor('tabnas-proto', protoParts()), () => new Tabnas({ rewind: { history: 8192 } }).use(Proto)],
+    [descriptor('tabnas-semver', semverParts()), () => new Tabnas().use(Semver)],
     [descriptor('tabnas-toml', tomlParts()), () => new Tabnas().use(jsonic).use(Toml)],
     [descriptor('tabnas-xml', xmlParts()), () => new Tabnas().use(Xml)],
     [descriptor('tabnas-yaml', yamlParts()), () => new Tabnas().use(jsonic).use(Yaml)],

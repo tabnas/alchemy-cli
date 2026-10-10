@@ -165,7 +165,11 @@ version = "0.1.6"
 dependencies = [
  "serde_json",
  "tabnas-alchemy",
+ "tabnas-chess",
+ "tabnas-css",
  "tabnas-csv",
+ "tabnas-expr",
+ "tabnas-feed",
  "tabnas-ini",
  "tabnas-json",
  "tabnas-json5",
@@ -174,13 +178,34 @@ dependencies = [
  "tabnas-jsonl",
  "tabnas-markdown",
  "tabnas-parser",
+ "tabnas-proto",
  "tabnas-render",
+ "tabnas-semver",
  "tabnas-support",
  "tabnas-toml",
  "tabnas-transduce",
  "tabnas-xml",
  "tabnas-yaml",
  "tabnas-zon",
+]
+
+[[package]]
+name = "tabnas-chess"
+version = "0.1.14"
+dependencies = [
+ "indexmap",
+ "regex",
+ "serde",
+ "serde_json",
+ "tabnas-parser",
+]
+
+[[package]]
+name = "tabnas-css"
+version = "0.5.14"
+dependencies = [
+ "tabnas-jsonic",
+ "tabnas-parser",
 ]
 
 [[package]]
@@ -192,6 +217,26 @@ dependencies = [
  "serde_json",
  "tabnas-jsonic",
  "tabnas-parser",
+]
+
+[[package]]
+name = "tabnas-expr"
+version = "0.5.16"
+dependencies = [
+ "indexmap",
+ "tabnas-jsonic",
+ "tabnas-parser",
+]
+
+[[package]]
+name = "tabnas-feed"
+version = "0.6.16"
+dependencies = [
+ "indexmap",
+ "regex",
+ "serde_json",
+ "tabnas-parser",
+ "tabnas-xml",
 ]
 
 [[package]]
@@ -282,10 +327,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "tabnas-proto"
+version = "0.6.7"
+dependencies = [
+ "indexmap",
+ "serde",
+ "serde_json",
+ "tabnas-parser",
+]
+
+[[package]]
 name = "tabnas-render"
 version = "0.2.4"
 dependencies = [
  "tabnas-alchemy",
+]
+
+[[package]]
+name = "tabnas-semver"
+version = "0.0.10"
+dependencies = [
+ "indexmap",
+ "serde_json",
+ "tabnas-parser",
 ]
 
 [[package]]

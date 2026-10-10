@@ -43,7 +43,11 @@ import (
 
 	alchemy "github.com/tabnas/alchemy/go"
 	at "github.com/tabnas/alchemy/go/translate"
+	tabnaschess "github.com/tabnas/chess/go"
+	tabnascss "github.com/tabnas/css/go"
 	tabnascsv "github.com/tabnas/csv/go"
+	tabnasexpr "github.com/tabnas/expr/go"
+	tabnasfeed "github.com/tabnas/feed/go"
 	tabnasini "github.com/tabnas/ini/go"
 	tabnasjson "github.com/tabnas/json/go"
 	tabnasjson5 "github.com/tabnas/json5/go"
@@ -52,7 +56,9 @@ import (
 	tabnasjsonl "github.com/tabnas/jsonl/go"
 	tabnasmarkdown "github.com/tabnas/markdown/go"
 	tabnas "github.com/tabnas/parser/go"
+	tabnasproto "github.com/tabnas/proto/go"
 	tr "github.com/tabnas/render/go"
+	tabnassemver "github.com/tabnas/semver/go"
 	tabnastoml "github.com/tabnas/toml/go"
 	tt "github.com/tabnas/transduce/go"
 	tabnasxml "github.com/tabnas/xml/go"
@@ -145,11 +151,31 @@ type module struct {
 func modules() []module {
 	return []module{
 		{func() at.Descriptor {
+			p := tabnaschess.Translate()
+			return descriptor("tabnas-chess", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
+		}, func(text string) *tt.ParserSource { return tt.NewParserSource(tabnaschess.Make(), text) }},
+		{func() at.Descriptor {
+			p := tabnascss.Translate()
+			return descriptor("tabnas-css", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
+		}, func(text string) *tt.ParserSource { return tt.NewParserSource(tabnascss.MakeJsonic(), text) }},
+		{func() at.Descriptor {
 			p := tabnascsv.Translate()
 			return descriptor("tabnas-csv", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
 		}, func(text string) *tt.ParserSource {
 			parser, err := tabnascsv.Make()
 			installed("tabnas-csv", err)
+			return tt.NewParserSource(parser, text)
+		}},
+		{func() at.Descriptor {
+			p := tabnasexpr.Translate()
+			return descriptor("tabnas-expr", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
+		}, func(text string) *tt.ParserSource { return tt.NewParserSource(tabnasexpr.MakeJsonic(), text) }},
+		{func() at.Descriptor {
+			p := tabnasfeed.Translate()
+			return descriptor("tabnas-feed", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
+		}, func(text string) *tt.ParserSource {
+			parser := tabnas.Make()
+			installed("tabnas-feed", parser.UseDefaults(tabnasfeed.Feed, tabnasfeed.Defaults))
 			return tt.NewParserSource(parser, text)
 		}},
 		{func() at.Descriptor {
@@ -188,6 +214,19 @@ func modules() []module {
 			p := tabnasmarkdown.Translate()
 			return descriptor("tabnas-markdown", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
 		}, func(text string) *tt.ParserSource { return tt.NewParserSource(tabnasmarkdown.Make(), text) }},
+		{func() at.Descriptor {
+			p := tabnasproto.Translate()
+			return descriptor("tabnas-proto", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
+		}, func(text string) *tt.ParserSource {
+			history := 8192
+			parser := tabnas.Make(tabnas.Options{Rewind: &tabnas.RewindOptions{History: &history}})
+			installed("tabnas-proto", tabnasproto.Proto(parser))
+			return tt.NewParserSource(parser, text)
+		}},
+		{func() at.Descriptor {
+			p := tabnassemver.Translate()
+			return descriptor("tabnas-semver", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
+		}, func(text string) *tt.ParserSource { return tt.NewParserSource(tabnassemver.Make(), text) }},
 		{func() at.Descriptor {
 			p := tabnastoml.Translate()
 			return descriptor("tabnas-toml", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
