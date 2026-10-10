@@ -4,7 +4,7 @@
   "main": "dist/cli.js",
   "type": "commonjs",
   "types": "dist/cli.d.ts",
-  "description": "The alchemy command: check, explain and run alchemy programs over JSON with the tabnas transducers and renderers.",
+  "description": "The alchemy command: check, explain and run alchemy programs over JSON, and translate documents between formats, with the tabnas transducers and renderers.",
   "homepage": "https://tabnas.dev",
   "keywords": [
     "parser",
@@ -40,10 +40,21 @@
   },
   "peerDependencies": {
     "@tabnas/alchemy": ">=0",
+    "@tabnas/csv": ">=0",
+    "@tabnas/ini": ">=0",
     "@tabnas/json": ">=0",
+    "@tabnas/json5": ">=0",
+    "@tabnas/jsonc": ">=0",
+    "@tabnas/jsonic": ">=0",
+    "@tabnas/jsonl": ">=0",
+    "@tabnas/markdown": ">=0",
     "@tabnas/parser": ">=0",
     "@tabnas/render": ">=0",
-    "@tabnas/transduce": ">=0"
+    "@tabnas/toml": ">=0",
+    "@tabnas/transduce": ">=0",
+    "@tabnas/xml": ">=0",
+    "@tabnas/yaml": ">=0",
+    "@tabnas/zon": ">=0"
   },
   "devDependencies": {
     "@tabnas/alchemy": "*",

@@ -12,6 +12,10 @@
 //   alchemy explain FILE     print the plan report
 //   alchemy run [--render csv|json] [--no-native] [--max-output-bytes N] PROGRAM INPUT
 //                            run the program over the JSON document INPUT
+//   alchemy translate --from FORMAT --to FORMAT [--path PATH] [--key KEY]
+//                     [--with PROGRAM] [--max-output-bytes N] INPUT
+//                            write INPUT, read as FORMAT, in another format
+//   alchemy formats          print the formats translate reads and writes, as JSON
 //
 // `FILE`, `PROGRAM` and `INPUT` may be `-` for standard input (one of them
 // per run). Nothing but the answer goes to standard output. A failure is
@@ -39,6 +43,16 @@
 // aless's business. The output goes through a coalescing writer to
 // standard output and is flushed once, at the end; a failure found after
 // bytes were written says so.
+//
+// `translate` reads `INPUT` with the grammar of `--from` and writes it in
+// `--to`, through the translation parts each format's package exports, as
+// `./translate` composes them: any of the formats `alchemy formats` lists
+// into any other. `--path` takes a JSON array of keys and indexes
+// (`["people",0]`) and translates that value instead of the document;
+// `--key` names the member a root is wrapped under for a format whose
+// document must be an object (`items` by default); `--with` runs a program
+// over the input first, as `run` does, and writes its export's events or
+// table in `--to`.
 
 import { readFileSync, readSync, writeSync } from 'node:fs'
 
@@ -52,11 +66,14 @@ import {
   isFail,
   parseFile,
   rendererNamed,
+  translate as alchemyTranslate,
 } from '@tabnas/alchemy'
 import { make as makeJson } from '@tabnas/json'
 import { FdWriter, renderers } from '@tabnas/render'
 import { Fail, Limits, Metrics, ParserSource, Prune, SourceMode, routers } from '@tabnas/transduce'
-import type { Sink } from '@tabnas/transduce'
+import type { Segment, Sink } from '@tabnas/transduce'
+
+import * as translate from './translate'
 
 // What every program is compiled with: transduce's routers and render's
 // renderers, the stages alchemy builds a run from.
@@ -71,6 +88,8 @@ const OPTIONS: CompileOptions = { routers, renderers }
 const USAGE =
   'usage: alchemy canon|format|check|explain FILE\n' +
   '       alchemy run [--render csv|json] [--no-native] [--max-output-bytes N] PROGRAM INPUT\n' +
+  '       alchemy translate --from FORMAT --to FORMAT [--path PATH] [--key KEY] [--with PROGRAM] [--max-output-bytes N] INPUT\n' +
+  '       alchemy formats\n' +
   '       (a FILE may be - for standard input)'
 
 // A failure and the status it exits with: the code's, except that a usage
@@ -152,7 +171,10 @@ function readStdin(): Buffer {
   return Buffer.concat(chunks)
 }
 
-const UTF8 = new TextDecoder('utf-8', { fatal: true })
+// A leading byte order mark is kept, as Rust's `read_to_string` and Go's
+// `os.ReadFile` keep it: whether a document may begin with one is its
+// grammar's to say.
+const UTF8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
 
 // A file's text, or standard input's for `-`; a file that cannot be read,
 // or that is not UTF-8, is the command line's failure (status 2).
@@ -180,6 +202,15 @@ type RunOptions = {
 
 const U64_MAX = 2n ** 64n - 1n
 
+// The value of `--max-output-bytes`, as Rust reads a `u64`: digits, a
+// leading `+` allowed, no larger than 2^64 - 1.
+function outputLimit(n: string): number {
+  if (!/^\+?[0-9]+$/.test(n) || BigInt(n) > U64_MAX) {
+    throw new Exit(Fail.input(`--max-output-bytes takes a number of bytes, not ${JSON.stringify(n)}`), 2)
+  }
+  return Number(BigInt(n))
+}
+
 function parseRunOptions(args: ReadonlyArray<string>): RunOptions {
   let render: Renderer | undefined
   let native = true
@@ -202,12 +233,7 @@ function parseRunOptions(args: ReadonlyArray<string>): RunOptions {
     } else if ('--max-output-bytes' === arg) {
       const n = args[i + 1]
       if (undefined === n) throw usage()
-      // As Rust reads a `u64`: digits, a leading `+` allowed, no larger
-      // than 2^64 - 1.
-      if (!/^\+?[0-9]+$/.test(n) || BigInt(n) > U64_MAX) {
-        throw new Exit(Fail.input(`--max-output-bytes takes a number of bytes, not ${JSON.stringify(n)}`), 2)
-      }
-      maxOutputBytes = Number(BigInt(n))
+      maxOutputBytes = outputLimit(n)
       i += 2
     } else if (arg.startsWith('--')) {
       throw usage()
@@ -222,6 +248,61 @@ function parseRunOptions(args: ReadonlyArray<string>): RunOptions {
     throw new Exit(Fail.input('only one of PROGRAM and INPUT may be - (standard input)'), 2)
   }
   return { render, native, maxOutputBytes, program, input }
+}
+
+type TranslateOptions = {
+  from: translate.Format
+  to: translate.Format
+  path?: string
+  key?: string
+  program?: string
+  maxOutputBytes: number | null
+  input: string
+}
+
+function parseTranslateOptions(args: ReadonlyArray<string>): TranslateOptions {
+  const named = (flag: string, id: string): translate.Format => {
+    const found = translate.format(id)
+    if (undefined === found) {
+      throw new Exit(Fail.input(`${flag} takes ${translate.names()}, not ${JSON.stringify(id)}`), 2)
+    }
+    return found
+  }
+  let from: translate.Format | undefined
+  let to: translate.Format | undefined
+  let path: string | undefined
+  let key: string | undefined
+  let program: string | undefined
+  let maxOutputBytes: number | null = null
+  const files: string[] = []
+  let i = 0
+  while (i < args.length) {
+    const arg = args[i]
+    const value = (): string => {
+      const v = args[i + 1]
+      if (undefined === v) throw usage()
+      return v
+    }
+    if ('--from' === arg) from = named('--from', value())
+    else if ('--to' === arg) to = named('--to', value())
+    else if ('--path' === arg) path = value()
+    else if ('--key' === arg) key = value()
+    else if ('--with' === arg) program = value()
+    else if ('--max-output-bytes' === arg) maxOutputBytes = outputLimit(value())
+    else if (arg.startsWith('--')) throw usage()
+    else {
+      files.push(arg)
+      i += 1
+      continue
+    }
+    i += 2
+  }
+  if (undefined === from || undefined === to || 1 !== files.length) throw usage()
+  const input = files[0]
+  if ('-' === program && '-' === input) {
+    throw new Exit(Fail.input('only one of PROGRAM and INPUT may be - (standard input)'), 2)
+  }
+  return { from, to, path, key, program, maxOutputBytes, input }
 }
 
 // Run the program over one JSON document, into the sink that writes its
@@ -289,6 +370,37 @@ function command(args: ReadonlyArray<string>): string {
       execute(program, sink, metrics, input, limits)
       return ''
     }
+    case 'translate': {
+      const options = parseTranslateOptions(rest)
+      const limits: Limits = { ...Limits.default(), max_output_bytes: options.maxOutputBytes }
+      let path: Segment[] | undefined
+      if (undefined !== options.path) {
+        try {
+          path = translate.parsePath(options.path, limits)
+        } catch (err) {
+          throw isFail(err) ? new Exit(err, 2) : err
+        }
+      }
+      const program =
+        undefined === options.program ? undefined : { file: options.program, text: read(options.program) }
+      const request: translate.Request = {
+        from: options.from,
+        to: options.to,
+        path,
+        options: { key: options.key ?? alchemyTranslate.Options.default().key },
+        program,
+        limits,
+      }
+      // The composition is compiled before the input is read, so a route
+      // that cannot be composed never waits on standard input.
+      const compiled = translate.compile(request)
+      const input = read(options.input)
+      translate.runCompiled(request, compiled, input, new FdWriter(1), new Metrics())
+      return ''
+    }
+    case 'formats':
+      if (0 !== rest.length) throw usage()
+      return translate.formatsJson() + '\n'
     default:
       throw usage()
   }
