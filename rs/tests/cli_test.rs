@@ -681,6 +681,29 @@ fn formats_lists_the_formats_translate_reads_and_writes() {
         .map(|f| f["id"].as_str().unwrap())
         .collect();
     assert_eq!(schema_only, ["css", "pgn", "proto"]);
+    // Why a format's documents are read whole, where its manifest says:
+    // TOML's and INI's sentences as their manifests give them; JSON's none.
+    let by_id = |id: &str| formats.iter().find(|f| f["id"] == id).expect("a format");
+    for (id, manifest) in [
+        ("toml", tabnas_toml::translate().unwrap().manifest),
+        ("ini", tabnas_ini::translate().unwrap().manifest),
+    ] {
+        let manifest: serde_json::Value = serde_json::from_str(manifest).expect("JSON");
+        let whole = &manifest["translate"]["whole"];
+        assert!(whole.as_str().is_some_and(|w| !w.is_empty()), "{id}");
+        assert_eq!(&by_id(id)["whole"], whole, "{id}");
+    }
+    assert!(by_id("json")["whole"].is_null());
+    let keys: Vec<&str> = by_id("css")
+        .as_object()
+        .expect("an object")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        keys,
+        ["id", "reads", "writes", "root", "schema", "whole", "lift", "embed", "render", "loss"]
+    );
 }
 
 /// What a target declares it cannot carry it refuses before writing

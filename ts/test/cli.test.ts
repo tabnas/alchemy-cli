@@ -14,6 +14,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { source } from '@tabnas/alchemy'
+import { translate as iniParts } from '@tabnas/ini'
+import { translate as tomlParts } from '@tabnas/toml'
 
 import { EXPECTED_CSV, PROGRAM, RECORDS } from './common'
 
@@ -484,6 +486,7 @@ describe('cli translate', () => {
         'writes',
         'root',
         'schema',
+        'whole',
         'lift',
         'embed',
         'render',
@@ -498,6 +501,7 @@ describe('cli translate', () => {
       writes: 'tree',
       root: 'any',
       schema: null,
+      whole: null,
       lift: null,
       embed: null,
       render: 'json',
@@ -520,6 +524,16 @@ describe('cli translate', () => {
       [byId('pgn').schema, byId('semver').embed, byId('feed').embed, byId('expr').embed],
       ['pgn-database', 'semver-embed', 'feed-embed', 'expr-embed'],
     )
+    // Why a format's documents are read whole, where its manifest says:
+    // TOML's and INI's sentences as their manifests give them.
+    for (const [id, parts] of [
+      ['toml', tomlParts()],
+      ['ini', iniParts()],
+    ] as const) {
+      const whole = JSON.parse(String(parts?.manifest)).translate.whole
+      assert.ok('string' === typeof whole && '' !== whole, id)
+      assert.strictEqual(byId(id).whole, whole, id)
+    }
     // `formats` takes no arguments.
     const extra = alchemy(['formats', 'json'])
     assert.equal(extra.status, 2)

@@ -410,7 +410,8 @@ function pathText(path: ReadonlyArray<Segment>): string {
 
 // The registry as JSON, one object per format, for `alchemy formats`: its
 // id, the shapes it reads and writes, the root its render needs, its
-// schema, its parts' entries, and its loss sentences.
+// schema, why its documents are read whole where it says (`whole`, null
+// where it does not), its parts' entries, and its loss sentences.
 export function formatsJson(): string {
   const text = (s: string): Datum => Datum.string(s)
   const orNull = (s: string | undefined): Datum => (undefined === s ? Datum.null : text(s))
@@ -423,6 +424,7 @@ export function formatsJson(): string {
       ['writes', text(p.writes)],
       ['root', text(p.root)],
       ['schema', orNull(p.schema)],
+      ['whole', orNull(p.whole)],
       ['lift', orNull(p.lift?.entry)],
       ['embed', orNull(p.embed?.entry)],
       ['render', text('alc' === render.kind ? render.alc.entry : render.kind)],

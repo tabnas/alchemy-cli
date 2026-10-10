@@ -638,7 +638,9 @@ func ParsePath(text string, limits tt.Limits) (*Path, *tt.Fail) {
 
 // FormatsJSON is the registry as JSON, one object per format, for `alchemy
 // formats`: its id, the shapes it reads and writes, the root its render
-// needs, its schema, its parts' entries, and its loss sentences.
+// needs, its schema, why its documents are read whole where it says
+// (whole, null where it does not), its parts' entries, and its loss
+// sentences.
 func FormatsJSON() string {
 	text := func(s string) tt.Datum { return tt.StringDatum(s) }
 	entry := func(a *at.Alc) tt.Datum {
@@ -659,6 +661,10 @@ func FormatsJSON() string {
 		if p.Schema != "" {
 			schema = text(p.Schema)
 		}
+		whole := tt.NullDatum()
+		if p.Whole != "" {
+			whole = text(p.Whole)
+		}
 		var render string
 		switch p.Render.Kind {
 		case at.RenderJSON:
@@ -678,6 +684,7 @@ func FormatsJSON() string {
 			tt.Member{Key: "writes", Value: text(p.Writes.String())},
 			tt.Member{Key: "root", Value: text(p.Root.String())},
 			tt.Member{Key: "schema", Value: schema},
+			tt.Member{Key: "whole", Value: whole},
 			tt.Member{Key: "lift", Value: entry(p.Lift)},
 			tt.Member{Key: "embed", Value: entry(p.Embed)},
 			tt.Member{Key: "render", Value: text(render)},

@@ -22,6 +22,8 @@ import (
 	"testing"
 
 	"github.com/tabnas/alchemy-cli/go/translate"
+	tabnasini "github.com/tabnas/ini/go"
+	tabnastoml "github.com/tabnas/toml/go"
 	tt "github.com/tabnas/transduce/go"
 )
 
@@ -65,7 +67,7 @@ func TestFormatsPrintsTheRegistryAsJSON(t *testing.T) {
 		t.Fatalf("%+v", o)
 	}
 	// Each format's fields in their order, css's whole up to its loss.
-	if !strings.HasPrefix(o.stdout, `[{"id":"css","reads":["tree"],"writes":"tree","root":"object","schema":"css-ast","lift":null,"embed":null,"render":"css-render","loss":["`) {
+	if !strings.HasPrefix(o.stdout, `[{"id":"css","reads":["tree"],"writes":"tree","root":"object","schema":"css-ast","whole":null,"lift":null,"embed":null,"render":"css-render","loss":["`) {
 		t.Errorf("%s", o.stdout)
 	}
 	var formats []map[string]any
@@ -75,7 +77,7 @@ func TestFormatsPrintsTheRegistryAsJSON(t *testing.T) {
 	var ids []string
 	for _, f := range formats {
 		ids = append(ids, f["id"].(string))
-		if len(f) != 9 {
+		if len(f) != 10 {
 			t.Errorf("%s: %v", f["id"], f)
 		}
 		loss, _ := f["loss"].([]any)
@@ -115,6 +117,21 @@ func TestFormatsPrintsTheRegistryAsJSON(t *testing.T) {
 	}
 	if strings.Join(schemaOnly, " ") != "css pgn proto" {
 		t.Errorf("%v", schemaOnly)
+	}
+	// Why a format's documents are read whole, where its manifest says:
+	// TOML's and INI's sentences as their manifests give them.
+	for id, manifest := range map[string]string{"toml": tabnastoml.Translate().Manifest, "ini": tabnasini.Translate().Manifest} {
+		var m struct {
+			Translate struct {
+				Whole string `json:"whole"`
+			} `json:"translate"`
+		}
+		if err := json.Unmarshal([]byte(manifest), &m); err != nil || m.Translate.Whole == "" || byID[id]["whole"] != m.Translate.Whole {
+			t.Errorf("%s: whole %v, its manifest's %q (%v)", id, byID[id]["whole"], m.Translate.Whole, err)
+		}
+	}
+	if byID["json"]["whole"] != nil {
+		t.Errorf("json: whole %v", byID["json"]["whole"])
 	}
 	if byID["pgn"]["schema"] != "pgn-database" || byID["semver"]["embed"] != "semver-embed" ||
 		byID["feed"]["embed"] != "feed-embed" || byID["expr"]["embed"] != "expr-embed" {

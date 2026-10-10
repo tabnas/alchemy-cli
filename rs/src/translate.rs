@@ -536,7 +536,8 @@ fn path_text(path: &[Segment]) -> String {
 
 /// The registry as JSON, one object per format, for `alchemy formats`:
 /// its id, the shapes it reads and writes, the root its render needs, its
-/// schema, its parts' entries, and its loss sentences.
+/// schema, why its documents are read whole where it says (`whole`, null
+/// where it does not), its parts' entries, and its loss sentences.
 pub fn formats_json() -> String {
     let shape = |s: &Shape| {
         Datum::String(
@@ -552,7 +553,7 @@ pub fn formats_json() -> String {
         .iter()
         .map(|f| {
             let p = &f.part;
-            let fields: [(&str, Datum); 9] = [
+            let fields: [(&str, Datum); 10] = [
                 ("id", text(&p.id)),
                 ("reads", Datum::Array(p.reads.iter().map(shape).collect())),
                 ("writes", shape(&p.writes)),
@@ -565,6 +566,7 @@ pub fn formats_json() -> String {
                     }),
                 ),
                 ("schema", p.schema.as_deref().map_or(Datum::Null, text)),
+                ("whole", p.whole.as_deref().map_or(Datum::Null, text)),
                 (
                     "lift",
                     p.lift.as_ref().map_or(Datum::Null, |a| text(&a.entry)),

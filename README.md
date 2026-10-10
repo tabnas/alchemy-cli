@@ -55,8 +55,12 @@ array of keys and indexes (`["people",0]`) and translates that value
 instead of the document; `--key` names the member a root is wrapped
 under for a format whose document must be an object (`items` by
 default); `--with` runs a program over the input first and writes its
-export's events or table. `alchemy formats` lists each format's shapes,
-parts and loss sentences: what a document written in it does not keep.
+export's events or table. `alchemy formats` lists each format, as JSON:
+its `id`, the shapes it `reads` and `writes`, the `root` its render
+needs, its `schema`, `whole` (why its documents are read whole, never
+streamed, where the format says so, and null where it does not), its
+parts' entries (`lift`, `embed`, `render`), and its `loss` sentences:
+what a document written in it does not keep.
 
 ## Install
 
