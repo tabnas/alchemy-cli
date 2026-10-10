@@ -85,7 +85,7 @@ import (
 // TestVersionMatchesPackageJSON fails the build if they drift. Keep it the
 // only `^const VERSION =` in the module, which is how the orchestrator
 // finds it.
-const VERSION = "0.1.6"
+const VERSION = "0.1.7"
 
 const usage = "usage: alchemy canon|format|check|explain FILE\n       alchemy run [--render csv|json] [--no-native] [--max-output-bytes N] PROGRAM INPUT\n       alchemy translate --from FORMAT --to FORMAT [--path PATH] [--key KEY] [--with PROGRAM] [--max-output-bytes N] INPUT\n       alchemy formats\n       (a FILE may be - for standard input)"
 
