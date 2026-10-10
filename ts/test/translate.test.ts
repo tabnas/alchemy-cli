@@ -11,13 +11,13 @@
 //
 // The corpus is the sibling checkouts': transduce's fixtures (aless's, one
 // document per format at least, and more for YAML and ZON) and the
-// documents of JSONTestSuite every JSON parser must accept. The Rust test
-// reads JSONTestSuite from jsonc's copy (`jsonc/test/JSONTestSuite`); this
-// one reads json's (`json/test/jsontestsuite`), the same files byte for
-// byte, from a checkout every gate that runs this suite clones. A fixture
-// its own grammar refuses (ZON's repeated fields) is no document, and is
-// counted as one refused. The Rust crate's second matrix, every format's
-// own fixture corpus in release, stays Rust's.
+// documents of JSONTestSuite every JSON parser must accept, from the copy
+// jsonc vendors (`jsonc/test/JSONTestSuite`), as the Go and Rust tests
+// read them: json fetches its copy for its own suite, and a checkout of it
+// does not hold one. A fixture its own grammar refuses (ZON's repeated
+// fields) is no document, and is counted as one refused. The Rust crate's
+// second matrix, every format's own fixture corpus in release, stays
+// Rust's.
 
 import { describe, it } from 'node:test'
 import assert from 'node:assert'
@@ -73,7 +73,7 @@ function corpus(): Doc[] {
   const docs: Doc[] = []
   const dirs: Array<[string, string, string | undefined]> = [
     ['transduce', sibling('transduce', 'rs', 'tests', 'fixtures'), undefined],
-    ['JSONTestSuite', sibling('json', 'test', 'jsontestsuite', 'test_parsing'), 'y_'],
+    ['JSONTestSuite', sibling('jsonc', 'test', 'JSONTestSuite', 'test_parsing'), 'y_'],
   ]
   for (const [name, dir, prefix] of dirs) {
     for (const file of readdirSync(dir).sort()) {
