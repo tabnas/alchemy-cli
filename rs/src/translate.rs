@@ -17,7 +17,10 @@
 //! grammar builds otherwise than its events showed (a YAML stream of
 //! several documents, a merge key, a repeated member), which the
 //! incremental source refuses part way: the grammar's own value is the
-//! document, so it is read again whole. Nothing here knows a
+//! document, so it is read again whole. Where a package's parser builds a
+//! value that is not yet the tree its parts declare, and the package's API
+//! reads a document as that tree (expr's simplified form), that tree is
+//! the document, read whole. Nothing here knows a
 //! format by its name: a format is what its manifest says, and a package
 //! whose manifest names no parts this host can take is not a format here.
 
@@ -30,13 +33,20 @@ use tabnas_alchemy::translate::{
 };
 use tabnas_alchemy::{Output, Program, Source};
 use tabnas_transduce::{
-    capability, walk_datum, Code, Datum, DatumBuilder, Duplicates, Fail, Flow, JsonEvent, Limits,
-    Metrics, ParserSource, Prune, Segment, Sink, SourceMode, TreeContract,
+    capability, walk_datum, AbortFlag, Code, Datum, DatumBuilder, Duplicates, Fail, Flow, Guarded,
+    JsonEvent, Limits, Metrics, ParserSource, Prune, Segment, Sink, SourceMode, TreeContract,
 };
 
-/// The parser a format's documents are read with, as a source over a
-/// text.
-type Reader = for<'s> fn(&'s str) -> ParserSource<'s>;
+/// How a format's documents are read.
+#[derive(Clone, Copy)]
+enum Reader {
+    /// With the grammar's parser, as a source over a text.
+    Parser(for<'s> fn(&'s str) -> ParserSource<'s>),
+    /// As the tree the package's own API reads a document as, where its
+    /// parser's value is not yet the tree its parts declare: read whole,
+    /// and walked as a parser's value is.
+    Tree(fn(&str) -> Result<Datum, Fail>),
+}
 
 /// One format this command reads and writes: its parts, as its package's
 /// manifest names them, and the grammar its documents are read with.
@@ -105,7 +115,7 @@ macro_rules! reader {
         fn read(text: &str) -> ParserSource<'_> {
             ParserSource::new($module::make(), text)
         }
-        read as Reader
+        Reader::Parser(read)
     }};
 }
 
@@ -117,12 +127,38 @@ fn read_pgn(text: &str) -> ParserSource<'_> {
     ParserSource::new(parser, text)
 }
 
+/// An expression as expr's API reads one for its shared fixtures, the tree
+/// its parts declare: each operation a list whose first element is the
+/// operator's source text (`parse_simplified`). The parser's own value
+/// holds each operation as a handle into the parse's arena, which only the
+/// package's API reads.
+fn read_expr(text: &str) -> Result<Datum, Fail> {
+    tabnas_expr::parse_simplified(&tabnas_expr::make(), text)
+        .map(|tree| Datum::from_tabnas(&tree))
+        .map_err(|error| {
+            // As transduce's parser source reports an engine error: the
+            // input's, with the engine's code and position, and a cancel,
+            // which no abort of this command's asks for, a guard of the
+            // grammar's own.
+            let mut fail = Fail::from_tabnas(&error);
+            if error.code == "cancel" {
+                fail.message = format!(
+                    "the grammar stopped the parse with a guard of its own ({}: {}); a grammar \
+                     may refuse nesting or size below this crate's Limits",
+                    error.code,
+                    error.detail.trim_end()
+                );
+            }
+            fail
+        })
+}
+
 /// Every grammar package this command carries, with its reader.
 fn packages() -> Vec<(Option<Descriptor>, Reader)> {
     vec![
         (
             descriptor!("tabnas-chess", tabnas_chess, embed),
-            read_pgn as Reader,
+            Reader::Parser(read_pgn),
         ),
         (
             descriptor!("tabnas-css", tabnas_css, embed),
@@ -134,7 +170,7 @@ fn packages() -> Vec<(Option<Descriptor>, Reader)> {
         ),
         (
             descriptor!("tabnas-expr", tabnas_expr, embed),
-            reader!(tabnas_expr),
+            Reader::Tree(read_expr),
         ),
         (
             descriptor!("tabnas-feed", tabnas_feed, embed),
@@ -347,13 +383,7 @@ pub fn run_compiled(
         };
         match &request.path {
             None => {
-                (request.from.reader)(input)
-                    .grammar(request.from.id())
-                    .mode(mode)
-                    .limits(request.limits.clone())
-                    .metrics(metrics)
-                    .run_owned(sink)
-                    .0?;
+                source(request.from, input, mode, &request.limits, metrics, sink).0?;
             }
             Some(path) => {
                 let value = read(
@@ -471,6 +501,36 @@ impl Sink for Collect {
     }
 }
 
+/// A document's events as a format reads it, into `sink`, which comes back
+/// with the outcome: its parser's, through transduce's parser source in
+/// `mode`, or the tree its package's API reads, read whole whatever the
+/// mode and walked under the same limits and counts.
+fn source<S: Sink + Send + 'static>(
+    format: &Format,
+    input: &str,
+    mode: SourceMode,
+    limits: &Limits,
+    metrics: Arc<Metrics>,
+    sink: S,
+) -> (Result<Flow, Fail>, S) {
+    match format.reader {
+        Reader::Parser(read) => read(input)
+            .grammar(format.id())
+            .mode(mode)
+            .limits(limits.clone())
+            .metrics(metrics)
+            .run_owned(sink),
+        Reader::Tree(read) => {
+            let mut guarded = Guarded::new(sink, limits, AbortFlag::new(), metrics);
+            let outcome = read(input).and_then(|tree| match walk_datum(&tree, &mut guarded)? {
+                Flow::Continue => guarded.event(JsonEvent::End),
+                Flow::Stop => Ok(Flow::Stop),
+            });
+            (outcome, guarded.into_inner())
+        }
+    }
+}
+
 /// A document read whole with a format's grammar, as a value. A repeated
 /// member keeps its last value, as the grammar's own value does.
 fn read(format: &Format, input: &str, mode: SourceMode, limits: &Limits) -> Result<Datum, Fail> {
@@ -479,11 +539,7 @@ fn read(format: &Format, input: &str, mode: SourceMode, limits: &Limits) -> Resu
         "max_capture_bytes",
         Duplicates::LastWins,
     ));
-    let (outcome, mut collect) = (format.reader)(input)
-        .grammar(format.id())
-        .mode(mode)
-        .limits(limits.clone())
-        .run_owned(collect);
+    let (outcome, mut collect) = source(format, input, mode, limits, Metrics::new(), collect);
     outcome?;
     collect
         .0

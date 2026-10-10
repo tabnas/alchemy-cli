@@ -95,7 +95,7 @@ phase "gate: fmt" "${CARGO[@]}" fmt --check
 phase "gate: build" "${CARGO[@]}" build --all-targets
 phase "gate: test" "${CARGO[@]}" test --all-targets
 # The cross product of every format's own fixture corpus (tests/translate_test.rs,
-# ignored in a debug run): about 28,000 pairs, minutes in release.
+# ignored in a debug run): about 63,000 pairs, minutes in release.
 phase "gate: the formats' fixtures, every format into every other (release)" \
   "${CARGO[@]}" test --release --test translate_test -- --ignored --nocapture
 # No `test --doc`: the crate is a binary with no library target, which

@@ -790,6 +790,11 @@ fn translate_refuses_what_a_target_cannot_carry() {
             r#"{"a":[1,-2]}"#,
             "{\"a\":[1,-2]}\n",
         ),
+        (
+            &["--from", "expr", "--to", "json", "-"][..],
+            "1+2*3\n",
+            "[\"+\",1,[\"*\",2,3]]\n",
+        ),
     ] {
         let out = run(&[&["translate"][..], args].concat(), Some(input));
         assert_eq!(out.status.code(), Some(0), "{args:?}: {}", stderr(&out));

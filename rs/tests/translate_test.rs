@@ -192,21 +192,14 @@ fn format(id: &str) -> &'static Format {
 /// document, comparing what the command reads with what the package's own
 /// API builds of it, so an entry fails once its reader is repaired, and
 /// must then be deleted.
-const READER_DEFECTS: [(&str, &str); 2] = [
-    (
-        "expr",
-        "tabnas-expr's parser builds an operation as an arena handle, which tabnas_expr::realize \
-         turns into the list its parts declare; transduce walks the handle, so an operation reads \
-         as an empty list (1+2*3 reads as [])",
-    ),
-    (
-        "proto",
-        "tabnas-proto's parser builds the grammar's syntax tree, and the descriptor its parts \
-         declare (the schema proto-descriptor) is what tabnas_proto::parse builds from it; \
-         transduce walks the syntax tree, which proto's own render refuses as no \
-         FileDescriptorProto",
-    ),
-];
+const READER_DEFECTS: [(&str, &str); 1] = [(
+    "proto",
+    "tabnas-proto's parser builds the grammar's syntax tree, and the descriptor its parts \
+     declare (the schema proto-descriptor) is what tabnas_proto::parse builds from it, a typed \
+     FileDescriptorProto whose tree only its serde Serialize gives, which this crate cannot \
+     read without serde_json at run time; so transduce walks the syntax tree, which proto's own \
+     render refuses as no FileDescriptorProto",
+)];
 
 /// Whether documents of `id` are left out as sources for a registered
 /// reader defect.
@@ -236,20 +229,6 @@ fn datum_of_json(j: &serde_json::Value) -> Datum {
     }
 }
 
-thread_local! {
-    /// expr's parser, built once, since building one costs far more than a
-    /// parse.
-    static EXPR: tabnas::Tabnas = tabnas_expr::make();
-}
-
-/// An expression document as expr's shared fixtures read one, with its own
-/// API: its tree, each operator reduced to its source text.
-fn expr_read(text: &str) -> Result<Datum, String> {
-    EXPR.with(|parser| tabnas_expr::parse_simplified(parser, text))
-        .map(|value| datum_of_json(&value.to_json()))
-        .map_err(|e| e.to_string())
-}
-
 /// Each registered reader defect still stands: the tree this command reads
 /// an example document as is not the one the format's package builds with
 /// its own API, the tree its parts declare. Once a reader is repaired this
@@ -259,11 +238,6 @@ fn a_registered_reader_defect_still_stands() {
     let limits = Limits::default();
     for (id, defect) in READER_DEFECTS {
         let (example, read, declared) = match id {
-            "expr" => {
-                let text = "1+2*3\n";
-                let read = expr_simplify(&format(id).read(text, &limits).unwrap());
-                (text, read, expr_read(text).unwrap())
-            }
             "proto" => {
                 let text = "syntax = \"proto3\";\nmessage M { int32 a = 1; }\n";
                 let descriptor = tabnas_proto::parse(text, None).unwrap();
@@ -278,11 +252,9 @@ fn a_registered_reader_defect_still_stands() {
              delete its entry ({defect})"
         );
     }
-    // What the defects mean for a translation: an expression's operation is
-    // written as an empty list, and a .proto file is refused by its own
-    // render.
-    let (expr, json, proto) = (format("expr"), format("json"), format("proto"));
-    assert_eq!(translate_text(expr, json, "1+2*3\n", None).unwrap(), "[]\n");
+    // What the defect means for a translation: a .proto file is refused by
+    // its own render.
+    let proto = format("proto");
     let fail = translate_text(proto, proto, "syntax = \"proto3\";\n", None).unwrap_err();
     assert_eq!(fail.code, Code::TargetValueUnrepresentable);
     assert!(
@@ -1411,12 +1383,6 @@ fn check(from: &Format, target: &Format, source: &Datum, written: &str) -> Resul
         format("yaml")
             .read(&yaml, &limits)
             .map_err(|f| format!("the unembedded tree does not read back: {f}"))?
-    } else if id == "expr" {
-        // expr's reader, as this command reads through transduce, is a
-        // registered defect, so the written document is read back as expr's
-        // fixtures read one, with its own API: its tree, each operator
-        // reduced to its source text.
-        expr_read(written).map_err(|f| format!("the written document does not read back: {f}"))?
     } else {
         target
             .read(written, &limits)
@@ -1635,7 +1601,7 @@ fn every_document_translates_into_every_format() {
 fn every_fixture_of_every_format_translates_into_every_format() {
     let mut docs = Vec::new();
     spec_corpus(&mut docs);
-    matrix(docs, 3868, 1, 9615);
+    matrix(docs, 3868, 1, 13671);
 }
 
 /// A request from `from` to `to`, with no path and no program.
