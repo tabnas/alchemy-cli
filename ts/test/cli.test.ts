@@ -1,9 +1,10 @@
 /* Copyright (c) 2026 tabnas, MIT License */
 
 // The `alchemy` command (alchemy's rs/tests/cli_test.rs), run the way a
-// script runs it: bin/alchemy in a child process, the five commands,
-// standard input as `-`, the statuses, and that nothing but the answer
-// reaches standard output.
+// script runs it: bin/alchemy in a child process, the five commands of
+// programs and the two of formats (`translate` and `formats`), standard
+// input as `-`, the statuses, and that nothing but the answer reaches
+// standard output.
 
 import { describe, it } from 'node:test'
 import assert from 'node:assert'
@@ -432,5 +433,254 @@ describe('cli', () => {
     out = alchemy(['run', '--max-output-bytes', 'many', program, '-'], RECORDS)
     assert.equal(out.status, 2)
     assert.equal(failJson(out).code, 'INPUT_INVALID')
+  })
+})
+
+// `translate` and `formats`, as the Rust binary has them: a document read
+// with one format's grammar and written in another, the flags, and the
+// failures with their statuses. ./translate.test.ts writes every document
+// of its corpus into every format.
+describe('cli translate', () => {
+  const PEOPLE = '{"people":[{"name":"Ann","age":31.50},{"name":"Bo","age":7}],"n":null}'
+  const IDS = ['csv', 'ini', 'json', 'json5', 'jsonc', 'jsonic', 'jsonl', 'markdown', 'toml', 'xml', 'yaml', 'zon']
+  const TABLE =
+    'def export [input]\n' +
+    '  table-from-json (record (entry :columns :infer) (entry :rows (path "people" each-index))) input\n'
+  const TEXT = 'def export [input] (join "," (map (fn [p] (get :name p)) (select (path "people" each-index) input)))\n'
+
+  it('formats prints the formats translate reads and writes, as JSON', () => {
+    const out = alchemy(['formats'])
+    assert.equal(out.status, 0, out.stderr)
+    assert.equal(out.stderr, '')
+    assert.ok(out.stdout.endsWith('}]\n'), out.stdout)
+    const formats = JSON.parse(out.stdout)
+    assert.deepStrictEqual(
+      formats.map((f: any) => f.id),
+      IDS,
+    )
+    for (const f of formats) {
+      assert.deepStrictEqual(Object.keys(f), [
+        'id',
+        'reads',
+        'writes',
+        'root',
+        'schema',
+        'lift',
+        'embed',
+        'render',
+        'loss',
+      ])
+      assert.ok(0 < f.loss.length, `${f.id} declares what it does not keep`)
+    }
+    assert.deepStrictEqual(formats[2], {
+      id: 'json',
+      reads: ['tree'],
+      writes: 'tree',
+      root: 'any',
+      schema: null,
+      lift: null,
+      embed: null,
+      render: 'json',
+      loss: ['JSON has no spelling for Infinity or NaN, so a number that is not finite is written as null.'],
+    })
+    const markdown = formats[7]
+    assert.deepStrictEqual(
+      [markdown.reads, markdown.writes, markdown.root, markdown.schema, markdown.lift, markdown.embed, markdown.render],
+      [['records', 'tree'], 'records', 'array', 'markdown-ast', 'markdown-lift', null, 'markdown-render'],
+    )
+    const xml = formats[9]
+    assert.deepStrictEqual([xml.schema, xml.embed, xml.render], ['xml-element', 'xml-embed', 'xml-render'])
+    // No format writes a schema's tree without an embedding into it, so the
+    // composition's `schema_only` refusal is not reachable from here: a
+    // plain tree reaches every format.
+    for (const f of formats) assert.ok(null === f.schema || 'records' === f.writes || null !== f.embed, f.id)
+    // `formats` takes no arguments.
+    const extra = alchemy(['formats', 'json'])
+    assert.equal(extra.status, 2)
+    assert.equal(failJson(extra).code, 'INPUT_INVALID')
+    assert.ok(failJson(extra).message.startsWith('usage: '), extra.stderr)
+    assert.equal(extra.stdout, '')
+  })
+
+  it('translate writes a document in another format', () => {
+    const input = tempFile('people.json', PEOPLE)
+    let out = alchemy(['translate', '--from', 'json', '--to', 'yaml', input])
+    assert.equal(out.status, 0, out.stderr)
+    // A number keeps the lexeme the document spelled it with.
+    assert.equal(
+      out.stdout,
+      '"people":\n  - "name": "Ann"\n    "age": 31.50\n  - "name": "Bo"\n    "age": 7\n"n": null\n',
+    )
+    // What a format does not keep is its loss list, which `formats` prints:
+    // a translation writes the document and nothing else.
+    assert.equal(out.stderr, '')
+    for (const [args, stdin, want] of [
+      [
+        ['--from', 'json', '--to', 'toml', '-'],
+        PEOPLE,
+        '"people" = [ { "name" = "Ann", "age" = 31.50 }, { "name" = "Bo", "age" = 7 } ]\n',
+      ],
+      [['--from', 'json', '--to', 'jsonl', '-'], PEOPLE, `${PEOPLE}\n`],
+      [['--from', 'json', '--to', 'xml', '-'], '42', '<document type="number">42</document>\n'],
+      [['--from', 'csv', '--to', 'json', '-'], 'a,b\n1,x\n', '[{"a":"1","b":"x"}]\n'],
+      [['--from', 'csv', '--to', 'markdown', '-'], 'a,b\n1,x\n', '| a | b |\n| --- | --- |\n| 1 | x |\n'],
+      // A YAML stream of several documents is read whole, as the grammar's
+      // own value, which the incremental source cannot follow.
+      [['--from', 'yaml', '--to', 'json', '-'], 'a: 1\n---\nb: 2\n', '[{"a":1},{"b":2}]\n'],
+      // A byte order mark is the document's, and its grammar's to read.
+      [['--from', 'csv', '--to', 'json', '-'], '\ufeffa\n1\n', '[{"\ufeffa":"1"}]\n'],
+    ] as Array<[string[], string, string]>) {
+      out = alchemy(['translate', ...args], stdin)
+      assert.equal(out.status, 0, `${args}: ${out.stderr}`)
+      assert.equal(out.stdout, want, String(args))
+      assert.equal(out.stderr, '', String(args))
+    }
+  })
+
+  // `--key` names the member a root that is not an object is written under,
+  // for a format whose document is one; `--path` selects the value to write.
+  it('translate takes a key and a path', () => {
+    const input = tempFile('people-path.json', PEOPLE)
+    const number = tempFile('number.json', '42')
+    for (const [args, want] of [
+      [['--to', 'toml', number], '"items" = 42\n'],
+      [['--to', 'toml', '--key', 'value', number], '"value" = 42\n'],
+      [['--to', 'ini', '--key', 'value', number], '"value" = 42\n'],
+      // A format whose document may be any value takes no key.
+      [['--to', 'yaml', '--key', 'value', number], '42\n'],
+      [['--to', 'toml', '--key', 'age', '--path', '["people",1,"age"]', input], '"age" = 7\n'],
+      // A selected value is read whole, so its numbers keep no lexeme.
+      [['--to', 'csv', '--path', '["people"]', input], '"name","age"\r\n"Ann","31.5"\r\n"Bo","7"\r\n'],
+      [
+        ['--to', 'json', '--path', '[]', input],
+        '{"people":[{"name":"Ann","age":31.5},{"name":"Bo","age":7}],"n":null}\n',
+      ],
+    ] as Array<[string[], string]>) {
+      const out = alchemy(['translate', '--from', 'json', ...args])
+      assert.equal(out.status, 0, `${args}: ${out.stderr}`)
+      assert.equal(out.stdout, want, String(args))
+    }
+    // A path that names nothing is the document's failure, status 1.
+    let out = alchemy(['translate', '--from', 'json', '--to', 'yaml', '--path', '["people",5]', input])
+    assert.equal(out.status, 1, out.stderr)
+    assert.equal(out.stdout, '')
+    assert.deepStrictEqual(failJson(out), {
+      code: 'INPUT_INVALID',
+      message: 'the path ["people",5] names nothing in the document',
+      output: 'none',
+    })
+    // A path that is not an array of keys and indexes is the command line's,
+    // status 2, before the input is read.
+    for (const path of ['people', '[0.5]', '[-1]', '[true]', '{"a":1}']) {
+      out = alchemy(['translate', '--from', 'json', '--to', 'yaml', '--path', path, '/nonexistent/input.json'])
+      assert.equal(out.status, 2, `${path}: ${out.stderr}`)
+      assert.deepStrictEqual(failJson(out), {
+        code: 'INPUT_INVALID',
+        message: `--path takes a JSON array of keys and indexes, such as ["people",0], not ${path}`,
+        output: 'none',
+      })
+    }
+  })
+
+  // `--with` runs a program over the input first; its export's events or
+  // table are what the format writes.
+  it('translate takes a program', () => {
+    const input = tempFile('people-with.json', PEOPLE)
+    const table = tempFile('table.alc', TABLE)
+    for (const [to, want] of [
+      ['csv', '"name","age"\r\n"Ann","31.50"\r\n"Bo","7"\r\n'],
+      ['markdown', '| name | age |\n| --- | --- |\n| Ann | 31.50 |\n| Bo | 7 |\n'],
+      ['json', '[{"name":"Ann","age":31.50},{"name":"Bo","age":7}]\n'],
+    ]) {
+      const out = alchemy(['translate', '--from', 'json', '--to', to, '--with', table, input])
+      assert.equal(out.status, 0, `${to}: ${out.stderr}`)
+      assert.equal(out.stdout, want, to)
+    }
+    // The program from standard input.
+    let out = alchemy(['translate', '--from', 'json', '--to', 'csv', '--with', '-', input], TABLE)
+    assert.equal(out.status, 0, out.stderr)
+    assert.equal(out.stdout, '"name","age"\r\n"Ann","31.50"\r\n"Bo","7"\r\n')
+    // A program that writes its own text has nothing for a render to write:
+    // refused before the input is read.
+    const text = tempFile('text-export.alc', TEXT)
+    out = alchemy(['translate', '--from', 'json', '--to', 'yaml', '--with', text, '/nonexistent/input.json'])
+    assert.equal(out.status, 2, out.stderr)
+    assert.equal(out.stdout, '')
+    assert.deepStrictEqual(failJson(out), {
+      code: 'DSL_TYPE_ERROR',
+      message:
+        `bad_output: ${text}'s export writes its own text, and translate takes a program whose export ` +
+        "answers JSON events or a table, which a format's render then writes",
+      output: 'none',
+    })
+    // A program that does not check, at its position.
+    const broken = tempFile('broken-export.alc', 'def export [input] (nope input)\n')
+    out = alchemy(['translate', '--from', 'json', '--to', 'yaml', '--with', broken, input])
+    assert.equal(out.status, 2, out.stderr)
+    const fail = failJson(out)
+    assert.equal(fail.code, 'DSL_TYPE_ERROR')
+    assert.ok(fail.message.startsWith('unknown_name: nope'), JSON.stringify(fail))
+    assert.deepStrictEqual([fail.row, fail.col], [1, 21])
+  })
+
+  it('translate failures exit with their statuses', () => {
+    const input = tempFile('people-fail.json', PEOPLE)
+    // Usage errors, status 2, nothing read: no --from, no input, two inputs,
+    // a flag without its value, a flag translate does not take.
+    for (const args of [
+      ['--to', 'yaml', input],
+      ['--from', 'json', '--to', 'yaml'],
+      ['--from', 'json', '--to', 'yaml', input, input],
+      ['--from', 'json', '--to'],
+      ['--from', 'json', '--to', 'yaml', '--render', 'json', input],
+    ]) {
+      const out = alchemy(['translate', ...args])
+      assert.equal(out.status, 2, String(args))
+      assert.equal(out.stdout, '', String(args))
+      assert.ok(failJson(out).message.startsWith('usage: '), out.stderr)
+    }
+    // A format no package names, two standard inputs, an output limit that
+    // is not a number: status 2, with what was wrong.
+    for (const [args, message] of [
+      [['--from', 'json', '--to', 'docx', input], `--to takes ${IDS.slice(0, -1).join(', ')} or zon, not "docx"`],
+      [['--from', 'JSON', '--to', 'yaml', input], `--from takes ${IDS.slice(0, -1).join(', ')} or zon, not "JSON"`],
+      [
+        ['--from', 'json', '--to', 'yaml', '--with', '-', '-'],
+        'only one of PROGRAM and INPUT may be - (standard input)',
+      ],
+      [
+        ['--from', 'json', '--to', 'yaml', '--max-output-bytes', 'many', input],
+        '--max-output-bytes takes a number of bytes, not "many"',
+      ],
+    ] as Array<[string[], string]>) {
+      const out = alchemy(['translate', ...args])
+      assert.equal(out.status, 2, String(args))
+      assert.equal(out.stdout, '', String(args))
+      assert.deepStrictEqual(failJson(out), { code: 'INPUT_INVALID', message, output: 'none' }, String(args))
+    }
+    // An input that cannot be read: status 2.
+    let out = alchemy(['translate', '--from', 'json', '--to', 'yaml', '/nonexistent/input.json'])
+    assert.equal(out.status, 2, out.stderr)
+    assert.ok(failJson(out).message.startsWith('cannot read /nonexistent/input.json: '), out.stderr)
+    // A document its grammar refuses: status 1, at the engine's position.
+    out = alchemy(['translate', '--from', 'json', '--to', 'yaml', '-'], '{"a":')
+    assert.equal(out.status, 1, out.stderr)
+    assert.equal(out.stdout, '')
+    let fail = failJson(out)
+    assert.equal(fail.code, 'INPUT_INVALID')
+    assert.deepStrictEqual([fail.row, fail.col], [1, 6])
+    out = alchemy(['translate', '--from', 'toml', '--to', 'json', input])
+    assert.equal(out.status, 1, out.stderr)
+    assert.deepStrictEqual([failJson(out).code, failJson(out).row, failJson(out).col], ['INPUT_INVALID', 1, 1])
+    // An output past `--max-output-bytes`: status 5, the limit named, and
+    // nothing written, since a translation is written once it has succeeded.
+    out = alchemy(['translate', '--from', 'json', '--to', 'yaml', '--max-output-bytes', '10', input])
+    assert.equal(out.status, 5, out.stderr)
+    assert.equal(out.stdout, '')
+    fail = failJson(out)
+    assert.equal(fail.code, 'RESOURCE_LIMIT_EXCEEDED')
+    assert.deepStrictEqual(fail.limit, { name: 'max_output_bytes', value: 10 })
+    out = alchemy(['translate', '--from', 'json', '--to', 'yaml', '--max-output-bytes', '1000', input])
+    assert.equal(out.status, 0, out.stderr)
   })
 })
