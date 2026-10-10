@@ -68,8 +68,11 @@ default that opens pull requests in draft state.
 The `alchemy` command, in TypeScript, Go and Rust: `canon`, `format`,
 `check`, `explain` and `run`, as alchemy's
 [`docs/language.md`](https://github.com/tabnas/alchemy/blob/main/docs/language.md)
-describes them. It is the composition root of three components that do
-not depend on each other's implementations:
+describes them, and `translate` and `formats`, which write a document of
+any tabnas format with translation parts in any other, composed by
+alchemy's `translate` from the parts each format's package exports
+(admin ADR-27; the README has the options). It is the composition root
+of three components that do not depend on each other's implementations:
 
 - **alchemy** holds the language and the shared types: the event
   protocol (events, sinks, tables, `Fail` and its codes, limits,

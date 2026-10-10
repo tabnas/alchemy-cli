@@ -7,6 +7,10 @@
 //! alchemy explain FILE     print the plan report
 //! alchemy run [--render csv|json] [--no-native] [--max-output-bytes N] PROGRAM INPUT
 //!                          run the program over the JSON document INPUT
+//! alchemy translate --from FORMAT --to FORMAT [--path PATH] [--key KEY]
+//!                   [--with PROGRAM] [--max-output-bytes N] INPUT
+//!                          write INPUT, read as FORMAT, in another format
+//! alchemy formats          print the formats translate reads and writes, as JSON
 //! ```
 //!
 //! `FILE`, `PROGRAM` and `INPUT` may be `-` for standard input (one of
@@ -34,6 +38,16 @@
 //! standard output and is flushed once, at the end; a failure found after
 //! bytes were written says so.
 //!
+//! `translate` reads `INPUT` with the grammar of `--from` and writes it in
+//! `--to`, through the translation parts each format's package exports,
+//! as `tabnas_alchemy_cli::translate` composes them: any of the formats
+//! `alchemy formats` lists into any other. `--path` takes a JSON array of
+//! keys and indexes (`["people",0]`) and translates that value instead of
+//! the document; `--key` names the member a root is wrapped under for a
+//! format whose document must be an object (`items` by default); `--with`
+//! runs a program over the input first, as `run` does, and writes its
+//! export's events or table in `--to`.
+//!
 //! The command is where alchemy, transduce and render meet: every program
 //! is compiled with transduce's routers and render's renderers, which make
 //! the stages its plan is lowered onto.
@@ -42,7 +56,9 @@ use std::io::{self, Read, Write};
 use std::process::ExitCode;
 use std::sync::Arc;
 
+use tabnas_alchemy::translate::Options;
 use tabnas_alchemy::{canonical, format, parse_file, Program, Renderer};
+use tabnas_alchemy_cli::translate;
 use tabnas_transduce::{Code, Fail, Limits, Metrics, ParserSource, Prune, Sink, SourceMode};
 
 /// This crate's version, read from `rs/Cargo.toml`. It MUST equal
@@ -50,7 +66,7 @@ use tabnas_transduce::{Code, Fail, Limits, Metrics, ParserSource, Prune, Sink, S
 /// `rs/tests/version_test.rs` fails the build if they drift.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-const USAGE: &str = "usage: alchemy canon|format|check|explain FILE\n       alchemy run [--render csv|json] [--no-native] [--max-output-bytes N] PROGRAM INPUT\n       (a FILE may be - for standard input)";
+const USAGE: &str = "usage: alchemy canon|format|check|explain FILE\n       alchemy run [--render csv|json] [--no-native] [--max-output-bytes N] PROGRAM INPUT\n       alchemy translate --from FORMAT --to FORMAT [--path PATH] [--key KEY] [--with PROGRAM] [--max-output-bytes N] INPUT\n       alchemy formats\n       (a FILE may be - for standard input)";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -210,7 +226,123 @@ fn run(args: &[String]) -> Result<String, Exit> {
             execute(&program, sink, metrics, &input, limits)?;
             Ok(String::new())
         }
+        "translate" => {
+            let options = TranslateOptions::parse(rest)?;
+            let limits = Limits {
+                max_output_bytes: options.max_output_bytes,
+                ..Limits::default()
+            };
+            let path = match &options.path {
+                Some(text) => Some(
+                    translate::parse_path(text, &limits)
+                        .map_err(|fail| Exit { fail, status: 2 })?,
+                ),
+                None => None,
+            };
+            let program = match &options.program {
+                Some(file) => Some((file.as_str(), read(file)?)),
+                None => None,
+            };
+            let request = translate::Request {
+                from: options.from,
+                to: options.to,
+                path,
+                options: Options {
+                    key: options.key.unwrap_or_else(|| Options::default().key),
+                },
+                program: program.as_ref().map(|(file, text)| (*file, text.as_str())),
+                limits,
+            };
+            // The composition is compiled before the input is read, so a
+            // route that cannot be composed never waits on standard input,
+            // and once.
+            let compiled = translate::compile(&request)?;
+            let input = read(&options.input)?;
+            translate::run_compiled(
+                &request,
+                &compiled,
+                &input,
+                Box::new(io::stdout()),
+                Metrics::new(),
+            )?;
+            Ok(String::new())
+        }
+        "formats" => {
+            if !rest.is_empty() {
+                return Err(usage());
+            }
+            Ok(translate::formats_json() + "\n")
+        }
         _ => Err(usage()),
+    }
+}
+
+struct TranslateOptions {
+    from: &'static translate::Format,
+    to: &'static translate::Format,
+    path: Option<String>,
+    key: Option<String>,
+    program: Option<String>,
+    max_output_bytes: Option<u64>,
+    input: String,
+}
+
+impl TranslateOptions {
+    fn parse(args: &[String]) -> Result<TranslateOptions, Exit> {
+        let named = |flag: &str, id: &str| {
+            translate::format(id).ok_or_else(|| Exit {
+                fail: Fail::input(format!("{flag} takes {}, not {id:?}", translate::names())),
+                status: 2,
+            })
+        };
+        let (mut from, mut to, mut path, mut key, mut program, mut max_output_bytes) =
+            (None, None, None, None, None, None);
+        let mut files = Vec::new();
+        let mut i = 0;
+        while i < args.len() {
+            let value = || args.get(i + 1).cloned().ok_or_else(usage);
+            match args[i].as_str() {
+                "--from" => from = Some(named("--from", &value()?)?),
+                "--to" => to = Some(named("--to", &value()?)?),
+                "--path" => path = Some(value()?),
+                "--key" => key = Some(value()?),
+                "--with" => program = Some(value()?),
+                "--max-output-bytes" => {
+                    let n = value()?;
+                    max_output_bytes = Some(n.parse::<u64>().map_err(|_| Exit {
+                        fail: Fail::input(format!(
+                            "--max-output-bytes takes a number of bytes, not {n:?}"
+                        )),
+                        status: 2,
+                    })?);
+                }
+                other if other.starts_with("--") => return Err(usage()),
+                other => {
+                    files.push(other.to_string());
+                    i += 1;
+                    continue;
+                }
+            }
+            i += 2;
+        }
+        let (Some(from), Some(to), [input]) = (from, to, files.as_slice()) else {
+            return Err(usage());
+        };
+        if program.as_deref() == Some("-") && input == "-" {
+            return Err(Exit {
+                fail: Fail::input("only one of PROGRAM and INPUT may be - (standard input)"),
+                status: 2,
+            });
+        }
+        Ok(TranslateOptions {
+            from,
+            to,
+            path,
+            key,
+            program,
+            max_output_bytes,
+            input: input.clone(),
+        })
     }
 }
 
