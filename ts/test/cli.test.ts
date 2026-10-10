@@ -703,6 +703,11 @@ describe('cli translate', () => {
       [['--from', 'json', '--to', 'css', '--with', echo, '-'], tree, 'a {\n  color: red;\n}\n'],
       [['--from', 'pgn', '--to', 'pgn', '-'], '1. e4 e5 1-0', '1. e4 e5 1-0\n'],
       [['--from', 'json', '--to', 'expr', '-'], '{"a":[1,-2]}', '{"a":[1,-2]}\n'],
+      [
+        ['--from', 'proto', '--to', 'proto', '-'],
+        'syntax = "proto3";\nmessage M { int32 a = 1; }\n',
+        'syntax = "proto3";\nmessage M {\n  int32 a = 1;\n}\n',
+      ],
     ] as Array<[string[], string, string]>) {
       out = alchemy(['translate', ...args], stdin)
       assert.equal(out.status, 0, `${args}: ${out.stderr}`)

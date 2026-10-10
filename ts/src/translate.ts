@@ -19,9 +19,12 @@
 // value the grammar builds otherwise than its events showed (a YAML stream
 // of several documents, a merge key, a repeated member), which the
 // incremental source refuses part way: the grammar's own value is the
-// document, so it is read again whole. Nothing here knows a format by its
-// name: a format is what its manifest says, and a package whose manifest
-// names no parts this host can take is not a format here.
+// document, so it is read again whole. Where a package's parser builds a
+// value that is not yet the tree its parts declare, and the package's API
+// reads a document as that tree (proto's descriptor), that tree is the
+// document, read whole. Nothing here knows a format by its name: a format
+// is what its manifest says, and a package whose manifest names no parts
+// this host can take is not a format here.
 
 import { Program, compile as compileProgram, isFail, translate } from '@tabnas/alchemy'
 import type { CompileOptions } from '@tabnas/alchemy'
@@ -38,16 +41,18 @@ import { jsonic, translate as jsonicParts } from '@tabnas/jsonic'
 import { make as makeJsonl, translate as jsonlParts } from '@tabnas/jsonl'
 import { Markdown, translate as markdownParts } from '@tabnas/markdown'
 import { Tabnas } from '@tabnas/parser'
-import { Proto, translate as protoParts } from '@tabnas/proto'
+import { Proto, toDescriptor, translate as protoParts } from '@tabnas/proto'
 import { BytesWriter, renderers } from '@tabnas/render'
 import type { Writer } from '@tabnas/render'
 import { Semver, translate as semverParts } from '@tabnas/semver'
 import { Toml, translate as tomlParts } from '@tabnas/toml'
 import {
+  AbortFlag,
   Datum,
   DatumBuilder,
   Ev,
   Fail,
+  Guarded,
   Limits,
   Metrics,
   ParserSource,
@@ -55,12 +60,14 @@ import {
   SourceMode,
   TreeContract,
   capability,
+  engineFailure,
   getPath,
   routers,
   toText,
   walkDatum,
+  walkValue,
 } from '@tabnas/transduce'
-import type { JsonEvent, Segment, Sink } from '@tabnas/transduce'
+import type { Flow, JsonEvent, Segment, Sink } from '@tabnas/transduce'
 import { Xml, translate as xmlParts } from '@tabnas/xml'
 import { Yaml, translate as yamlParts } from '@tabnas/yaml'
 import { Zon, translate as zonParts } from '@tabnas/zon'
@@ -79,13 +86,74 @@ type Parts = {
   readonly render?: translate.PartText
 }
 
+// How a format's documents are read: with its grammar's parser, a fresh
+// one per source (a source owns its parser); or as the tree its package's
+// own API reads a document as, where its parser's value is not yet the
+// tree its parts declare.
+type Reading = (() => Tabnas) | { readonly tree: (text: string) => unknown }
+
+// A document's events, as a format reads it: the builder transduce's
+// ParserSource has, which TreeSource has too.
+interface DocumentSource {
+  grammar(name: string): DocumentSource
+  mode(mode: SourceMode): DocumentSource
+  limits(limits: Limits): DocumentSource
+  metrics(metrics: Metrics): DocumentSource
+  run(sink: Sink): Flow
+}
+
+// The tree a package's API reads a document as, read whole, whatever the
+// mode, and walked as the ParserSource walks a parser's value, under the
+// same limits and counts; a failure to read it is reported as the
+// ParserSource reports an engine error.
+class TreeSource implements DocumentSource {
+  private sourceLimits: Limits = Limits.default()
+  private sourceMetrics: Metrics = new Metrics()
+
+  constructor(private readonly read: () => unknown) {}
+
+  grammar(_name: string): this {
+    return this
+  }
+
+  mode(_mode: SourceMode): this {
+    return this
+  }
+
+  limits(limits: Limits): this {
+    this.sourceLimits = limits
+    return this
+  }
+
+  metrics(metrics: Metrics): this {
+    this.sourceMetrics = metrics
+    return this
+  }
+
+  run(sink: Sink): Flow {
+    const abort = new AbortFlag()
+    const guarded = new Guarded(sink, this.sourceLimits, abort, this.sourceMetrics)
+    try {
+      let tree: unknown
+      try {
+        tree = this.read()
+      } catch (err) {
+        throw engineFailure(err, abort)
+      }
+      const flow = walkValue(tree, guarded)
+      return 'continue' === flow ? guarded.event(Ev.end) : flow
+    } finally {
+      guarded.flush()
+    }
+  }
+}
+
 // One format this command reads and writes: its parts, as its package's
-// manifest names them, and the grammar its documents are read with, a
-// fresh parser per source (a source owns its parser).
+// manifest names them, and how its documents are read.
 export class Format {
   constructor(
     readonly part: translate.Part,
-    readonly parser: () => Tabnas,
+    private readonly reading: Reading,
   ) {}
 
   // The manifest's `languageId`.
@@ -93,9 +161,11 @@ export class Format {
     return this.part.id
   }
 
-  // A source over `text`, read with this format's grammar.
-  reader(text: string): ParserSource {
-    return new ParserSource(this.parser(), text)
+  // A source over `text`, read as this format reads a document.
+  reader(text: string): DocumentSource {
+    const reading = this.reading
+    if ('function' === typeof reading) return new ParserSource(reading(), text)
+    return new TreeSource(() => reading.tree(text))
   }
 
   // A document read whole with this format's grammar, as a value: its
@@ -123,10 +193,12 @@ function descriptor(pkg: string, parts: Parts | undefined): translate.Descriptor
   return { package: pkg, manifest: parts.manifest, lift: parts.lift, embed: parts.embed, render: parts.render }
 }
 
-// Every grammar package this command carries, with its parser: each one's
-// default, as the Rust crate's `make()` builds it (the relaxed grammars on
-// jsonic's base) and as transduce's differential suite reads it.
-function packages(): Array<[translate.Descriptor | undefined, () => Tabnas]> {
+// Every grammar package this command carries, with how its documents are
+// read: each one's default parser, as the Rust crate's `make()` builds it
+// (the relaxed grammars on jsonic's base) and as transduce's differential
+// suite reads it, or, where its parser's value is not yet the tree its
+// parts declare, the tree its own API reads a document as.
+function packages(): Array<[translate.Descriptor | undefined, Reading]> {
   return [
     [descriptor('tabnas-chess', chessParts()), () => new Tabnas().use(Chess)],
     [descriptor('tabnas-css', cssParts()), () => new Tabnas().use(jsonic).use(Css)],
@@ -140,13 +212,20 @@ function packages(): Array<[translate.Descriptor | undefined, () => Tabnas]> {
     [descriptor('tabnas-jsonic', jsonicParts()), () => new Tabnas().use(jsonic)],
     [descriptor('tabnas-jsonl', jsonlParts()), () => makeJsonl()],
     [descriptor('tabnas-markdown', markdownParts()), () => new Tabnas().use(Markdown)],
-    [descriptor('tabnas-proto', protoParts()), () => new Tabnas({ rewind: { history: 8192 } }).use(Proto)],
+    [descriptor('tabnas-proto', protoParts()), { tree: protoTree }],
     [descriptor('tabnas-semver', semverParts()), () => new Tabnas().use(Semver)],
     [descriptor('tabnas-toml', tomlParts()), () => new Tabnas().use(jsonic).use(Toml)],
     [descriptor('tabnas-xml', xmlParts()), () => new Tabnas().use(Xml)],
     [descriptor('tabnas-yaml', yamlParts()), () => new Tabnas().use(jsonic).use(Yaml)],
     [descriptor('tabnas-zon', zonParts()), () => zonParser()],
   ]
+}
+
+// A .proto file as proto's package reads one, the descriptor its parts
+// declare (toDescriptor of the parse, as its parse builds it). The parser's
+// own value is the grammar's syntax tree.
+function protoTree(text: string): unknown {
+  return toDescriptor(new Tabnas({ rewind: { history: 8192 } }).use(Proto).parse(text))
 }
 
 // ZON's parser, with an integer no double holds exactly as the object
@@ -173,9 +252,9 @@ let registry: ReadonlyArray<Format> | undefined
 export function formats(): ReadonlyArray<Format> {
   if (undefined === registry) {
     const found: Format[] = []
-    for (const [d, parser] of packages()) {
+    for (const [d, reading] of packages()) {
       const part = undefined === d ? undefined : translate.Part.fromDescriptor(d)
-      if (undefined !== part) found.push(new Format(part, parser))
+      if (undefined !== part) found.push(new Format(part, reading))
     }
     found.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
     registry = Object.freeze(found)

@@ -35,9 +35,9 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { extname, join } from 'node:path'
 
 import { translate as alchemyTranslate } from '@tabnas/alchemy'
+import * as expr from '@tabnas/expr'
 import { BytesWriter } from '@tabnas/render'
 import type { Writer } from '@tabnas/render'
-import { parse as protoParse } from '@tabnas/proto'
 import { Datum, Limits, Metrics, toText } from '@tabnas/transduce'
 
 import {
@@ -157,12 +157,6 @@ function why(err: unknown): string {
 // still stands' holds each entry to an example document, so an entry fails
 // once its reader is repaired, and must then be deleted.
 const READER_DEFECTS: ReadonlyArray<[string, string]> = [
-  [
-    'proto',
-    "@tabnas/proto's parser builds the grammar's syntax tree, and the descriptor its parts declare " +
-      '(the schema proto-descriptor) is what its parse and toDescriptor build from it; transduce walks the ' +
-      "syntax tree, which proto's own render refuses as no FileDescriptorProto",
-  ],
   [
     'semver',
     "@tabnas/semver's reader builds a number past 2^53 - 1 as a bigint, which transduce rounds to a " +
@@ -1296,27 +1290,12 @@ describe('translate', () => {
     matrix(corpus(), 132, 0, 500)
   })
 
-  // Each registered reader defect still stands: the tree this command reads
-  // an example document as is not the one the format's package builds with
-  // its own API, the tree its parts declare, or a version past 2^53 - 1
+  // Each registered reader defect still stands: a version past 2^53 - 1
   // does not survive its own round trip. Once a reader is repaired this
   // fails, until its entry in READER_DEFECTS is deleted.
   it('a registered reader defect still stands', () => {
-    const limits = Limits.default()
     for (const [id, defect] of READER_DEFECTS) {
-      if ('proto' === id) {
-        const text = 'syntax = "proto3";\nmessage M { int32 a = 1; }\n'
-        const declared = Datum.fromJSON(JSON.parse(JSON.stringify(protoParse(text))))
-        const read = named(id).read(text, limits)
-        assert.ok(!same(read, declared), `${id} now reads the declared tree, ${toText(declared)}: delete its entry (${defect})`)
-        // A .proto file is refused by its own render.
-        assert.throws(
-          () => translateText(named(id), named(id), text),
-          (err: { code?: string; message?: string }) =>
-            'TARGET_VALUE_UNREPRESENTABLE' === err.code &&
-            String(err.message).startsWith('the tree is not a FileDescriptorProto'),
-        )
-      } else if ('semver' === id) {
+      if ('semver' === id) {
         const text = '99999999999999999999.1.2'
         const back = translateText(named(id), named(id), text)
         assert.notStrictEqual(back, text, `${id} now keeps a version past 2^53 - 1: delete its entry (${defect})`)
@@ -1324,6 +1303,25 @@ describe('translate', () => {
         assert.fail(`${id}: a registered defect needs an example here`)
       }
     }
+  })
+
+  // An expression is read as expr's TypeScript package parses one: an
+  // operation's operator the object that describes it, the token it was
+  // read from and all, which expr's parts take by its src. The Rust and Go
+  // readers reduce the operator to its source text with their package's
+  // simplifier (Rust's parse_simplified, Go's Simplify), which the
+  // TypeScript package does not export, so a translation from an
+  // expression writes the description in this runtime alone. This fails
+  // once the package exports a simplifier, which the reader then takes,
+  // and is then deleted.
+  it("an expression's operator is read as the object that describes it", () => {
+    assert.ok(!('simplify' in expr), '@tabnas/expr now exports simplify: read expressions through it')
+    const read = named('expr').read('1+2*3\n', Limits.default())
+    const op = 'array' === read.type ? read.items[0] : undefined
+    const src = 'object' === op?.type ? op.members.get('src') : undefined
+    assert.ok('string' === src?.type && '+' === src.value, toText(read))
+    assert.ok('object' === op?.type && op.members.has('token'), toText(read))
+    assert.strictEqual(toText(exprSimplify(read)), '["+",1,["*",2,3]]')
   })
 
   // feed's TypeScript reader builds a person's absent uri and email as
