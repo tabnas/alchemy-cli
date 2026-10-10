@@ -137,17 +137,32 @@ another format's tree, and Semantic Versioning's embedding refuses a tree
 that is not a version. A pair refused otherwise, or written where a
 refusal is declared, fails.
 
+A format is read with its package's parser, through transduce's parser
+source, unless the parser's own value is not yet the tree its parts
+declare and the package's API reads a document as that tree: then that
+tree is the document, read whole (`Reader::Tree` in Rust, `tree` in Go,
+`{ tree }` in TypeScript). Expressions are read so in Rust and Go (the
+simplified tree: `parse_simplified`, `Simplify`), proto's descriptor in
+TypeScript and Go (`toDescriptor`, `ToDescriptor`), and Go's feeds and
+PGN databases, whose modules build typed values, through their JSON
+encoding (`plainTree`). TypeScript's expr package exports no simplifier,
+so TypeScript reads an expression as its parse builds it, each operator
+the object that describes it, which expr's parts take by its `src`; a
+test pins that, and fails once the package exports one.
+
 A format whose reader, as this command reads a document through
-transduce, does not build the tree its parts declare is registered in that
-runtime's test with its defect (`READER_DEFECTS`, `readerDefects`): its
-documents are left out as sources and counted, and a test holds each entry
-to an example, comparing what the command reads with what the format's
-package builds with its own API (for a version past 2^53 - 1, its own
-round trip), so an entry fails once the reader is repaired, and is then
-deleted. Go also pins the order a reader's plain maps are written in
-(`orderDivergent`), which the matrix, comparing values, cannot see. A defect is the package's to repair; never
-register one to make a pair pass without naming it, and never work around
-one here in silence.
+transduce, does not build the tree its parts declare is registered in
+that runtime's test with its defect (`READER_DEFECTS`, `readerDefects`):
+its documents are left out as sources and counted, and a test holds each
+entry to an example, comparing what the command reads with what the
+format's package builds with its own API (for a version past 2^53 - 1,
+its own round trip), so an entry fails once the reader is repaired, and
+is then deleted. Go also pins the order a reader's objects are written
+in where it is not the Rust and TypeScript readers' (`orderDivergent`:
+plain maps in sorted key order, typed values in their fields' order),
+which the matrix, comparing values, cannot see. A defect is the
+package's to repair; never register one to make a pair pass without
+naming it, and never work around one here in silence.
 
 ## Build and test
 
