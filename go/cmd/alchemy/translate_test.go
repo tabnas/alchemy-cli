@@ -66,8 +66,8 @@ func TestFormatsPrintsTheRegistryAsJSON(t *testing.T) {
 	if o.status != 0 || o.stderr != "" || o.stdout != translate.FormatsJSON()+"\n" || strings.Count(o.stdout, "\n") != 1 {
 		t.Fatalf("%+v", o)
 	}
-	// Each format's fields in their order, css's whole up to its loss.
-	if !strings.HasPrefix(o.stdout, `[{"id":"css","reads":["tree"],"writes":"tree","root":"object","schema":"css-ast","whole":null,"lift":null,"embed":null,"render":"css-render","loss":["`) {
+	// Each format's fields in their order, abnf's whole up to its loss.
+	if !strings.HasPrefix(o.stdout, `[{"id":"abnf","reads":["tree"],"writes":"tree","root":"object","schema":"grammar-spec","whole":null,"lift":null,"embed":null,"render":"abnf-render","loss":["`) {
 		t.Errorf("%s", o.stdout)
 	}
 	var formats []map[string]any
@@ -90,7 +90,7 @@ func TestFormatsPrintsTheRegistryAsJSON(t *testing.T) {
 			}
 		}
 	}
-	if strings.Join(ids, " ") != "css csv expr feed ini json json5 jsonc jsonic jsonl markdown pgn proto semver toml xml yaml zon" {
+	if strings.Join(ids, " ") != "abnf c css csv ebnf expr feed gbnf ini json json5 jsonc jsonic jsonl markdown pgn proto semver toml xml yaml zon" {
 		t.Errorf("%v", ids)
 	}
 	byID := map[string]map[string]any{}
@@ -115,8 +115,18 @@ func TestFormatsPrintsTheRegistryAsJSON(t *testing.T) {
 			schemaOnly = append(schemaOnly, f["id"].(string))
 		}
 	}
-	if strings.Join(schemaOnly, " ") != "css pgn proto" {
+	if strings.Join(schemaOnly, " ") != "abnf c css ebnf gbnf pgn proto" {
 		t.Errorf("%v", schemaOnly)
+	}
+	// The grammar notations share a schema, the grammar spec their
+	// compilers emit, so each writes the others' documents.
+	for _, id := range []string{"abnf", "ebnf", "gbnf"} {
+		if byID[id]["schema"] != "grammar-spec" {
+			t.Errorf("%s: %v", id, byID[id])
+		}
+	}
+	if byID["c"]["schema"] != "c" {
+		t.Errorf("%v", byID["c"])
 	}
 	// Why a format's documents are read whole, where its manifest says:
 	// TOML's and INI's sentences as their manifests give them.
@@ -242,11 +252,11 @@ func TestTranslateRunsAProgramFirst(t *testing.T) {
 
 // What a target declares it cannot carry it refuses before writing
 // anything, status 1: a schema-only target refuses another format's tree
-// when the route is composed, before the input is read, and Semantic
-// Versioning's embedding refuses a tree that is not a version. Each takes
-// its own format's documents, and a program that makes its tree. (PGN's
-// own documents are not among them here: its Go reader is a registered
-// defect, go/translate's readerDefects.)
+// when the route is composed, before the input is read, a grammar
+// notation's render refuses a grammar spec it has no form for, naming what
+// it met, and Semantic Versioning's embedding refuses a tree that is not a
+// version. Each takes its own format's documents, and a program that makes
+// its tree; a grammar notation takes the others' too.
 func TestTranslateRefusesWhatATargetCannotCarry(t *testing.T) {
 	f := wantFailure(t, invoke(t, []string{"translate", "--from", "json", "--to", "css", "/nonexistent/input.json"}, nil),
 		1, "TARGET_VALUE_UNREPRESENTABLE", "")
@@ -259,6 +269,21 @@ func TestTranslateRefusesWhatATargetCannotCarry(t *testing.T) {
 	if f["message"] != "the document is not a version: it has no patch; a version is an object whose major, minor and "+
 		"patch are whole numbers written in digits, with an optional prerelease and build, each a list of identifiers "+
 		"or one string of them" || f["row"] != 48.0 || f["col"] != 3.0 || f["file"] != "tabnas-semver/alchemy/embed.alc" {
+		t.Errorf("%v", f)
+	}
+	for _, c := range []struct{ to, schema string }{{"abnf", "grammar-spec"}, {"c", "c"}} {
+		f = wantFailure(t, invoke(t, []string{"translate", "--from", "json", "--to", c.to, "-"}, text("{}")),
+			1, "TARGET_VALUE_UNREPRESENTABLE", "")
+		if f["message"] != "schema_only: "+c.to+" writes a "+c.schema+" tree, the tree its own documents read as, and "+
+			"this document is not one; a program that makes one can be composed with the render" || len(f) != 3 {
+			t.Errorf("%s: %v", c.to, f)
+		}
+	}
+	f = wantFailure(t, invoke(t, []string{"translate", "--from", "abnf", "--to", "ebnf", "-"}, text("greet = \"hi\"\n")),
+		1, "TARGET_VALUE_UNREPRESENTABLE", "")
+	if f["message"] != "the grammar spec cannot be written as EBNF: the case-insensitive literal \"hi\" is no one W3C "+
+		"EBNF terminal: it would be written as [hH] [iI], and this front end reads whitespace between terminals" ||
+		f["row"] != 237.0 || f["col"] != 3.0 || f["file"] != "tabnas-ebnf/alchemy/render.alc" {
 		t.Errorf("%v", f)
 	}
 	echo := tempFile(t, "echo-css.alc", "def export [input] input\n")
@@ -276,19 +301,24 @@ func TestTranslateRefusesWhatATargetCannotCarry(t *testing.T) {
 		{[]string{"--from", "pgn", "--to", "pgn", "-"}, "1. e4 e5 1-0\n", "1. e4 e5 1-0\n"},
 		{[]string{"--from", "proto", "--to", "proto", "-"}, "syntax = \"proto3\";\nmessage M { int32 a = 1; }\n",
 			"syntax = \"proto3\";\nmessage M {\n  int32 a = 1;\n}\n"},
+		// White space after the last token is not in the tree (C's loss
+		// list), so the final line feed is not written.
+		{[]string{"--from", "c", "--to", "c", "-"}, "int main(void) { return 0; }\n", "int main(void) { return 0; }"},
+		{[]string{"--from", "ebnf", "--to", "abnf", "-"}, "top ::= \"a\" b\nb ::= \"c\"\n", "top = %s\"a\" b\nb = %s\"c\"\n"},
+		{[]string{"--from", "ebnf", "--to", "gbnf", "-"}, "top ::= \"a\" b\nb ::= \"c\"\n", "root ::= top\ntop ::= \"a\" b\nb ::= \"c\"\n"},
+		{[]string{"--from", "abnf", "--to", "ebnf", "-"}, "top = \"a\"\n", "top ::= [aA]\n"},
 	} {
 		wantSuccess(t, invoke(t, append([]string{"translate"}, c.args...), text(c.stdin)), c.want)
 	}
 }
 
 // What a module's own parse checks before its parser runs, the command
-// checks too: a JSON5 document holding no value is refused with json5's own
-// codes (its Parse), not the engine's unexpected, status 1, as the Rust
-// and TypeScript commands refuse it. proto's Go module has no cap to check:
-// a .proto file nested past the cap proto's Rust reader holds documents to
-// (100) is translated, and one nested 300 deep is refused with a
-// structured failure, the depth limit transduce holds a walk to, not a
-// crash.
+// checks too, status 1, writing nothing, as the Rust and TypeScript
+// commands do: a JSON5 document holding no value is refused with json5's
+// own codes (its Parse), not the engine's unexpected; a .proto file nesting
+// past proto's cap is refused before the engine runs (the Preflight its
+// ParseValue makes); and a grammar notation's document its compiler
+// refuses is refused with the compiler's message.
 func TestTranslateChecksWhatAModulesParseChecksFirst(t *testing.T) {
 	for _, c := range []struct{ input, code string }{{"", "json5_empty"}, {"// c\n", "json5_no_value"}} {
 		f := wantFailure(t, invoke(t, []string{"translate", "--from", "json5", "--to", "json", "-"}, text(c.input)),
@@ -301,13 +331,15 @@ func TestTranslateChecksWhatAModulesParseChecksFirst(t *testing.T) {
 	deep := func(n int) *string {
 		return text("syntax = \"proto3\";\n" + strings.Repeat("message M {", n) + strings.Repeat("}", n) + "\n")
 	}
-	if o := invoke(t, []string{"translate", "--from", "proto", "--to", "json", "-"}, deep(101)); o.status != 0 {
-		t.Errorf("101 deep: status %d, %s", o.status, o.stderr)
+	f := wantFailure(t, invoke(t, []string{"translate", "--from", "proto", "--to", "json", "-"}, deep(101)),
+		1, "INPUT_INVALID", "")
+	if f["message"] != "proto: document nests 101 levels deep, past the 100 this parser accepts" || len(f) != 3 {
+		t.Errorf("101 deep: %v", f)
 	}
-	f := wantFailure(t, invoke(t, []string{"translate", "--from", "proto", "--to", "json", "-"}, deep(300)),
-		5, "RESOURCE_LIMIT_EXCEEDED", "a container is nested deeper than 256")
-	if limit, _ := f["limit"].(map[string]any); limit["name"] != "max_depth" || f["output"] != "none" {
-		t.Errorf("300 deep: %v", f)
+	f = wantFailure(t, invoke(t, []string{"translate", "--from", "abnf", "--to", "json", "-"}, text("a = \"b\" c\n")),
+		1, "INPUT_INVALID", "")
+	if f["message"] != "abnf: rule 'a' references unknown rule 'c'" || len(f) != 3 {
+		t.Errorf("%v", f)
 	}
 }
 
@@ -331,7 +363,8 @@ func TestTranslateFailuresAndStatuses(t *testing.T) {
 			t.Errorf("%v: %v", args, f)
 		}
 	}
-	names := "css, csv, expr, feed, ini, json, json5, jsonc, jsonic, jsonl, markdown, pgn, proto, semver, toml, xml, yaml or zon"
+	names := "abnf, c, css, csv, ebnf, expr, feed, gbnf, ini, json, json5, jsonc, jsonic, jsonl, markdown, pgn, proto, semver, toml, " +
+		"xml, yaml or zon"
 	for _, c := range []struct {
 		args []string
 		want string

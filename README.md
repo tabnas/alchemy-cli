@@ -41,16 +41,22 @@ in alchemy, describes each command, the `run` options and the exit
 statuses.
 
 `translate` reads `INPUT` with the grammar of `--from` and writes it in
-`--to`, through the translation parts each format's package exports: CSS
-(`css`), CSV, expressions (`expr`), feeds (`feed`: Atom and RSS, written
-as Atom), INI, JSON, JSON5, JSONC, jsonic, JSON Lines, Markdown, PGN
-(`pgn`), Protocol Buffers (`proto`), Semantic Versioning (`semver`),
-TOML, XML, YAML and ZON. A format takes a document of any other, but for
-what its parts declare it cannot carry, which it refuses with
-`TARGET_VALUE_UNREPRESENTABLE` (status 1) before writing anything: CSS,
-PGN and Protocol Buffers write only their own tree, read from a document
-of the same format or made by a `--with` program, and Semantic
-Versioning writes only a tree that is a version. `--path` takes a JSON
+`--to`, through the translation parts each format's package exports:
+ABNF (`abnf`), C (`c`), CSS (`css`), CSV, EBNF (`ebnf`), expressions
+(`expr`), feeds (`feed`: Atom and RSS, written as Atom), GBNF (`gbnf`),
+INI, JSON, JSON5, JSONC, jsonic, JSON Lines, Markdown, PGN (`pgn`),
+Protocol Buffers (`proto`), Semantic Versioning (`semver`), TOML, XML,
+YAML and ZON. A format takes a document of any other, but for what its
+parts declare it cannot carry, which it refuses with
+`TARGET_VALUE_UNREPRESENTABLE` (status 1) before writing anything: C,
+CSS, PGN and Protocol Buffers write only their own tree, read from a
+document of the same format or made by a `--with` program, and Semantic
+Versioning writes only a tree that is a version. The grammar notations,
+ABNF, EBNF and GBNF, read a document as the grammar spec it compiles to,
+and each writes the others' too, so a grammar written in one is written
+in another (an ABNF grammar as GBNF), as far as that notation can say
+it: what it has no form for (a negated class in ABNF, the engine's own
+tokens in GBNF) it refuses, naming what it met. `--path` takes a JSON
 array of keys and indexes (`["people",0]`) and translates that value
 instead of the document; `--key` names the member a root is wrapped
 under for a format whose document must be an object (`items` by

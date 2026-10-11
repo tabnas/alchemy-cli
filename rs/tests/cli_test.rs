@@ -672,15 +672,26 @@ fn formats_lists_the_formats_translate_reads_and_writes() {
     let ids: Vec<&str> = formats.iter().map(|f| f["id"].as_str().unwrap()).collect();
     assert_eq!(
         ids.join(" "),
-        "css csv expr feed ini json json5 jsonc jsonic jsonl markdown pgn proto semver toml xml \
-         yaml zon"
+        "abnf c css csv ebnf expr feed gbnf ini json json5 jsonc jsonic jsonl markdown pgn proto \
+         semver toml xml yaml zon"
     );
     let schema_only: Vec<&str> = formats
         .iter()
         .filter(|f| !f["schema"].is_null() && f["writes"] == "tree" && f["embed"].is_null())
         .map(|f| f["id"].as_str().unwrap())
         .collect();
-    assert_eq!(schema_only, ["css", "pgn", "proto"]);
+    assert_eq!(
+        schema_only,
+        ["abnf", "c", "css", "ebnf", "gbnf", "pgn", "proto"]
+    );
+    // The grammar notations share a schema, the grammar spec their
+    // compilers emit, so each writes the others' documents.
+    let schema =
+        |id: &str| formats.iter().find(|f| f["id"] == id).expect("a format")["schema"].clone();
+    for id in ["abnf", "ebnf", "gbnf"] {
+        assert_eq!(schema(id), "grammar-spec", "{id}");
+    }
+    assert_eq!(schema("c"), "c");
     // Why a format's documents are read whole, where its manifest says:
     // TOML's and INI's sentences as their manifests give them; JSON's none.
     let by_id = |id: &str| formats.iter().find(|f| f["id"] == id).expect("a format");
@@ -708,10 +719,12 @@ fn formats_lists_the_formats_translate_reads_and_writes() {
 
 /// What a target declares it cannot carry it refuses before writing
 /// anything, status 1: a schema-only target refuses another format's tree
-/// when the route is composed, before the input is read, and Semantic
-/// Versioning's embedding refuses a tree that is not a version. Each takes
-/// its own format's documents, and a program that makes its tree. The
-/// TypeScript and Go commands write the same.
+/// when the route is composed, before the input is read, a grammar
+/// notation's render refuses a grammar spec it has no form for, naming
+/// what it met, and Semantic Versioning's embedding refuses a tree that is
+/// not a version. Each takes its own format's documents, and a program that
+/// makes its tree; a grammar notation takes the others' too. The TypeScript
+/// and Go commands write the same.
 #[test]
 fn translate_refuses_what_a_target_cannot_carry() {
     let out = run(
@@ -756,6 +769,46 @@ fn translate_refuses_what_a_target_cannot_carry() {
             "output": "none"
         })
     );
+    for (to, schema) in [("abnf", "grammar-spec"), ("c", "c")] {
+        let out = run(
+            &["translate", "--from", "json", "--to", to, "-"],
+            Some("{}"),
+        );
+        assert_eq!(out.status.code(), Some(1), "{to}: {}", stderr(&out));
+        assert_eq!(stdout(&out), "", "{to}");
+        assert_eq!(
+            fail_json(&out),
+            serde_json::json!({
+                "code": "TARGET_VALUE_UNREPRESENTABLE",
+                "message": format!(
+                    "schema_only: {to} writes a {schema} tree, the tree its own documents read as, \
+                     and this document is not one; a program that makes one can be composed with \
+                     the render"
+                ),
+                "output": "none"
+            }),
+            "{to}"
+        );
+    }
+    let out = run(
+        &["translate", "--from", "abnf", "--to", "ebnf", "-"],
+        Some("greet = \"hi\"\n"),
+    );
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "");
+    assert_eq!(
+        fail_json(&out),
+        serde_json::json!({
+            "code": "TARGET_VALUE_UNREPRESENTABLE",
+            "message": "the grammar spec cannot be written as EBNF: the case-insensitive literal \"hi\" \
+                        is no one W3C EBNF terminal: it would be written as [hH] [iI], and this front \
+                        end reads whitespace between terminals",
+            "row": 237,
+            "col": 3,
+            "file": "tabnas-ebnf/alchemy/render.alc",
+            "output": "none"
+        })
+    );
     let echo = temp_file("echo-css.alc", "def export [input] input\n");
     let echo = echo.to_str().unwrap();
     let tree = r#"{"type":"stylesheet","rules":[{"type":"rule","selectors":["a"],"declarations":[{"type":"declaration","property":"color","value":"red"}]}]}"#;
@@ -795,6 +848,28 @@ fn translate_refuses_what_a_target_cannot_carry() {
             "1+2*3\n",
             "[\"+\",1,[\"*\",2,3]]\n",
         ),
+        // White space after the last token is not in the tree (C's loss
+        // list), so the final line feed is not written.
+        (
+            &["--from", "c", "--to", "c", "-"][..],
+            "int main(void) { return 0; }\n",
+            "int main(void) { return 0; }",
+        ),
+        (
+            &["--from", "ebnf", "--to", "abnf", "-"][..],
+            "top ::= \"a\" b\nb ::= \"c\"\n",
+            "top = %s\"a\" b\nb = %s\"c\"\n",
+        ),
+        (
+            &["--from", "ebnf", "--to", "gbnf", "-"][..],
+            "top ::= \"a\" b\nb ::= \"c\"\n",
+            "root ::= top\ntop ::= \"a\" b\nb ::= \"c\"\n",
+        ),
+        (
+            &["--from", "abnf", "--to", "ebnf", "-"][..],
+            "top = \"a\"\n",
+            "top ::= [aA]\n",
+        ),
     ] {
         let out = run(&[&["translate"][..], args].concat(), Some(input));
         assert_eq!(out.status.code(), Some(0), "{args:?}: {}", stderr(&out));
@@ -806,11 +881,12 @@ fn translate_refuses_what_a_target_cannot_carry() {
 /// What a package's own parse checks before its parser runs, the command
 /// checks too, and refuses with status 1, writing nothing: a .proto file
 /// nesting past proto's cap is refused before the engine builds a tree that
-/// deep, whose drop could abort the process (`tabnas_proto::preflight`),
-/// and a JSON5 document holding no value with json5's own codes
-/// (`tabnas_json5::parse_with`), not the engine's `unexpected`. The Go
-/// command checks JSON5 so too, and TypeScript, whose json5 error carries
-/// no position; their proto packages have no cap to check.
+/// deep, whose drop could abort the process (`tabnas_proto::preflight`,
+/// which `parse_value` makes), and a JSON5 document holding no value with
+/// json5's own codes (`tabnas_json5::parse_with`), not the engine's
+/// `unexpected`; a grammar notation's document its compiler refuses is
+/// refused with the compiler's message. The TypeScript and Go commands
+/// write the same, but that TypeScript's json5 error carries no position.
 #[test]
 fn translate_checks_what_a_packages_parse_checks_first() {
     let deep = format!(
@@ -858,4 +934,18 @@ fn translate_checks_what_a_packages_parse_checks_first() {
     );
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     assert_eq!(stdout(&out), "{\"a\":1}\n");
+    let out = run(
+        &["translate", "--from", "abnf", "--to", "json", "-"],
+        Some("a = \"b\" c\n"),
+    );
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "");
+    assert_eq!(
+        fail_json(&out),
+        serde_json::json!({
+            "code": "INPUT_INVALID",
+            "message": "abnf: rule 'a' references unknown rule 'c'",
+            "output": "none"
+        })
+    );
 }

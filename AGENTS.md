@@ -127,35 +127,76 @@ alchemy's `test/spec/`, not here.
 `translate`'s tests (`rs/tests/translate_test.rs`,
 `ts/test/translate.test.ts`, `go/translate/translate_test.go`) run the
 cross product of their corpus into every format: transduce's fixtures and
-JSONTestSuite's documents in every runtime, and every format's own
-`test/spec/*.tsv` in Rust's release run (`ci/rust/run.sh`). A pair is held
-to what its target declares: written, and read back under the target's
+JSONTestSuite's documents in every runtime, the grammar notations'
+example grammars in TypeScript's and Go's run and in Rust's release run,
+and every format's own `test/spec/*.tsv` in Rust's release run
+(`ci/rust/run.sh`), ABNF's grammars among them. A pair is held to what
+its target declares: written, and read back under the target's
 conventions (its loss list); or refused with the code and the reason its
 parts declare, which the matrix counts: a schema-only target (one that
-writes a schema's tree with no embedding into it: CSS, PGN, proto) refuses
-another format's tree, and Semantic Versioning's embedding refuses a tree
-that is not a version. A pair refused otherwise, or written where a
-refusal is declared, fails.
+writes a schema's tree with no embedding into it: C, CSS, PGN, proto and
+the grammar notations) refuses another format's tree, a grammar
+notation's render refuses a grammar spec it has no form for, naming what
+it met, and Semantic Versioning's embedding refuses a tree that is not a
+version. A pair refused otherwise, or written where a refusal is
+declared, fails. A document is left out as a source where it is past
+what every format takes: nested deeper than 100 levels, or holding more
+values than the run's size bound (10,000 by default, which leaves out the
+larger GBNF examples and RFC 3986's URI grammar, whose spec holds 513,409;
+100,000 in Rust's release run); each run pins how many it leaves out.
+
+The grammar notations, ABNF, EBNF and GBNF, share the schema
+`grammar-spec`, the grammar spec their compilers emit, so each writes the
+others' documents. A grammar spec written in a notation is held to the
+round trip each render declares: from the same notation it reads back as
+it was, or, where the loss list says it compiles back to another (a spec
+whose alternatives the compiler reordered, a left recursion through
+another rule), as one the render writes again as the same text; from
+another notation, which compiles back under the target's own settings
+and recognises what it recognised, as a spec the render writes again as
+text that reads back as that spec. And every grammar written is held to
+what it recognises: the spec read and the spec the written text compiles
+to, each installed on an engine of its own, parse each of the document's
+samples alike. The samples are the inputs the notations' repositories'
+own tests give their example grammars, accepted and refused alike
+(`test/notation-samples.json`, which all three runtimes read), and, in
+Rust's release run, the inputs ABNF's fixture rows give each grammar.
+The one difference the loss lists declare is the lexing: a spec of
+another notation compiles back under the target's settings, so across
+GBNF's exact lexing and the others' default one, which skips white
+space, a sample holding white space may be recognised otherwise. Such a
+pair is registered, never passed: the same file's `otherwise` names
+each pair with exactly the samples it recognises otherwise, every cross
+product holds each pair it compares to that list, and Rust's release
+run, which compares every pair named, holds every entry to a pair it
+compares. A grammar recognising any other sample otherwise fails, unless
+its pair is registered with its package's defect (`DEFECTIVE_PAIRS`).
 
 A format is read with its package's parser, through transduce's parser
 source, unless the parser's own value is not yet the tree its parts
 declare and the package's API reads a document as that tree: then that
 tree is the document, read whole (`Reader::Tree` in Rust, `tree` in Go,
-`{ tree }` in TypeScript). Expressions are read so in Rust and Go (the
-simplified tree: `parse_simplified`, `Simplify`), proto's descriptor in
-TypeScript and Go (`toDescriptor`, `ToDescriptor`), and Go's feeds and
-PGN databases, whose modules build typed values, through their JSON
-encoding (`plainTree`). TypeScript's expr package exports no simplifier,
-so TypeScript reads an expression as its parse builds it, each operator
-the object that describes it, which expr's parts take by its `src`; a
-test pins that, and fails once the package exports one. Where a
-package's own parse checks a document before its parser runs, and the
-parser does not check it itself, the reader makes the same check first
-(`Reader::Checked` in Rust, `check` in Go, `{ parser, check }` in
-TypeScript): proto's Rust crate refuses a document nesting past its cap
-before the engine builds a tree whose drop could abort the process
-(`preflight`), and json5 refuses a document holding no value with its
-own codes in every runtime.
+`{ tree }` in TypeScript), with the checks the package's API makes first:
+- expressions, as the simplified tree (`parse_simplified`,
+  `parseSimplified`, `SimplifyOrdered`);
+- proto's descriptor, as its parse builds it, which first refuses a
+  document nesting past proto's cap, before the engine builds a tree whose
+  drop could abort the process (`parse_value`, `parse`, `ParseValue`);
+- C, as the realized tree in Rust (`tabnas_c::parse`); TypeScript and Go
+  walk the parser's value;
+- the grammar notations, as the pure-data grammar spec each package's
+  compiler writes for a host, recognition off, as strict JSON, read as
+  JSON (`abnf_compile` and its twins for ABNF; for EBNF and GBNF the
+  shared compiler's serializers over the conversion with the builtins on,
+  which tabnas-abnf re-exports);
+- Go's feeds and PGN databases, whose modules build typed values, through
+  their JSON encoding (`plainTree`).
+
+Where a package's own parse checks a document before its parser runs, and
+the parser does not check it itself, the reader makes the same check
+first (`Reader::Checked` in Rust, `check` in Go, `{ parser, check }` in
+TypeScript): json5 refuses a document holding no value with its own codes
+in every runtime.
 
 A format whose reader, as this command reads a document through
 transduce, does not build the tree its parts declare is registered in
@@ -166,10 +207,16 @@ format's package builds with its own API (for a version past 2^53 - 1,
 its own round trip), so an entry fails once the reader is repaired, and
 is then deleted. Go also pins the order a reader's objects are written
 in where it is not the Rust and TypeScript readers' (`orderDivergent`:
-plain maps in sorted key order, typed values in their fields' order),
-which the matrix, comparing values, cannot see. A defect is the
-package's to repair; never register one to make a pair pass without
-naming it, and never work around one here in silence.
+plain maps in sorted key order, typed values in their fields' order, and
+the grammar spec tabnas-bnf's Go serializer writes in name order, its
+match tokens' order in a list of its own), which the matrix, comparing
+values, cannot see. That spec has lost the order of its rules, which
+ranks its tokens, so each notation's render refuses one that Go reads
+with two match tokens or more, as its loss list declares, and writes the
+others with their rules in name order; a Go test pins it, and fails once
+the serializer keeps the order. A defect is the package's to repair;
+never register one to make a pair pass without naming it, and never work
+around one here in silence.
 
 ## Build and test
 
