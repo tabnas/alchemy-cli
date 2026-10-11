@@ -40,8 +40,8 @@ github.com/tabnas/markdown/go v0.7.12 h1:Qp9eubeipzVOifOfoxsEGFlhvZB6ATqZHofoTVu
 github.com/tabnas/markdown/go v0.7.12/go.mod h1:5yYSem8hetMWJLGXMGg/zStYpW9kMs080dw0JtQ+rk0=
 github.com/tabnas/parser/go v0.12.11 h1:69KjAK/5qz1i4AcplOJltR6GGYxgxDsMxz6dGXI+5cQ=
 github.com/tabnas/parser/go v0.12.11/go.mod h1:WrlfEVyZ1QjEIowWiyEu3K1iHj7wxuPut5zoH9Trehk=
-github.com/tabnas/proto/go v0.6.8 h1:QlJ0CpMuTsohmxdNBB0ydvM63D47p3Mz6MHm9PXj2KY=
-github.com/tabnas/proto/go v0.6.8/go.mod h1:9Q4lXdAuY/qQATrRhUVIlQNL8ePuRfwWBokMHiwyzWk=
+github.com/tabnas/proto/go v0.6.9 h1:WnTA42dIrAjDeHA0Hisx3LJo2FTiU8Jm6FxYYhmOKCY=
+github.com/tabnas/proto/go v0.6.9/go.mod h1:9Q4lXdAuY/qQATrRhUVIlQNL8ePuRfwWBokMHiwyzWk=
 github.com/tabnas/render/go v0.2.4 h1:e/SaxIitswTGnkoFuzCs9uf0S9EjLm7c3NKXZIE5UWU=
 github.com/tabnas/render/go v0.2.4/go.mod h1:uqnG2OckseFAWPxdIpYACa2bt8stW99G6clCgzlez9A=
 github.com/tabnas/semver/go v0.0.10 h1:kfd/xJuEXry/UH5P82nGAZ9YyKFQt7Dm9iBFzSHZLb8=

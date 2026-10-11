@@ -1777,22 +1777,13 @@ struct Bounds {
 /// test until it is deleted. Every runtime would fail them alike, the
 /// renders being the same alchemy files; only the release run reads the
 /// documents.
-const DEFECTIVE_PAIRS: [(&str, &str); 2] = [
-    (
-        "abnf/alignment-abnf-ast.tsv:28 (abnf) -> ebnf",
-        "tabnas-ebnf's render writes ABNF's bounded repetition (g = \"z\" *200\"a\") as 200 \
-         nested optional groups, which its own reader refuses past about 130 (\"grammar nests \
-         too deeply\"), where its loss list declares no such refusal: the render writes a \
-         document its reader does not read",
-    ),
-    (
-        "proto/nesting.tsv:36 (proto) -> proto",
-        "tabnas-proto's render writes an option whose value is a string holding a line feed (a \
-         backtick string over two lines, which its reader takes: option a = `x\\ny`;) as an \
-         aggregate in braces, which its reader refuses (unexpected), where a string with the line \
-         feed escaped reads back",
-    ),
-];
+const DEFECTIVE_PAIRS: [(&str, &str); 1] = [(
+    "abnf/alignment-abnf-ast.tsv:28 (abnf) -> ebnf",
+    "tabnas-ebnf's render writes ABNF's bounded repetition (g = \"z\" *200\"a\") as 200 \
+     nested optional groups, which its own reader refuses past about 130 (\"grammar nests \
+     too deeply\"), where its loss list declares no such refusal: the render writes a \
+     document its reader does not read",
+)];
 
 /// The cross product of `docs` and every format: each document read with
 /// its format's grammar, written in every format, and read back under the

@@ -57,7 +57,7 @@
     "@tabnas/jsonl": ">=0",
     "@tabnas/markdown": ">=0",
     "@tabnas/parser": ">=0",
-    "@tabnas/proto": ">=0.6.8",
+    "@tabnas/proto": ">=0.6.9",
     "@tabnas/render": ">=0",
     "@tabnas/semver": ">=0",
     "@tabnas/toml": ">=0",
