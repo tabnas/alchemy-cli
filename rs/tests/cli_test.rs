@@ -948,4 +948,33 @@ fn translate_checks_what_a_packages_parse_checks_first() {
             "output": "none"
         })
     );
+    // A left recursion through a cycle of twenty rules, each with two
+    // recursive alternates, would make tabnas-bnf's elimination substitute
+    // 2^20 alternates. tabnas-bnf bounds what a rule gains at 512
+    // alternatives, so the grammar is refused in moments rather than
+    // aborting.
+    let k = 20;
+    let mut cycle = String::from("root ::= r0\n");
+    for i in 0..k {
+        let next = (i + 1) % k;
+        cycle.push_str(&format!(
+            "r{i} ::= r{next} \"a{i}\" | r{next} \"b{i}\" | \"x{i}\"\n"
+        ));
+    }
+    let out = run(
+        &["translate", "--from", "gbnf", "--to", "json", "-"],
+        Some(&cycle),
+    );
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "");
+    assert_eq!(
+        fail_json(&out),
+        serde_json::json!({
+            "code": "INPUT_INVALID",
+            "message": "gbnf: rule 'r11' exceeds the left-recursion expansion limit of 512 \
+                        alternatives while inlining 'r12', which begins 2 of its alternatives \
+                        and has 511 of its own. Factor 'r12' out of the alternatives it begins.",
+            "output": "none"
+        })
+    );
 }

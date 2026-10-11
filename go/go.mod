@@ -48,6 +48,6 @@ require (
 )
 
 require (
-	github.com/tabnas/bnf/go v0.1.28 // indirect
+	github.com/tabnas/bnf/go v0.1.29 // indirect
 	github.com/tabnas/hoover/go v0.3.14 // indirect
 )

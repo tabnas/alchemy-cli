@@ -16,6 +16,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"strings"
@@ -340,6 +341,25 @@ func TestTranslateChecksWhatAModulesParseChecksFirst(t *testing.T) {
 		1, "INPUT_INVALID", "")
 	if f["message"] != "abnf: rule 'a' references unknown rule 'c'" || len(f) != 3 {
 		t.Errorf("%v", f)
+	}
+	// A left recursion through a cycle of twenty rules, each with two
+	// recursive alternates, would make tabnas-bnf's elimination substitute
+	// 2^20 alternates. tabnas-bnf bounds what a rule gains at 512
+	// alternatives, so the grammar is refused in moments rather than
+	// aborting.
+	const k = 20
+	var cycle strings.Builder
+	cycle.WriteString("root ::= r0\n")
+	for i := 0; i < k; i++ {
+		next := (i + 1) % k
+		fmt.Fprintf(&cycle, "r%d ::= r%d \"a%d\" | r%d \"b%d\" | \"x%d\"\n", i, next, i, next, i, i)
+	}
+	f = wantFailure(t, invoke(t, []string{"translate", "--from", "gbnf", "--to", "json", "-"}, text(cycle.String())),
+		1, "INPUT_INVALID", "")
+	if f["message"] != "gbnf: rule 'r11' exceeds the left-recursion expansion limit of 512 alternatives while "+
+		"inlining 'r12', which begins 2 of its alternatives and has 511 of its own. Factor 'r12' out of the "+
+		"alternatives it begins." || len(f) != 3 {
+		t.Errorf("the left-recursion cycle: %v", f)
 	}
 }
 

@@ -716,6 +716,27 @@ describe('cli translate', () => {
       message: "abnf: rule 'a' references unknown rule 'c'",
       output: 'none',
     })
+    // A left recursion through a cycle of twenty rules, each with two
+    // recursive alternates, would make tabnas-bnf's elimination substitute
+    // 2^20 alternates. tabnas-bnf bounds what a rule gains at 512
+    // alternatives, so the grammar is refused in moments rather than
+    // aborting.
+    const k = 20
+    let cycle = 'root ::= r0\n'
+    for (let i = 0; i < k; i++) {
+      const next = (i + 1) % k
+      cycle += `r${i} ::= r${next} "a${i}" | r${next} "b${i}" | "x${i}"\n`
+    }
+    out = alchemy(['translate', '--from', 'gbnf', '--to', 'json', '-'], cycle)
+    assert.equal(out.status, 1, out.stderr)
+    assert.equal(out.stdout, '')
+    assert.deepStrictEqual(failJson(out), {
+      code: 'INPUT_INVALID',
+      message:
+        "gbnf: rule 'r11' exceeds the left-recursion expansion limit of 512 alternatives while inlining 'r12', " +
+        "which begins 2 of its alternatives and has 511 of its own. Factor 'r12' out of the alternatives it begins.",
+      output: 'none',
+    })
   })
 
   // What a target declares it cannot carry it refuses before writing
