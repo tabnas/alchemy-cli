@@ -41,6 +41,7 @@
   "peerDependencies": {
     "@tabnas/abnf": ">=0.4.22",
     "@tabnas/alchemy": ">=0",
+    "@tabnas/bnf": ">=0.1.29",
     "@tabnas/c": ">=0.5.14",
     "@tabnas/chess": ">=0",
     "@tabnas/css": ">=0",
