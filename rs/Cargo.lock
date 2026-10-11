@@ -150,6 +150,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "tabnas-abnf"
+version = "0.4.22"
+dependencies = [
+ "indexmap",
+ "regex",
+ "serde",
+ "serde_json",
+ "tabnas-bnf",
+ "tabnas-parser",
+]
+
+[[package]]
 name = "tabnas-alchemy"
 version = "0.2.6"
 dependencies = [
@@ -164,12 +176,16 @@ name = "tabnas-alchemy-cli"
 version = "0.1.8"
 dependencies = [
  "serde_json",
+ "tabnas-abnf",
  "tabnas-alchemy",
+ "tabnas-c",
  "tabnas-chess",
  "tabnas-css",
  "tabnas-csv",
+ "tabnas-ebnf",
  "tabnas-expr",
  "tabnas-feed",
+ "tabnas-gbnf",
  "tabnas-ini",
  "tabnas-json",
  "tabnas-json5",
@@ -187,6 +203,28 @@ dependencies = [
  "tabnas-xml",
  "tabnas-yaml",
  "tabnas-zon",
+]
+
+[[package]]
+name = "tabnas-bnf"
+version = "0.1.28"
+dependencies = [
+ "indexmap",
+ "regex",
+ "serde",
+ "serde_json",
+ "tabnas-parser",
+]
+
+[[package]]
+name = "tabnas-c"
+version = "0.5.14"
+dependencies = [
+ "indexmap",
+ "serde_json",
+ "tabnas-expr",
+ "tabnas-jsonic",
+ "tabnas-parser",
 ]
 
 [[package]]
@@ -220,8 +258,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "tabnas-ebnf"
+version = "0.1.16"
+dependencies = [
+ "indexmap",
+ "regex",
+ "serde_json",
+ "tabnas-bnf",
+ "tabnas-parser",
+]
+
+[[package]]
 name = "tabnas-expr"
-version = "0.5.16"
+version = "0.5.17"
 dependencies = [
  "indexmap",
  "tabnas-jsonic",
@@ -237,6 +286,17 @@ dependencies = [
  "serde_json",
  "tabnas-parser",
  "tabnas-xml",
+]
+
+[[package]]
+name = "tabnas-gbnf"
+version = "0.1.18"
+dependencies = [
+ "indexmap",
+ "regex",
+ "serde_json",
+ "tabnas-bnf",
+ "tabnas-parser",
 ]
 
 [[package]]
@@ -328,7 +388,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-proto"
-version = "0.6.7"
+version = "0.6.8"
 dependencies = [
  "indexmap",
  "serde",

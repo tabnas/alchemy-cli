@@ -39,12 +39,16 @@
     "alchemy": "bin/alchemy"
   },
   "peerDependencies": {
+    "@tabnas/abnf": ">=0",
     "@tabnas/alchemy": ">=0",
+    "@tabnas/c": ">=0",
     "@tabnas/chess": ">=0",
     "@tabnas/css": ">=0",
     "@tabnas/csv": ">=0",
+    "@tabnas/ebnf": ">=0",
     "@tabnas/expr": ">=0",
     "@tabnas/feed": ">=0",
+    "@tabnas/gbnf": ">=0",
     "@tabnas/ini": ">=0",
     "@tabnas/json": ">=0",
     "@tabnas/json5": ">=0",

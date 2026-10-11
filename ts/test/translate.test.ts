@@ -12,22 +12,27 @@
 // A pair whose target declares that it refuses the document is held to
 // that refusal, its code and the start of its message, and counted: a
 // schema-only target (one that writes a schema's tree with no embedding
-// into it: CSS, PGN, proto) refuses another format's tree, and Semantic
+// into it: C, CSS, PGN, proto and the grammar notations ABNF, EBNF and
+// GBNF) refuses another format's tree, a grammar notation refuses a
+// grammar spec it has no form for, naming what it met, and Semantic
 // Versioning's embedding refuses a tree that is not a version. A refusal of
 // another kind, or a document written where a refusal is declared, is a
-// failure.
+// failure. The grammar notations share a schema, the grammar spec their
+// compilers emit, so each writes the others' documents.
 //
 // The corpus is the sibling checkouts': transduce's fixtures (aless's: a
-// document of every format but CSS, expressions, PGN, proto and Semantic
-// Versioning, and more for YAML and ZON) and the documents of JSONTestSuite
-// every JSON parser must accept, from the copy jsonc vendors
-// (`jsonc/test/JSONTestSuite`), as the Go and Rust tests read them: json
-// fetches its copy for its own suite, and a checkout of it does not hold
-// one. A fixture its own grammar refuses (ZON's repeated fields) is no
-// document, and is counted as one refused; so is a document of a format
-// whose reader is a registered defect (READER_DEFECTS), counted apart. The
-// Rust crate's second matrix, every format's own fixture corpus in release,
-// stays Rust's.
+// document of every format but C, CSS, expressions, PGN, proto, Semantic
+// Versioning and the grammar notations, and more for YAML and ZON), the
+// documents of JSONTestSuite every JSON parser must accept, from the copy
+// jsonc vendors (`jsonc/test/JSONTestSuite`), as the Go and Rust tests read
+// them: json fetches its copy for its own suite, and a checkout of it does
+// not hold one; and the example grammars of the grammar notations'
+// repositories, which the Rust crate reads in its release run. A fixture
+// its own grammar refuses (ZON's repeated fields) is no document, and is
+// counted as one refused; so is a document of a format whose reader is a
+// registered defect (READER_DEFECTS), counted apart. The Rust crate's
+// second matrix, every format's own fixture corpus in release, stays
+// Rust's.
 
 import { describe, it } from 'node:test'
 import assert from 'node:assert'
@@ -36,6 +41,8 @@ import { extname, join } from 'node:path'
 
 import { translate as alchemyTranslate } from '@tabnas/alchemy'
 import * as expr from '@tabnas/expr'
+import { jsonic } from '@tabnas/jsonic'
+import { Tabnas } from '@tabnas/parser'
 import { BytesWriter } from '@tabnas/render'
 import type { Writer } from '@tabnas/render'
 import { Datum, Limits, Metrics, toText } from '@tabnas/transduce'
@@ -75,6 +82,13 @@ function formatOf(extension: string): string | undefined {
     case 'rss':
     case 'atom':
       return 'feed'
+    case 'c':
+    case 'h':
+      return 'c'
+    case 'abnf':
+    case 'ebnf':
+    case 'gbnf':
+      return extension
     default:
       return undefined
   }
@@ -82,18 +96,29 @@ function formatOf(extension: string): string | undefined {
 
 type Doc = { name: string; id: string; text: string }
 
-// Every document of the corpus: its name, its format and its text.
+// The grammar notations' example grammars, each notation's directory in
+// its repository's checkout.
+const NOTATION_EXAMPLES: ReadonlyArray<[string, string]> = [
+  ['abnf', sibling('abnf', 'ts', 'test', 'grammar')],
+  ['ebnf', sibling('ebnf', 'ts', 'test', 'grammar')],
+  ['gbnf', sibling('gbnf', 'test', 'corpus')],
+]
+
+// Every document of the corpus: its name, its format and its text. A
+// corpus may be held to the files whose names start with a prefix, or to
+// those of one format (a grammar notation's examples sit beside a README).
 function corpus(): Doc[] {
   const docs: Doc[] = []
-  const dirs: Array<[string, string, string | undefined]> = [
-    ['transduce', sibling('transduce', 'rs', 'tests', 'fixtures'), undefined],
-    ['JSONTestSuite', sibling('jsonc', 'test', 'JSONTestSuite', 'test_parsing'), 'y_'],
+  const dirs: Array<[string, string, string | undefined, string | undefined]> = [
+    ['transduce', sibling('transduce', 'rs', 'tests', 'fixtures'), undefined, undefined],
+    ['JSONTestSuite', sibling('jsonc', 'test', 'JSONTestSuite', 'test_parsing'), 'y_', undefined],
+    ...NOTATION_EXAMPLES.map(([id, dir]): [string, string, undefined, string] => [id, dir, undefined, id]),
   ]
-  for (const [name, dir, prefix] of dirs) {
+  for (const [name, dir, prefix, only] of dirs) {
     for (const file of readdirSync(dir).sort()) {
       if (undefined !== prefix && !file.startsWith(prefix)) continue
       const id = formatOf(extname(file).slice(1))
-      if (undefined === id) continue
+      if (undefined === id || (undefined !== only && only !== id)) continue
       let text: string
       try {
         text = UTF8.decode(readFileSync(join(dir, file)))
@@ -177,17 +202,32 @@ function registeredDefect(id: string): boolean {
 // ---------------------------------------------------------------------
 
 // What a pair is held to: written, and read back under the target's
-// conventions; or refused as the target declares, with the code and the
-// start of the message alchemy's composition or the target's part gives.
-type Expect = { written: true } | { written: false; code: string; reason: string }
+// conventions; refused as the target declares, with the code and the start
+// of the message alchemy's composition or the target's part gives; or
+// written unless the target refuses it so (`unless`), where the target
+// declares that it refuses what it has no form for, naming what it met.
+type Expect =
+  | { written: true; unless?: { code: string; reason: string } }
+  | { written: false; code: string; reason: string }
+
+// Whether a format is a grammar notation: one whose documents read as the
+// grammar spec the tabnas BNF compiler emits, which each notation's render
+// writes back.
+function grammarNotation(format: Format): boolean {
+  return 'grammar-spec' === format.part.schema
+}
 
 // What `from`'s document, read as `source`, into `to` is held to. A
 // schema-only target (one that writes from a tree, with a schema and no
-// embed: CSS, PGN, proto) refuses a tree of another schema before any
-// output, as alchemy's composition declares; Semantic Versioning's
-// embedding refuses a tree that is not a version, as its part declares.
-// Every other pair is written, Markdown's table among them: it writes from
-// records, which any tree makes.
+// embed: C, CSS, PGN, proto and the grammar notations) refuses a tree of
+// another schema before any output, as alchemy's composition declares; a
+// grammar notation's render writes a grammar spec, any notation's, unless
+// it has no form for something in it, which it refuses naming what it met,
+// as its loss list declares (an action, a negated class in ABNF, the
+// engine's own tokens in GBNF, ...); Semantic Versioning's embedding
+// refuses a tree that is not a version, as its part declares. Every other
+// pair is written, Markdown's table among them: it writes from records,
+// which any tree makes.
 function expect(from: Format, to: Format, source: Datum): Expect {
   const target = to.part
   const foreign = 'tree' === target.writes && undefined !== target.schema && from.part.schema !== target.schema
@@ -200,6 +240,15 @@ function expect(from: Format, to: Format, source: Datum): Expect {
   }
   if (foreign && 'semver' === to.id && !semverVersion(source)) {
     return { written: false, code: 'TARGET_VALUE_UNREPRESENTABLE', reason: 'the document is not a version: ' }
+  }
+  if (grammarNotation(to)) {
+    return {
+      written: true,
+      unless: {
+        code: 'TARGET_VALUE_UNREPRESENTABLE',
+        reason: `the grammar spec cannot be written as ${to.id.toUpperCase()}: `,
+      },
+    }
   }
   return { written: true }
 }
@@ -644,21 +693,21 @@ function zonBack(d: Datum): Datum {
   return d
 }
 
-// The default operators' source texts, as expr's render reads an operator:
-// `+`, `-`, `*`, `/`, `%`, and `(` for a group.
-const EXPR_OPERATORS = ['+', '-', '*', '/', '%', '(']
-
-// A tree with each operator reduced to its source text, as expr's shared
-// fixtures and its render read one: a list whose first element is an object
-// whose `src` is a default operator's source text has that text in the
-// object's place.
+// A tree as expr's reader reads one back (its simplified tree, the form its
+// shared fixtures hold): a list whose first element is an object whose
+// `src` is a string, not empty, has that string in the object's place.
+// expr's loss list declares that for a default operator's source text,
+// which its render writes as the operator; its reader reads every object at
+// a list's head with a `src` so (a C syntax tree's tokens among them),
+// which the loss list does not declare, and which the three runtimes read
+// alike.
 function exprSimplify(d: Datum): Datum {
   if ('array' === d.type) {
     return arr(
       d.items.map((item, i) => {
         if (0 === i && 'object' === item.type) {
           const src = item.members.get('src')
-          if (undefined !== src && 'string' === src.type && EXPR_OPERATORS.includes(src.value)) return src
+          if (undefined !== src && 'string' === src.type && '' !== src.value) return src
         }
         return exprSimplify(item)
       }),
@@ -1032,10 +1081,58 @@ function feedReading(d: Datum): Datum {
   return obj(out)
 }
 
+// Whether a grammar spec written in a grammar notation reads back as the
+// notations' conventions say: undefined when it does, why not when it does
+// not. A render writes the spec anew, as far as its notation can say it,
+// and its contract is the round trip (each render's header): the text
+// compiles back to the spec it was written from, but where its loss list
+// says it compiles back to another (a spec whose alternatives the compiler
+// reordered, or whose left recursion ran through another rule), and a spec
+// compiled from another notation, which compiles back under the target's
+// own settings (its group tag, its lexing, its spelling of the other
+// notation's terminals and core rules) and recognises what it recognised.
+// So a spec of the target's own notation reads back as it was, or as one
+// the render writes again as the same text; and one of another notation
+// reads back as a spec the render writes again as text that reads back as
+// that spec.
+function checkGrammar(from: Format, target: Format, source: Datum, written: string): string | undefined {
+  const limits = Limits.default()
+  let back: Datum
+  try {
+    back = target.read(written, limits)
+  } catch (err) {
+    return `the written grammar does not read back: ${why(err)}`
+  }
+  if (from.id === target.id && same(source, back)) return undefined
+  let again: string
+  try {
+    again = translateText(target, target, written)
+  } catch (err) {
+    return `the spec it reads back as is not written again: ${why(err)}; it was written as ${JSON.stringify(written)}`
+  }
+  if (from.id === target.id) {
+    return again === written
+      ? undefined
+      : `reads back as another spec, which is written again as ${JSON.stringify(again)}, where ` +
+          `${JSON.stringify(written)} was written`
+  }
+  let backAgain: Datum
+  try {
+    backAgain = target.read(again, limits)
+  } catch (err) {
+    return `the grammar written again does not read back: ${why(err)}`
+  }
+  return same(back, backAgain)
+    ? undefined
+    : `reads back as a spec that is written again as ${JSON.stringify(again)}, which reads back as another, ` +
+        `where ${JSON.stringify(written)} was written`
+}
+
 // Whether the document read back from `written` in `target` is what the
 // target's conventions make of `source`, read as `from`: undefined when it
 // is, why not when it is not.
 function check(from: Format, target: Format, source: Datum, written: string): string | undefined {
+  if (grammarNotation(target)) return checkGrammar(from, target, source, written)
   const limits = Limits.default()
   const id = target.id
   // A source whose events carry the target's own schema (XML's element
@@ -1084,15 +1181,6 @@ function check(from: Format, target: Format, source: Datum, written: string): st
       back = format('yaml').read(yaml, limits)
     } catch (err) {
       return `the unembedded tree does not read back: ${why(err)}`
-    }
-  } else if ('expr' === id) {
-    // An expression document reads back as expr's fixtures read one: its
-    // tree, each operator reduced to its source text (the Rust and Go ports
-    // read it with expr's own API, since their readers are registered).
-    try {
-      back = exprSimplify(target.read(written, limits))
-    } catch (err) {
-      return `the written document does not read back: ${why(err)}`
     }
   } else {
     try {
@@ -1165,23 +1253,48 @@ function depth(d: Datum): number {
 // matrix leaves it out, and pins how few such documents there are.
 const DEPTH_BOUND = 100
 
+// How many values a tree holds: a scalar is one, a container one more than
+// its members hold.
+function size(d: Datum): number {
+  if ('array' === d.type) return 1 + d.items.reduce((n, i) => n + size(i), 0)
+  if ('object' === d.type) return 1 + [...d.members.values()].reduce((n, v) => n + size(v), 0)
+  return 1
+}
+
+// The size of a tree every format writes in moments. The grammar spec RFC
+// 3986's URI grammar compiles to holds 513,409 values (its probe tables),
+// which take seconds into JSON and minutes into an XML embedding, and this
+// command's interpreter takes minutes over the 14,000 values the larger
+// GBNF examples compile to (C's, JSON's): a workload and not a shape, so
+// the matrix leaves a document past this out, and pins how few such
+// documents there are (the Rust crate's release run, faster, reads trees
+// ten times this size).
+const SIZE_BOUND = 10_000
+
+// What a run of the matrix is held to: at least `floor` documents, at most
+// `tooDeep` of them deeper than every format reads and `tooLarge` larger
+// than every format writes in moments, at least `refusals` pairs refused as
+// their target declares, and at least `grammarsWritten` grammars written in
+// a grammar notation.
+type Bounds = { floor: number; tooDeep: number; tooLarge: number; refusals: number; grammarsWritten: number }
+
 // The cross product of `docs` and every format: each document read with
 // its format's grammar, written in every format, and read back under the
-// target's conventions, or refused as the target declares. At least `floor`
-// documents, at most `tooDeepAtMost` of them deeper than every format
-// reads, and at least `refusalsAtLeast` pairs refused as their target
-// declares; a document of a format whose reader is a registered defect is
+// target's conventions, or refused as the target declares, held to
+// `bounds`; a document of a format whose reader is a registered defect is
 // left out as a source, and counted.
-function matrix(docs: Doc[], floor: number, tooDeepAtMost: number, refusalsAtLeast: number): void {
+function matrix(docs: Doc[], bounds: Bounds): void {
   const limits = Limits.default()
   const targets = formats()
-  assert.equal(targets.length, 18, `the formats: ${names()}`)
+  assert.equal(targets.length, 22, `the formats: ${names()}`)
   const total = docs.length * targets.length
   const failures: string[] = []
   const refusedSources: string[] = []
   const tooDeep: string[] = []
+  const tooLarge: string[] = []
   const defective: string[] = []
   const refusals: string[] = []
+  let grammarsWritten = 0
   let pairs = 0
   const started = Date.now()
   let reported = Date.now()
@@ -1198,6 +1311,9 @@ function matrix(docs: Doc[], floor: number, tooDeepAtMost: number, refusalsAtLea
       }
       if (undefined !== source && depth(source) > DEPTH_BOUND) {
         tooDeep.push(`${name}: ${depth(source)} levels`)
+        source = undefined
+      } else if (undefined !== source && size(source) > SIZE_BOUND) {
+        tooLarge.push(`${name}: ${size(source)} values`)
         source = undefined
       }
     }
@@ -1223,7 +1339,12 @@ function matrix(docs: Doc[], floor: number, tooDeepAtMost: number, refusalsAtLea
           failure = `is refused otherwise than declared (${held.code}, ${held.reason}...): ${why(refused)}`
         }
       } else if (undefined === written) {
-        failure = `does not write: ${why(refused)}`
+        const fail = refused as { code?: string; message?: string } | undefined
+        if (undefined !== held.unless && held.unless.code === fail?.code && String(fail?.message).startsWith(held.unless.reason)) {
+          refusals.push(`${pair}: ${String(fail?.message)}`)
+        } else {
+          failure = `does not write: ${why(refused)}`
+        }
       } else if ('records' === from.part.reads[0] && 'records' === to.part.writes) {
         // A records source read through its lift writes its table, not its
         // tree: compare with the table.
@@ -1233,6 +1354,7 @@ function matrix(docs: Doc[], floor: number, tooDeepAtMost: number, refusalsAtLea
           failure = `the written document does not read back: ${why(err)}`
         }
       } else {
+        if (undefined !== held.unless) grammarsWritten += 1
         try {
           failure = check(from, to, source as Datum, written)
         } catch (err) {
@@ -1251,23 +1373,36 @@ function matrix(docs: Doc[], floor: number, tooDeepAtMost: number, refusalsAtLea
   })
   for (const line of refusedSources) process.stderr.write(`refused source: ${line}\n`)
   for (const line of tooDeep) process.stderr.write(`deeper than every format reads: ${line}\n`)
+  for (const line of tooLarge) process.stderr.write(`larger than ${SIZE_BOUND} values: ${line}\n`)
   for (const line of failures) process.stderr.write(`FAIL ${line}\n`)
   const schemaOnly = refusals.filter((r) => r.includes('schema_only:')).length
+  const unwritable = refusals.filter((r) => r.includes(': the grammar spec cannot be written as ')).length
   process.stderr.write(
     `matrix: ${pairs} pairs of ${docs.length} documents; ${refusedSources.length} refused by their own ` +
-      `reader, ${tooDeep.length} too deep, ${defective.length} left out for a registered reader defect; ` +
+      `reader, ${tooDeep.length} too deep, ${tooLarge.length} too large, ${defective.length} left out for a ` +
+      `registered reader defect; ` +
       `${refusals.length} pairs refused as their target declares (${schemaOnly} by a schema-only target, ` +
-      `${refusals.length - schemaOnly} by Semantic Versioning's embedding)\n`,
+      `${unwritable} by a grammar notation's render, ${refusals.length - schemaOnly - unwritable} by Semantic ` +
+      `Versioning's embedding); ${grammarsWritten} grammars written in a grammar notation\n`,
   )
+  const leftOut = refusedSources.length + tooDeep.length + tooLarge.length + defective.length
   assert.ok(
-    pairs + (refusedSources.length + tooDeep.length + defective.length) * targets.length === total &&
-      docs.length >= floor,
+    pairs + leftOut * targets.length === total && docs.length >= bounds.floor,
     `the corpus shrank: ${docs.length} documents`,
   )
-  assert.ok(tooDeep.length <= tooDeepAtMost, `${tooDeep.length} documents are deeper than every format reads (above)`)
+  assert.ok(tooDeep.length <= bounds.tooDeep, `${tooDeep.length} documents are deeper than every format reads (above)`)
   assert.ok(
-    refusals.length >= refusalsAtLeast,
-    `${refusals.length} pairs are refused as their target declares, fewer than the ${refusalsAtLeast} the corpus gives`,
+    tooLarge.length <= bounds.tooLarge,
+    `${tooLarge.length} documents hold more than ${SIZE_BOUND} values (above)`,
+  )
+  assert.ok(
+    refusals.length >= bounds.refusals,
+    `${refusals.length} pairs are refused as their target declares, fewer than the ${bounds.refusals} the corpus gives`,
+  )
+  assert.ok(
+    grammarsWritten >= bounds.grammarsWritten,
+    `${grammarsWritten} grammars are written in a grammar notation, fewer than the ${bounds.grammarsWritten} the ` +
+      `corpus gives`,
   )
   assert.ok(0 === failures.length, `${failures.length} of ${pairs} pairs failed (above)`)
 }
@@ -1287,7 +1422,7 @@ describe('translate', () => {
   // transduce's fixtures, one document per format at least, and the
   // documents of JSONTestSuite every JSON parser must accept.
   it('every document translates into every format', () => {
-    matrix(corpus(), 132, 0, 500)
+    matrix(corpus(), { floor: 151, tooDeep: 0, tooLarge: 4, refusals: 1084, grammarsWritten: 36 })
   })
 
   // Each registered reader defect still stands: a version past 2^53 - 1
@@ -1305,23 +1440,17 @@ describe('translate', () => {
     }
   })
 
-  // An expression is read as expr's TypeScript package parses one: an
-  // operation's operator the object that describes it, the token it was
-  // read from and all, which expr's parts take by its src. The Rust and Go
-  // readers reduce the operator to its source text with their package's
-  // simplifier (Rust's parse_simplified, Go's Simplify), which the
-  // TypeScript package does not export, so a translation from an
-  // expression writes the description in this runtime alone. This fails
-  // once the package exports a simplifier, which the reader then takes,
-  // and is then deleted.
-  it("an expression's operator is read as the object that describes it", () => {
-    assert.ok(!('simplify' in expr), '@tabnas/expr now exports simplify: read expressions through it')
-    const read = named('expr').read('1+2*3\n', Limits.default())
-    const op = 'array' === read.type ? read.items[0] : undefined
-    const src = 'object' === op?.type ? op.members.get('src') : undefined
-    assert.ok('string' === src?.type && '+' === src.value, toText(read))
-    assert.ok('object' === op?.type && op.members.has('token'), toText(read))
-    assert.strictEqual(toText(exprSimplify(read)), '["+",1,["*",2,3]]')
+  // An expression is read as expr's API reads one for its shared fixtures
+  // (parseSimplified), the tree its parts declare: each operation a list
+  // whose first element is the operator's source text, as the Rust and Go
+  // readers read it, where its parser's value holds the object that
+  // describes the operator, token and all.
+  it('an expression is read as the simplified tree its package builds', () => {
+    const text = '1+2*(3-x)\n'
+    const read = named('expr').read(text, Limits.default())
+    assert.strictEqual(toText(read), '["+",1,["*",2,["(",["-",3,"x"]]]]')
+    assert.deepStrictEqual(JSON.parse(toText(read)), expr.parseSimplified(new Tabnas().use(jsonic).use(expr.Expr), text))
+    assert.strictEqual(translateText(named('expr'), named('json'), text), '["+",1,["*",2,["(",["-",3,"x"]]]]\n')
   })
 
   // feed's TypeScript reader builds a person's absent uri and email as

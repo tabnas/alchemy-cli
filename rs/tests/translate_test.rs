@@ -9,19 +9,23 @@
 //! A pair whose target declares that it refuses the document is held to
 //! that refusal, its code and the start of its message, and counted: a
 //! schema-only target (one that writes a schema's tree with no embedding
-//! into it: CSS, PGN, proto) refuses another format's tree, and Semantic
+//! into it: C, CSS, PGN, proto and the grammar notations ABNF, EBNF and
+//! GBNF) refuses another format's tree, a grammar notation refuses a
+//! grammar spec it has no form for, naming what it met, and Semantic
 //! Versioning's embedding refuses a tree that is not a version. A refusal
 //! of another kind, or a document written where a refusal is declared, is
-//! a failure.
+//! a failure. The grammar notations share a schema, the grammar spec their
+//! compilers emit, so each writes the others' documents.
 //!
 //! The corpora are the sibling checkouts': transduce's fixtures (aless's: a
-//! document of every format but CSS, expressions, PGN, proto and Semantic
-//! Versioning, whose own fixtures the release run reads, and more for YAML
-//! and ZON) and the documents of JSONTestSuite every JSON parser must
-//! accept (jsonc's conformance pins). A fixture its own grammar refuses
-//! (ZON's repeated fields) is no document, and is counted as one refused;
-//! so is a document of a format whose reader is a registered defect
-//! (`READER_DEFECTS`), counted apart.
+//! document of every format but C, CSS, expressions, PGN, proto, Semantic
+//! Versioning and the grammar notations, whose own fixtures the release
+//! run reads, and more for YAML and ZON), the documents of JSONTestSuite
+//! every JSON parser must accept (jsonc's conformance pins), and the
+//! example grammars of the grammar notations' repositories. A fixture its
+//! own grammar refuses (ZON's repeated fields) is no document, and is
+//! counted as one refused; so is a document of a format whose reader is a
+//! registered defect (`READER_DEFECTS`), counted apart.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -71,6 +75,10 @@ fn format_of(extension: &str) -> Option<&'static str> {
         "yaml" => "yaml",
         "zon" => "zon",
         "rss" | "atom" => "feed",
+        "c" | "h" => "c",
+        "abnf" => "abnf",
+        "ebnf" => "ebnf",
+        "gbnf" => "gbnf",
         _ => return None,
     })
 }
@@ -78,20 +86,41 @@ fn format_of(extension: &str) -> Option<&'static str> {
 /// Every document of the corpora: its name, its format and its text.
 fn corpus() -> Vec<(String, &'static str, String)> {
     let mut docs = Vec::new();
-    let dirs = [
-        (
-            "transduce",
-            siblings().join("transduce/rs/tests/fixtures"),
-            None,
-        ),
-        (
-            "JSONTestSuite",
-            siblings().join("jsonc/test/JSONTestSuite/test_parsing"),
-            Some("y_"),
-        ),
-    ];
-    for (corpus, dir, prefix) in dirs {
-        let mut entries: Vec<PathBuf> = std::fs::read_dir(&dir)
+    read_corpora(
+        &mut docs,
+        &[
+            (
+                "transduce",
+                siblings().join("transduce/rs/tests/fixtures"),
+                None,
+                None,
+            ),
+            (
+                "JSONTestSuite",
+                siblings().join("jsonc/test/JSONTestSuite/test_parsing"),
+                Some("y_"),
+                None,
+            ),
+        ],
+    );
+    docs
+}
+
+/// A corpus: its name, its directory, the prefix its documents' file names
+/// start with, where it is held to one, and the one format it is held to,
+/// where it is (a grammar notation's examples sit beside a README).
+type Corpus = (
+    &'static str,
+    PathBuf,
+    Option<&'static str>,
+    Option<&'static str>,
+);
+
+/// The documents of `dirs`, in name order, each as its extension's format
+/// reads it: a file of no format here, or one that is not UTF-8, is none.
+fn read_corpora(docs: &mut Vec<(String, &'static str, String)>, dirs: &[Corpus]) {
+    for (corpus, dir, prefix, only) in dirs {
+        let mut entries: Vec<PathBuf> = std::fs::read_dir(dir)
             .unwrap_or_else(|e| panic!("{corpus}: cannot read {}: {e}", dir.display()))
             .map(|e| e.unwrap().path())
             .collect();
@@ -108,52 +137,73 @@ fn corpus() -> Vec<(String, &'static str, String)> {
             else {
                 continue;
             };
+            if only.is_some_and(|only| only != id) {
+                continue;
+            }
             let Ok(text) = std::fs::read_to_string(&path) else {
                 continue;
             };
             docs.push((format!("{corpus}/{name}"), id, text));
         }
     }
-    docs
 }
 
 /// The repositories whose fixture corpora the matrix reads, each with the
-/// id its format's manifest gives it: the repository's name, but for
-/// tabnas/chess, whose format is PGN.
-const SPEC_CORPORA: [(&str, &str); 18] = [
-    ("chess", "pgn"),
-    ("css", "css"),
-    ("csv", "csv"),
-    ("expr", "expr"),
-    ("feed", "feed"),
-    ("ini", "ini"),
-    ("json", "json"),
-    ("json5", "json5"),
-    ("jsonc", "jsonc"),
-    ("jsonic", "jsonic"),
-    ("jsonl", "jsonl"),
-    ("markdown", "markdown"),
-    ("proto", "proto"),
-    ("semver", "semver"),
-    ("toml", "toml"),
-    ("xml", "xml"),
-    ("yaml", "yaml"),
-    ("zon", "zon"),
+/// id its format's manifest gives it (the repository's name, but for
+/// tabnas/chess, whose format is PGN) and the column its rows hold a
+/// document of the format in: the input, but for ABNF, whose rows hold a
+/// grammar and an input to that grammar. EBNF's and GBNF's repositories
+/// keep no fixtures of that kind; their example grammars, and ABNF's, are
+/// files (`NOTATION_EXAMPLES`).
+const SPEC_CORPORA: [(&str, &str, &str); 20] = [
+    ("abnf", "abnf", "grammar"),
+    ("c", "c", "input"),
+    ("chess", "pgn", "input"),
+    ("css", "css", "input"),
+    ("csv", "csv", "input"),
+    ("expr", "expr", "input"),
+    ("feed", "feed", "input"),
+    ("ini", "ini", "input"),
+    ("json", "json", "input"),
+    ("json5", "json5", "input"),
+    ("jsonc", "jsonc", "input"),
+    ("jsonic", "jsonic", "input"),
+    ("jsonl", "jsonl", "input"),
+    ("markdown", "markdown", "input"),
+    ("proto", "proto", "input"),
+    ("semver", "semver", "input"),
+    ("toml", "toml", "input"),
+    ("xml", "xml", "input"),
+    ("yaml", "yaml", "input"),
+    ("zon", "zon", "input"),
 ];
 
-/// Every format's own fixture corpus: the input of every row of its
+/// The grammar notations' example grammars, which their repositories keep
+/// as files: each notation's directory, below its repository's checkout.
+const NOTATION_EXAMPLES: [(&str, &str); 3] = [
+    ("abnf", "abnf/ts/test/grammar"),
+    ("ebnf", "ebnf/ts/test/grammar"),
+    ("gbnf", "gbnf/test/corpus"),
+];
+
+/// Every format's own fixture corpus: the document of every row of its
 /// repository's `test/spec/*.tsv`, decoded as the fixture runner decodes
-/// it, once each. A row that sets options of its own (`opts`) is read by
-/// another reader than the format's default, and an error row's input is
-/// one the format refuses, so neither is a document of the format here.
+/// it, once each, and the grammar notations' example grammars. A row that
+/// sets options of its own (`opts`) is read by another reader than the
+/// format's default, and an error row's document is one the format refuses,
+/// so neither is a document of the format here.
 fn spec_corpus(docs: &mut Vec<(String, &'static str, String)>) {
-    for (repository, id) in SPEC_CORPORA {
+    let examples: Vec<Corpus> = NOTATION_EXAMPLES
+        .iter()
+        .map(|(id, dir)| (*id, siblings().join(dir), None, Some(*id)))
+        .collect();
+    for (repository, id, column) in SPEC_CORPORA {
         let dir = siblings().join(repository).join("test/spec");
         let files = tabnas_support::load_spec_dir(&dir, &tabnas_support::SpecOptions::default())
             .unwrap_or_else(|e| panic!("{id}: cannot read {}: {e}", dir.display()));
         let mut seen = HashSet::new();
         for file in files {
-            if !file.header.iter().any(|column| column == "input") {
+            if !file.header.iter().any(|name| name == column) {
                 continue;
             }
             for row in &file.rows {
@@ -162,7 +212,7 @@ fn spec_corpus(docs: &mut Vec<(String, &'static str, String)>) {
                 {
                     continue;
                 }
-                let input = row.unesc_named("input");
+                let input = row.unesc_named(column);
                 if seen.insert(input.clone()) {
                     docs.push((
                         format!("{repository}/{}:{}", file.file, row.line),
@@ -173,6 +223,7 @@ fn spec_corpus(docs: &mut Vec<(String, &'static str, String)>) {
             }
         }
     }
+    read_corpora(docs, &examples);
 }
 
 fn format(id: &str) -> &'static Format {
@@ -191,15 +242,11 @@ fn format(id: &str) -> &'static Format {
 /// `a_registered_reader_defect_still_stands` holds each entry to an example
 /// document, comparing what the command reads with what the package's own
 /// API builds of it, so an entry fails once its reader is repaired, and
-/// must then be deleted.
-const READER_DEFECTS: [(&str, &str); 1] = [(
-    "proto",
-    "tabnas-proto's parser builds the grammar's syntax tree, and the descriptor its parts \
-     declare (the schema proto-descriptor) is what tabnas_proto::parse builds from it, a typed \
-     FileDescriptorProto whose tree only its serde Serialize gives, which this crate cannot \
-     read without serde_json at run time; so transduce walks the syntax tree, which proto's own \
-     render refuses as no FileDescriptorProto",
-)];
+/// must then be deleted. None is registered: proto's, the last, was
+/// repaired when tabnas-proto gave the descriptor as a tree
+/// (`tabnas_proto::parse_value`), and
+/// `a_proto_file_reads_as_the_descriptor_its_package_builds` holds it so.
+const READER_DEFECTS: [(&str, &str); 0] = [];
 
 /// Whether documents of `id` are left out as sources for a registered
 /// reader defect.
@@ -237,30 +284,42 @@ fn datum_of_json(j: &serde_json::Value) -> Datum {
 fn a_registered_reader_defect_still_stands() {
     let limits = Limits::default();
     for (id, defect) in READER_DEFECTS {
-        let (example, read, declared) = match id {
-            "proto" => {
-                let text = "syntax = \"proto3\";\nmessage M { int32 a = 1; }\n";
-                let descriptor = tabnas_proto::parse(text, None).unwrap();
-                let declared = datum_of_json(&serde_json::to_value(&descriptor).unwrap());
-                (text, format(id).read(text, &limits).unwrap(), declared)
-            }
-            _ => panic!("{id}: a registered defect needs an example here"),
-        };
+        let (example, declared) = defect_example(id);
+        let read = format(id).read(example, &limits).unwrap();
         assert!(
             !same(&read, &declared),
             "{id}'s reader now reads {example:?} as the tree its package builds, {declared}: \
              delete its entry ({defect})"
         );
     }
-    // What the defect means for a translation: a .proto file is refused by
-    // its own render.
+}
+
+/// A registered defect's example document, with the tree the format's
+/// package builds of it with its own API. None is registered, so an entry
+/// fails here until its example is added.
+fn defect_example(id: &str) -> (&'static str, Datum) {
+    panic!("{id}: a registered defect needs an example here")
+}
+
+/// A .proto file reads as the FileDescriptorProto tabnas-proto's parse
+/// builds of it, the tree proto's parts declare, with its members in the
+/// order the canonical parse gives them, and so is written back by
+/// proto's render, where its reader once walked the syntax tree, which the
+/// render refused.
+#[test]
+fn a_proto_file_reads_as_the_descriptor_its_package_builds() {
+    let text =
+        "syntax = \"proto3\";\npackage p;\nmessage M { int32 a = 1; optional string b = 2; }\n";
+    let read = format("proto").read(text, &Limits::default()).unwrap();
+    let descriptor = tabnas_proto::parse(text, None).unwrap();
+    let declared = datum_of_json(&serde_json::to_value(&descriptor).unwrap());
+    assert!(same(&read, &declared), "{read} is not {declared}");
+    let tree = Datum::from_tabnas(&tabnas_proto::parse_value(text, None).unwrap());
+    assert_eq!(read.to_string(), tree.to_string());
     let proto = format("proto");
-    let fail = translate_text(proto, proto, "syntax = \"proto3\";\n", None).unwrap_err();
-    assert_eq!(fail.code, Code::TargetValueUnrepresentable);
-    assert!(
-        fail.message
-            .starts_with("the tree is not a FileDescriptorProto"),
-        "{fail}"
+    assert_eq!(
+        translate_text(proto, proto, text, None).unwrap(),
+        "syntax = \"proto3\";\npackage p;\nmessage M {\n  int32 a = 1;\n  optional string b = 2;\n}\n"
     );
 }
 
@@ -269,20 +328,34 @@ fn a_registered_reader_defect_still_stands() {
 // ---------------------------------------------------------------------
 
 /// What a pair is held to: written, and read back under the target's
-/// conventions; or refused as the target declares, with the code and the
-/// start of the message alchemy's composition or the target's part gives.
+/// conventions; refused as the target declares, with the code and the
+/// start of the message alchemy's composition or the target's part gives;
+/// or written unless the target refuses it so, where the target declares
+/// that it refuses what it has no form for, naming what it met.
 enum Expect {
     Written,
     Refused(Code, String),
+    WrittenUnlessRefused(Code, String),
+}
+
+/// Whether a format is a grammar notation: one whose documents read as
+/// the grammar spec the tabnas BNF compiler emits, which each notation's
+/// render writes back.
+fn grammar_notation(format: &Format) -> bool {
+    format.part.schema.as_deref() == Some("grammar-spec")
 }
 
 /// What `from`'s document, read as `source`, into `to` is held to. A
 /// schema-only target (one that writes from a tree, with a schema and no
-/// embed: CSS, PGN, proto) refuses a tree of another schema before any
-/// output, as alchemy's composition declares; Semantic Versioning's
-/// embedding refuses a tree that is not a version, as its part declares.
-/// Every other pair is written, Markdown's table among them: it writes
-/// from records, which any tree makes.
+/// embed: C, CSS, PGN, proto and the grammar notations) refuses a tree of
+/// another schema before any output, as alchemy's composition declares; a
+/// grammar notation's render writes a grammar spec, any notation's, unless
+/// it has no form for something in it, which it refuses naming what it
+/// met, as its loss list declares (an action, a negated class in ABNF, the
+/// engine's own tokens in GBNF, ...); Semantic Versioning's embedding
+/// refuses a tree that is not a version, as its part declares. Every other
+/// pair is written, Markdown's table among them: it writes from records,
+/// which any tree makes.
 fn expect(from: &Format, to: &Format, source: &Datum) -> Expect {
     let target = &to.part;
     let foreign = target.writes == tabnas_alchemy::translate::Shape::Tree
@@ -296,6 +369,13 @@ fn expect(from: &Format, to: &Format, source: &Datum) -> Expect {
         _ if foreign && to.id() == "semver" && !semver_version(source) => Expect::Refused(
             Code::TargetValueUnrepresentable,
             "the document is not a version: ".to_string(),
+        ),
+        _ if grammar_notation(to) => Expect::WrittenUnlessRefused(
+            Code::TargetValueUnrepresentable,
+            format!(
+                "the grammar spec cannot be written as {}: ",
+                to.id().to_uppercase()
+            ),
         ),
         _ => Expect::Written,
     }
@@ -808,14 +888,14 @@ fn zon_back(d: &Datum) -> Datum {
     }
 }
 
-/// The default operators' source texts, as expr's render reads an
-/// operator: `+`, `-`, `*`, `/`, `%`, and `(` for a group.
-const EXPR_OPERATORS: [&str; 6] = ["+", "-", "*", "/", "%", "("];
-
-/// A tree with each operator reduced to its source text, as expr's shared
-/// fixtures and its render read one: a list whose first element is an
-/// object whose `src` is a default operator's source text has that text in
-/// the object's place.
+/// A tree as expr's reader reads one back (its simplified tree, the form
+/// its shared fixtures hold): a list whose first element is an object whose
+/// `src` is a string, not empty, has that string in the object's place.
+/// expr's loss list declares that for a default operator's source text,
+/// which its render writes as the operator; its reader reads every object
+/// at a list's head with a `src` so (a C syntax tree's tokens among them),
+/// which the loss list does not declare, and which the three runtimes read
+/// alike.
 fn expr_simplify(d: &Datum) -> Datum {
     match d {
         Datum::Array(items) => Datum::Array(
@@ -824,9 +904,7 @@ fn expr_simplify(d: &Datum) -> Datum {
                 .enumerate()
                 .map(|(i, item)| match (i, item) {
                     (0, Datum::Object(m)) => match m.get("src") {
-                        Some(Datum::String(src)) if EXPR_OPERATORS.contains(&&**src) => {
-                            Datum::String(src.clone())
-                        }
+                        Some(Datum::String(src)) if !src.is_empty() => Datum::String(src.clone()),
                         _ => expr_simplify(item),
                     },
                     _ => expr_simplify(item),
@@ -1328,9 +1406,66 @@ fn feed_reading(d: &Datum) -> Datum {
     Datum::Object(out.into_iter().collect())
 }
 
+/// Whether a grammar spec written in a grammar notation reads back as the
+/// notations' conventions say. A render writes the spec anew, as far as
+/// its notation can say it, and its contract is the round trip (each
+/// render's header): the text compiles back to the spec it was written
+/// from, but where its loss list says it compiles back to another (a spec
+/// whose alternatives the compiler reordered, or whose left recursion ran
+/// through another rule), and a spec compiled from another notation,
+/// which compiles back under the target's own settings (its group tag, its
+/// lexing, its spelling of the other notation's terminals and core rules)
+/// and recognises what it recognised. So a spec of the target's own
+/// notation reads back as it was, or as one the render writes again as
+/// the same text; and one of another notation reads back as a spec the
+/// render writes again as text that reads back as that spec.
+fn check_grammar(
+    from: &Format,
+    target: &Format,
+    source: &Datum,
+    written: &str,
+) -> Result<(), String> {
+    let limits = Limits::default();
+    let back = target
+        .read(written, &limits)
+        .map_err(|f| format!("the written grammar does not read back: {f}"))?;
+    if from.id() == target.id() && same(source, &back) {
+        return Ok(());
+    }
+    let again = translate_text(target, target, written, None).map_err(|f| {
+        format!(
+            "the spec it reads back as is not written again: {f}; it was written as {written:?}"
+        )
+    })?;
+    if from.id() == target.id() {
+        return if again == written {
+            Ok(())
+        } else {
+            Err(format!(
+                "reads back as another spec, which is written again as {again:?}, where \
+                 {written:?} was written"
+            ))
+        };
+    }
+    let back_again = target
+        .read(&again, &limits)
+        .map_err(|f| format!("the grammar written again does not read back: {f}"))?;
+    if same(&back, &back_again) {
+        Ok(())
+    } else {
+        Err(format!(
+            "reads back as a spec that is written again as {again:?}, which reads back as \
+             another, where {written:?} was written"
+        ))
+    }
+}
+
 /// Whether the document read back from `written` in `target` is what the
 /// target's conventions make of `source`, read as `from`.
 fn check(from: &Format, target: &Format, source: &Datum, written: &str) -> Result<(), String> {
+    if grammar_notation(target) {
+        return check_grammar(from, target, source, written);
+    }
     let limits = Limits::default();
     let id = target.id();
     // A source whose events carry the target's own schema (XML's element
@@ -1445,28 +1580,93 @@ fn depth(d: &Datum) -> usize {
 /// matrix leaves it out, and pins how few such documents there are.
 const DEPTH_BOUND: usize = 100;
 
+/// How many values a tree holds: a scalar is one, a container one more
+/// than its members hold.
+fn size(d: &Datum) -> usize {
+    match d {
+        Datum::Array(items) => 1 + items.iter().map(size).sum::<usize>(),
+        Datum::Object(members) => 1 + members.values().map(size).sum::<usize>(),
+        _ => 1,
+    }
+}
+
+/// The size of a tree every format writes in moments, in the release run.
+/// The grammar spec RFC 3986's URI grammar compiles to holds 513,409 values
+/// (its probe tables), which take seconds into JSON and minutes into an XML
+/// embedding even in release: a workload and not a shape, so the matrix
+/// leaves a document past its bound out, and pins how few such documents
+/// there are. The runs every runtime makes by default hold a tree to a
+/// tenth of this (`DEFAULT_SIZE_BOUND`).
+const SIZE_BOUND: usize = 100_000;
+
+/// The size of a tree every format writes in moments in the TypeScript
+/// command too, whose interpreter takes minutes over the 14,000 values of
+/// the grammar specs the larger GBNF examples compile to (C's, JSON's):
+/// the bound of the runs every runtime makes by default, and so of the
+/// TypeScript and Go matrices, which read the same corpora.
+const DEFAULT_SIZE_BOUND: usize = 10_000;
+
+/// What a run of the matrix is held to: at least `floor` documents, at
+/// most `too_deep` of them deeper than every format reads and `too_large`
+/// larger than `size` values, at least `refusals` pairs refused as their
+/// target declares, at least `grammars_written` grammars written in a
+/// grammar notation, and the pairs of its corpus that fail for a defect of
+/// their target's package (`defective_pairs`, `DEFECTIVE_PAIRS`).
+struct Bounds {
+    floor: usize,
+    too_deep: usize,
+    size: usize,
+    too_large: usize,
+    refusals: usize,
+    grammars_written: usize,
+    defective_pairs: &'static [(&'static str, &'static str)],
+}
+
+/// The pairs of the release run that fail for a defect of their target's
+/// package, outside this repository: by the name the matrix gives a pair,
+/// each with its defect (Go's matrix keeps the like, `divergent`). The
+/// matrix holds each to failing, so an entry cannot outlive the defect it
+/// records: one that passes, or that names no pair of the corpus, fails the
+/// test until it is deleted. Every runtime would fail them alike, the
+/// renders being the same alchemy files; only the release run reads the
+/// documents.
+const DEFECTIVE_PAIRS: [(&str, &str); 2] = [
+    (
+        "abnf/alignment-abnf-ast.tsv:28 (abnf) -> ebnf",
+        "tabnas-ebnf's render writes ABNF's bounded repetition (g = \"z\" *200\"a\") as 200 \
+         nested optional groups, which its own reader refuses past about 130 (\"grammar nests \
+         too deeply\"), where its loss list declares no such refusal: the render writes a \
+         document its reader does not read",
+    ),
+    (
+        "proto/nesting.tsv:36 (proto) -> proto",
+        "tabnas-proto's render writes an option whose value is a string holding a line feed (a \
+         backtick string over two lines, which its reader takes: option a = `x\\ny`;) as an \
+         aggregate in braces, which its reader refuses (unexpected), where a string with the line \
+         feed escaped reads back",
+    ),
+];
+
 /// The cross product of `docs` and every format: each document read with
 /// its format's grammar, written in every format, and read back under the
-/// target's conventions, or refused as the target declares. At least
-/// `floor` documents, at most `too_deep_at_most` of them deeper than every
-/// format reads, and at least `refusals_at_least` pairs refused as their
-/// target declares; a document of a format whose reader is a registered
-/// defect is left out as a source, and counted.
-fn matrix(
-    docs: Vec<(String, &'static str, String)>,
-    floor: usize,
-    too_deep_at_most: usize,
-    refusals_at_least: usize,
-) {
+/// target's conventions, or refused as the target declares, held to
+/// `bounds`; a document of a format whose reader is a registered defect is
+/// left out as a source, and counted.
+fn matrix(docs: Vec<(String, &'static str, String)>, bounds: Bounds) {
     let limits = Limits::default();
     let targets = translate::formats();
-    assert_eq!(targets.len(), 18, "the formats: {}", translate::names());
+    assert_eq!(targets.len(), 22, "the formats: {}", translate::names());
     let total = docs.len() * targets.len();
     let mut failures: Vec<String> = Vec::new();
     let mut refused_sources = Vec::new();
     let mut too_deep = Vec::new();
+    let mut too_large = Vec::new();
     let mut defective = Vec::new();
     let mut refusals: Vec<String> = Vec::new();
+    let mut grammars_written = 0;
+    let mut diverged = Vec::new();
+    let mut repaired = Vec::new();
+    let mut met = HashSet::new();
     let mut pairs = 0;
     let started = Instant::now();
     let mut reported = Instant::now();
@@ -1483,6 +1683,10 @@ fn matrix(
                 }
                 Ok(d) if depth(&d) > DEPTH_BOUND => {
                     too_deep.push(format!("{name}: {} levels", depth(&d)));
+                    None
+                }
+                Ok(d) if size(&d) > bounds.size => {
+                    too_large.push(format!("{name}: {} values", size(&d)));
                     None
                 }
                 Ok(d) => Some(d),
@@ -1506,6 +1710,17 @@ fn matrix(
                 (Expect::Refused(code, reason), Ok(written)) => Err(format!(
                     "is written, where it is declared refused ({code:?}, {reason}...): {written:?}"
                 )),
+                (Expect::WrittenUnlessRefused(code, reason), Err(f))
+                    if f.code == code && f.message.starts_with(&reason) =>
+                {
+                    refusals.push(format!("{pair}: {}", f.message));
+                    Ok(())
+                }
+                (Expect::WrittenUnlessRefused(..), Err(f)) => Err(format!("does not write: {f}")),
+                (Expect::WrittenUnlessRefused(..), Ok(written)) => {
+                    grammars_written += 1;
+                    check(from, to, source, &written)
+                }
                 (Expect::Written, Err(f)) => Err(format!("does not write: {f}")),
                 (Expect::Written, Ok(written)) => {
                     // A records source read through its lift writes its
@@ -1522,8 +1737,18 @@ fn matrix(
                     }
                 }
             };
-            if let Err(why) = outcome {
-                failures.push(format!("{pair}: {why}"));
+            let known = bounds
+                .defective_pairs
+                .iter()
+                .find(|(name, _)| *name == pair);
+            if let Some((name, _)) = known {
+                met.insert(*name);
+            }
+            match (outcome, known) {
+                (Err(why), Some(_)) => diverged.push(format!("{pair}: {why}")),
+                (Err(why), None) => failures.push(format!("{pair}: {why}")),
+                (Ok(()), Some(_)) => repaired.push(pair),
+                (Ok(()), None) => {}
             }
         }
         if (n + 1) % 25 == 0 || n + 1 == docs.len() || reported.elapsed().as_secs() >= 20 {
@@ -1544,6 +1769,12 @@ fn matrix(
     for line in &too_deep {
         eprintln!("deeper than every format reads: {line}");
     }
+    for line in &too_large {
+        eprintln!("larger than {} values: {line}", bounds.size);
+    }
+    for line in &diverged {
+        eprintln!("defective, as registered: {line}");
+    }
     for line in &failures {
         eprintln!("FAIL {line}");
     }
@@ -1551,33 +1782,65 @@ fn matrix(
         .iter()
         .filter(|r| r.contains("schema_only:"))
         .count();
+    let unwritable = refusals
+        .iter()
+        .filter(|r| r.contains(": the grammar spec cannot be written as "))
+        .count();
     eprintln!(
         "matrix: {pairs} pairs of {} documents; {} refused by their own reader, {} too deep, \
-         {} left out for a registered reader defect; {} pairs refused as their target declares \
-         ({schema_only} by a schema-only target, {} by Semantic Versioning's embedding)",
+         {} too large, {} left out for a registered reader defect, {} defective as registered; {} \
+         pairs refused as their target declares \
+         ({schema_only} by a schema-only target, {unwritable} by a grammar notation's render, \
+         {} by Semantic Versioning's embedding); {grammars_written} grammars written in a \
+         grammar notation",
         docs.len(),
         refused_sources.len(),
         too_deep.len(),
+        too_large.len(),
         defective.len(),
+        diverged.len(),
         refusals.len(),
-        refusals.len() - schema_only,
+        refusals.len() - schema_only - unwritable,
     );
+    let left_out = refused_sources.len() + too_deep.len() + too_large.len() + defective.len();
     assert!(
-        pairs + (refused_sources.len() + too_deep.len() + defective.len()) * targets.len() == total
-            && docs.len() >= floor,
+        pairs + left_out * targets.len() == total && docs.len() >= bounds.floor,
         "the corpora shrank: {} documents",
         docs.len()
     );
     assert!(
-        too_deep.len() <= too_deep_at_most,
+        too_deep.len() <= bounds.too_deep,
         "{} documents are deeper than every format reads (above)",
         too_deep.len()
     );
     assert!(
-        refusals.len() >= refusals_at_least,
-        "{} pairs are refused as their target declares, fewer than the {refusals_at_least} the \
+        too_large.len() <= bounds.too_large,
+        "{} documents hold more than {} values (above)",
+        too_large.len(),
+        bounds.size
+    );
+    assert!(
+        refusals.len() >= bounds.refusals,
+        "{} pairs are refused as their target declares, fewer than the {} the corpora give",
+        refusals.len(),
+        bounds.refusals
+    );
+    for (name, defect) in bounds.defective_pairs {
+        assert!(
+            met.contains(name),
+            "the registered defective pair {name:?} is no pair of the corpus: delete its entry ({defect})"
+        );
+    }
+    assert!(
+        repaired.is_empty(),
+        "the registered defective pairs {repaired:?} translate as the conventions say: delete their \
+         entries"
+    );
+    assert!(
+        grammars_written >= bounds.grammars_written,
+        "{grammars_written} grammars are written in a grammar notation, fewer than the {} the \
          corpora give",
-        refusals.len()
+        bounds.grammars_written
     );
     assert!(
         failures.is_empty(),
@@ -1586,22 +1849,56 @@ fn matrix(
     );
 }
 
+/// Run `work` on a thread of the stack the command runs every command on
+/// (`tabnas_alchemy::STACK_BYTES`), which the evaluator's bounds are
+/// promised: a grammar notation's render is an alchemy program that
+/// recurses deeper than a test thread's own stack holds.
+fn on_stack<T: Send>(work: impl FnOnce() -> T + Send) -> T {
+    std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .stack_size(tabnas_alchemy::STACK_BYTES)
+            .spawn_scoped(scope, work)
+            .unwrap()
+            .join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+    })
+}
+
 /// transduce's fixtures, one document per format at least, and the
 /// documents of JSONTestSuite every JSON parser must accept.
 #[test]
 fn every_document_translates_into_every_format() {
-    matrix(corpus(), 132, 0, 500);
+    let bounds = Bounds {
+        floor: 132,
+        too_deep: 0,
+        size: DEFAULT_SIZE_BOUND,
+        too_large: 0,
+        refusals: 1000,
+        grammars_written: 0,
+        defective_pairs: &[],
+    };
+    on_stack(|| matrix(corpus(), bounds));
 }
 
-/// Every format's own fixture corpus, into every format: thousands of
-/// documents, run in release by `ci/rust/run.sh` (`--ignored`), where it
-/// takes minutes rather than the hour a debug build would.
+/// Every format's own fixture corpus, and the grammar notations' example
+/// grammars, into every format: thousands of documents, run in release by
+/// `ci/rust/run.sh` (`--ignored`), where it takes minutes rather than the
+/// hours a debug build would.
 #[test]
 #[ignore = "the cross product of every format's fixtures: ci/rust/run.sh runs it in release"]
 fn every_fixture_of_every_format_translates_into_every_format() {
     let mut docs = Vec::new();
     spec_corpus(&mut docs);
-    matrix(docs, 3868, 1, 13671);
+    let bounds = Bounds {
+        floor: 3994,
+        too_deep: 2,
+        size: SIZE_BOUND,
+        too_large: 1,
+        refusals: 29828,
+        grammars_written: 133,
+        defective_pairs: &DEFECTIVE_PAIRS,
+    };
+    on_stack(|| matrix(docs, bounds));
 }
 
 /// A request from `from` to `to`, with no path and no program.

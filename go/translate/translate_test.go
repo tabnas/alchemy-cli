@@ -14,17 +14,22 @@ package translate_test
 // A pair whose target declares that it refuses the document is held to
 // that refusal, its code and the start of its message, and counted: a
 // schema-only target (one that writes a schema's tree with no embedding
-// into it: CSS, PGN, proto) refuses another format's tree, and Semantic
+// into it: C, CSS, PGN, proto and the grammar notations ABNF, EBNF and
+// GBNF) refuses another format's tree, a grammar notation refuses a
+// grammar spec it has no form for, naming what it met, and Semantic
 // Versioning's embedding refuses a tree that is not a version. A refusal of
 // another kind, or a document written where a refusal is declared, is a
-// failure.
+// failure. The grammar notations share a schema, the grammar spec their
+// compilers emit, so each writes the others' documents.
 //
 // The corpora are the sibling checkouts': transduce's fixtures (aless's: a
-// document of every format but CSS, expressions, PGN, proto and Semantic
-// Versioning, and more for YAML and ZON) and the documents of JSONTestSuite
-// every JSON parser must accept (jsonc's conformance pins). A fixture its
-// own grammar refuses is no document, and is counted as one refused; so is
-// a document of a format whose reader is a registered defect
+// document of every format but C, CSS, expressions, PGN, proto, Semantic
+// Versioning and the grammar notations, and more for YAML and ZON), the
+// documents of JSONTestSuite every JSON parser must accept (jsonc's
+// conformance pins), and the example grammars of the grammar notations'
+// repositories, which the Rust suite reads in its release run. A fixture
+// its own grammar refuses is no document, and is counted as one refused;
+// so is a document of a format whose reader is a registered defect
 // (readerDefects), counted apart. The Rust suite's cross product of every
 // format's own fixture corpus, which it runs in release, stays Rust's.
 
@@ -71,6 +76,10 @@ func formatOf(extension string) string {
 		return "markdown"
 	case "rss", "atom":
 		return "feed"
+	case "c", "h":
+		return "c"
+	case "abnf", "ebnf", "gbnf":
+		return extension
 	}
 	return ""
 }
@@ -91,14 +100,28 @@ type document struct {
 	name, format, text string
 }
 
-// corpus is every document of the corpora.
+// notationExamples is the grammar notations' example grammars: each
+// notation's directory, below its repository's checkout.
+var notationExamples = []struct{ id, dir string }{
+	{"abnf", filepath.Join("abnf", "ts", "test", "grammar")},
+	{"ebnf", filepath.Join("ebnf", "ts", "test", "grammar")},
+	{"gbnf", filepath.Join("gbnf", "test", "corpus")},
+}
+
+// corpus is every document of the corpora. A corpus may be held to the
+// files whose names start with a prefix, or to those of one format (a
+// grammar notation's examples sit beside a README).
 func corpus(t testing.TB) []document {
 	t.Helper()
 	var docs []document
-	for _, c := range []struct{ corpus, dir, prefix string }{
-		{"transduce", filepath.Join(siblings(t), "transduce", "rs", "tests", "fixtures"), ""},
-		{"JSONTestSuite", filepath.Join(siblings(t), "jsonc", "test", "JSONTestSuite", "test_parsing"), "y_"},
-	} {
+	corpora := []struct{ corpus, dir, prefix, only string }{
+		{"transduce", filepath.Join(siblings(t), "transduce", "rs", "tests", "fixtures"), "", ""},
+		{"JSONTestSuite", filepath.Join(siblings(t), "jsonc", "test", "JSONTestSuite", "test_parsing"), "y_", ""},
+	}
+	for _, n := range notationExamples {
+		corpora = append(corpora, struct{ corpus, dir, prefix, only string }{n.id, filepath.Join(siblings(t), n.dir), "", n.id})
+	}
+	for _, c := range corpora {
 		entries, err := os.ReadDir(c.dir)
 		if err != nil {
 			t.Fatalf("%s: cannot read %s: %v", c.corpus, c.dir, err)
@@ -109,7 +132,7 @@ func corpus(t testing.TB) []document {
 				continue
 			}
 			id := formatOf(extension(name))
-			if id == "" {
+			if id == "" || (c.only != "" && c.only != id) {
 				continue
 			}
 			data, err := os.ReadFile(filepath.Join(c.dir, name))
@@ -189,6 +212,11 @@ var readerDefects = map[string]string{
 		"writes as its fmt text, so 99999999999999999999.1.2 is refused by its own render; the Rust reader " +
 		"keeps the digits, as the format's render takes them (its part's alchemy/render.alc). The format " +
 		"is left out whole while it is registered",
+	"gbnf": "tabnasgbnf's parser marks a string literal CaseSensitive without HasCaseSens, which tabnas-bnf's " +
+		"Go compiler needs both of to emit a fixed token, so a GBNF literal compiles as a case-folding match " +
+		"token (root ::= \"b\" accepts B, its token @~/^b/i), where the TypeScript and Rust compilers emit " +
+		"the fixed token \"b\" GBNF's case-sensitive literal is. The format is left out whole while it is " +
+		"registered",
 }
 
 // registeredDefect is whether documents of id are left out as sources for a
@@ -211,6 +239,12 @@ func TestARegisteredReaderDefectStillStands(t *testing.T) {
 			if f == nil && back == example {
 				t.Errorf("%s now keeps a version past 2^53 - 1: delete its entry (%s)", id, defect)
 			}
+		case "gbnf":
+			tree, f := translateText(format(t, id), format(t, "json"), "root ::= \"b\"\n", nil)
+			if f != nil || !strings.Contains(tree, `"match":{"token":{"#B":"@~/^b/i"}`) {
+				t.Errorf("%s now reads a literal otherwise than as a case-folding token (%s, %v): delete its entry (%s)",
+					id, tree, f, defect)
+			}
 		default:
 			t.Fatalf("%s: a registered defect needs an example here", id)
 		}
@@ -222,33 +256,43 @@ func TestARegisteredReaderDefectStillStands(t *testing.T) {
 // translation from one writes them so: each id with an example document
 // and its JSON as this command writes it. A plain map keeps no order, and
 // transduce's walker gives its members in sorted key order (semver's
-// version, css's nodes, an expression's objects, which expr's Simplify
-// makes plain maps, and a PGN game's tags); a module's typed value is
-// written in its fields' order, where the Rust and TypeScript readers keep
-// the document's (a feed) or the descriptor's own (proto, in TypeScript's
-// order; the Rust reader of proto is a registered defect). The values are
-// the same, and the matrix, comparing values, cannot see the order;
-// TestAReadersMemberOrderIsPinned holds each entry to its example.
+// version, css's nodes, a C syntax tree's nodes, and a PGN game's tags); a
+// module's typed value is written in its fields' order, where the Rust and
+// TypeScript readers keep the document's (a feed); and tabnas-bnf's Go
+// serializer writes a grammar spec's members in name order, its match
+// tokens' order in a list of its own (options.match.tokenOrder), where
+// the TypeScript and Rust compilers write them in the order they emit them
+// (ABNF's and EBNF's spec; GBNF's reader is a registered defect).
+// Otherwise the values are the same, and the matrix, comparing values,
+// cannot see the order; TestAReadersMemberOrderIsPinned holds each entry
+// to its example.
 var orderDivergent = map[string][2]string{
 	"semver": {"1.2.3-rc.1", `{"build":[],"major":1,"minor":2,"patch":3,"prerelease":["rc",1]}`},
 	"css": {"a{color:red}", `{"rules":[{"declarations":[{"property":"color","type":"declaration","value":"red"}],` +
 		`"selectors":["a"],"type":"rule"}],"type":"stylesheet"}`},
-	"expr": {"b:1,a:2", `{"a":2,"b":1}`},
 	"pgn": {"[White \"W\"]\n[Black \"B\"]\n\n1. e4 1-0\n",
 		`[{"tags":{"Black":"B","White":"W"},"moves":[{"san":"e4","piece":"P","to":"e4","number":1,"side":"w"}],"result":"1-0"}]`},
 	"feed": {`<feed xmlns="http://www.w3.org/2005/Atom"><title>T</title><entry><title>A</title></entry></feed>`,
 		`{"format":"atom","version":"1.0","title":{"type":"text","value":"T"},"entries":[{"title":{"type":"text","value":"A"}}]}`},
-	"proto": {"syntax = \"proto3\";\noption java_package = \"x\";\n",
-		`{"dependency":[],"publicDependency":[],"weakDependency":[],"messageType":[],"enumType":[],"service":[],` +
-			`"extension":[],"options":{"java_package":"x"},"syntax":"proto3"}`},
+	"c": {"// c\n", `{"children":[],"kind":"translation_unit","span":{"col":1,"end":0,"line":1,"start":0},` +
+		`"trivia":{"leading":[],"trailing":[]}}`},
+	"abnf": {"top = \"b\"\n", `{"options":{"fixed":{"token":{}},"match":{"token":{"#B":"@~/^b/i"},"tokenOrder":["#B"]},` +
+		`"rule":{"start":"__start__"},"lex":{"empty":false}},"rule":{"__start__":{"open":[{"p":"top","g":"abnf"}],` +
+		`"close":[{"s":"#ZZ","a":"@bubble$","g":"abnf,end"}]},"top":{"open":[{"s":"#B","a":"@node$","k":{"node$":` +
+		`{"rule":"top","init":true,"kind":"user","nterms":1}},"g":"abnf"}]}},"v":5,"meta":{"provenance":{"__start__":"top"}}}`},
+	"ebnf": {"top ::= \"b\"\n", `{"options":{"fixed":{"token":{"#B":"b"}},"rule":{"start":"__start__"},"lex":{"empty":false}},` +
+		`"rule":{"__start__":{"open":[{"p":"top","g":"ebnf"}],"close":[{"s":"#ZZ","a":"@bubble$","g":"ebnf,end"}]},` +
+		`"top":{"open":[{"s":"#B","a":"@node$","k":{"node$":{"rule":"top","init":true,"kind":"user","nterms":1}},` +
+		`"g":"ebnf"}]}},"v":5,"meta":{"provenance":{"__start__":"top"}}}`},
 }
 
 // TestAReadersMemberOrderIsPinned holds each orderDivergent entry to its
 // example. The Rust and TypeScript commands write semver's example as
 // {"major":1,"minor":2,"patch":3,"prerelease":["rc",1],"build":[]}, css's
-// with each node's type first, expr's as {"b":1,"a":2}, the game's tags as
+// and C's with each node's kind or type first, the game's tags as
 // {"White":"W","Black":"B"}, the feed with its entries before its title,
-// and (TypeScript) the descriptor with its syntax before its options.
+// and a grammar spec with its rules in the grammar's order (top before the
+// start wrapper), each alternate's group tag first, and no tokenOrder.
 func TestAReadersMemberOrderIsPinned(t *testing.T) {
 	for id, c := range orderDivergent {
 		got, f := translateText(format(t, id), format(t, "json"), c[0], nil)
@@ -258,27 +302,64 @@ func TestAReadersMemberOrderIsPinned(t *testing.T) {
 	}
 }
 
+// A grammar spec as Go's serializer writes it has lost the order of its
+// rules, which ranks its match tokens (the order the lexer tries two tokens
+// a place expects), so each grammar notation's render refuses a spec Go
+// reads whose tokenOrder holds two tokens or more, as its loss list
+// declares, and writes the others with their rules in name order, the
+// start rule first: an ABNF grammar of two case-folding literals the Rust
+// and TypeScript commands write back as it was is refused here. This fails
+// once tabnas-bnf's Go serializer keeps the order the compiler emits, and
+// is then deleted.
+func TestAGrammarSpecGoSerializesHasLostItsRulesOrder(t *testing.T) {
+	_, f := translateText(format(t, "abnf"), format(t, "abnf"), "top = \"a\" \"b\"\n", nil)
+	if f == nil || f.Code != tt.CodeTargetValueUnrepresentable ||
+		!strings.HasPrefix(f.Message, "the grammar spec cannot be written as ABNF: it gives its match tokens' order as a "+
+			"list of its own (tokenOrder, Go's serialization") {
+		t.Errorf("Go's grammar spec now ranks its tokens (%v): delete this test", f)
+	}
+	written, f := translateText(format(t, "ebnf"), format(t, "ebnf"), "top ::= b c\nc ::= \"c\"\nb ::= \"b\"\n", nil)
+	if f != nil || written != "top ::= b c\nb ::= \"b\"\nc ::= \"c\"\n" {
+		t.Errorf("Go's grammar spec now keeps its rules' order (%q, %v): delete this test", written, f)
+	}
+}
+
 // ---------------------------------------------------------------------
 // The refusals the targets declare
 // ---------------------------------------------------------------------
 
 // expectation is what a pair is held to: written, and read back under the
-// target's conventions; or refused as the target declares, with the code
-// and the start of the message alchemy's composition or the target's part
-// gives.
+// target's conventions; refused as the target declares, with the code and
+// the start of the message alchemy's composition or the target's part
+// gives; or written unless the target refuses it so (unless), where the
+// target declares that it refuses what it has no form for, naming what it
+// met.
 type expectation struct {
 	written bool
+	unless  bool
 	code    tt.Code
 	reason  string
 }
 
+// grammarNotation is whether a format is a grammar notation: one whose
+// documents read as the grammar spec the tabnas BNF compiler emits, which
+// each notation's render writes back.
+func grammarNotation(f *translate.Format) bool {
+	return f.Part.Schema == "grammar-spec"
+}
+
 // expect is what from's document, read as source, into to is held to. A
 // schema-only target (one that writes from a tree, with a schema and no
-// embed: CSS, PGN, proto) refuses a tree of another schema before any
-// output, as alchemy's composition declares; Semantic Versioning's
-// embedding refuses a tree that is not a version, as its part declares.
-// Every other pair is written, Markdown's table among them: it writes from
-// records, which any tree makes.
+// embed: C, CSS, PGN, proto and the grammar notations) refuses a tree of
+// another schema before any output, as alchemy's composition declares; a
+// grammar notation's render writes a grammar spec, any notation's, unless
+// it has no form for something in it, which it refuses naming what it met,
+// as its loss list declares (an action, a negated class in ABNF, the
+// engine's own tokens in GBNF, a spec Go serialized with two match tokens
+// or more, ...); Semantic Versioning's embedding refuses a tree that is
+// not a version, as its part declares. Every other pair is written,
+// Markdown's table among them: it writes from records, which any tree
+// makes.
 func expect(from, to *translate.Format, source *tt.Datum) expectation {
 	target := to.Part
 	foreign := target.Writes == at.ShapeTree && target.Schema != "" && from.Part.Schema != target.Schema
@@ -288,6 +369,9 @@ func expect(from, to *translate.Format, source *tt.Datum) expectation {
 			reason: "schema_only: " + target.ID + " writes a " + target.Schema + " tree, "}
 	case foreign && to.ID() == "semver" && !semverVersion(source):
 		return expectation{code: tt.CodeTargetValueUnrepresentable, reason: "the document is not a version: "}
+	case grammarNotation(to):
+		return expectation{written: true, unless: true, code: tt.CodeTargetValueUnrepresentable,
+			reason: "the grammar spec cannot be written as " + strings.ToUpper(to.ID()) + ": "}
 	}
 	return expectation{written: true}
 }
@@ -953,21 +1037,21 @@ func zonBack(d tt.Datum) tt.Datum {
 	return d
 }
 
-// exprOperators is the default operators' source texts, as expr's render
-// reads an operator: +, -, *, /, %, and ( for a group.
-var exprOperators = map[string]bool{"+": true, "-": true, "*": true, "/": true, "%": true, "(": true}
-
-// exprSimplify is a tree with each operator reduced to its source text, as
-// expr's shared fixtures and its render read one: a list whose first
-// element is an object whose src is a default operator's source text has
-// that text in the object's place.
+// exprSimplify is a tree as expr's reader reads one back (its simplified
+// tree, the form its shared fixtures hold): a list whose first element is
+// an object whose src is a string, not empty, has that string in the
+// object's place. expr's loss list declares that for a default operator's
+// source text, which its render writes as the operator; its reader reads
+// every object at a list's head with a src so (a C syntax tree's tokens
+// among them), which the loss list does not declare, and which the three
+// runtimes read alike.
 func exprSimplify(d tt.Datum) tt.Datum {
 	switch d.Kind {
 	case tt.DatumArray:
 		items := make([]tt.Datum, len(d.Items))
 		for i, item := range d.Items {
 			if i == 0 && item.Kind == tt.DatumObject {
-				if src, ok := item.Get("src"); ok && src.Kind == tt.DatumString && exprOperators[src.Text] {
+				if src, ok := item.Get("src"); ok && src.Kind == tt.DatumString && src.Text != "" {
 					items[i] = tt.StringDatum(src.Text)
 					continue
 				}
@@ -1511,7 +1595,53 @@ func feedReading(d tt.Datum) tt.Datum {
 
 // check is whether the document read back from written in target is what
 // the target's conventions make of source, read as from.
+// checkGrammar is whether a grammar spec written in a grammar notation
+// reads back as the notations' conventions say. A render writes the spec
+// anew, as far as its notation can say it, and its contract is the round
+// trip (each render's header): the text compiles back to the spec it was
+// written from, but where its loss list says it compiles back to another
+// (a spec whose alternatives the compiler reordered, or whose left
+// recursion ran through another rule), and a spec compiled from another
+// notation, which compiles back under the target's own settings (its group
+// tag, its lexing, its spelling of the other notation's terminals and core
+// rules) and recognises what it recognised. So a spec of the target's own
+// notation reads back as it was, or as one the render writes again as the
+// same text; and one of another notation reads back as a spec the render
+// writes again as text that reads back as that spec.
+func checkGrammar(from, target *translate.Format, source tt.Datum, written string) error {
+	limits := tt.DefaultLimits()
+	back, f := target.Read(written, limits)
+	if f != nil {
+		return fmt.Errorf("the written grammar does not read back: %v", f)
+	}
+	if from.ID() == target.ID() && same(&source, &back) {
+		return nil
+	}
+	again, f := translateText(target, target, written, nil)
+	if f != nil {
+		return fmt.Errorf("the spec it reads back as is not written again: %v; it was written as %q", f, written)
+	}
+	if from.ID() == target.ID() {
+		if again == written {
+			return nil
+		}
+		return fmt.Errorf("reads back as another spec, which is written again as %q, where %q was written", again, written)
+	}
+	backAgain, f := target.Read(again, limits)
+	if f != nil {
+		return fmt.Errorf("the grammar written again does not read back: %v", f)
+	}
+	if same(&back, &backAgain) {
+		return nil
+	}
+	return fmt.Errorf("reads back as a spec that is written again as %q, which reads back as another, where %q was "+
+		"written", again, written)
+}
+
 func check(t testing.TB, from, target *translate.Format, source tt.Datum, written string) error {
+	if grammarNotation(target) {
+		return checkGrammar(from, target, source, written)
+	}
 	limits := tt.DefaultLimits()
 	id := target.ID()
 	// A source whose events carry the target's own schema (XML's element
@@ -1635,6 +1765,38 @@ func depth(d *tt.Datum) int {
 // matrix leaves it out, and pins how few such documents there are.
 const depthBound = 100
 
+// size is how many values a tree holds: a scalar is one, a container one
+// more than its members hold.
+func size(d *tt.Datum) int {
+	n := 1
+	for i := range d.Items {
+		n += size(&d.Items[i])
+	}
+	for i := range d.Members {
+		n += size(&d.Members[i].Value)
+	}
+	return n
+}
+
+// sizeBound is the size of a tree every format writes in moments. The
+// grammar spec RFC 3986's URI grammar compiles to holds 513,409 values (its
+// probe tables), which take seconds into JSON and minutes into an XML
+// embedding, and the TypeScript command's interpreter takes minutes over
+// the 14,000 values the larger GBNF examples compile to (C's, JSON's): a
+// workload and not a shape, so the matrix leaves a document past this out,
+// as the TypeScript one does, and pins how few such documents there are
+// (the Rust suite's release run, faster, reads trees ten times this size).
+const sizeBound = 10_000
+
+// bounds is what a run of the matrix is held to: at least floor
+// documents, at most tooDeep of them deeper than every format reads and
+// tooLarge larger than every format writes in moments, at least refusals
+// pairs refused as their target declares, and at least grammarsWritten
+// grammars written in a grammar notation.
+type bounds struct {
+	floor, tooDeep, tooLarge, refusals, grammarsWritten int
+}
+
 // divergent is the pairs that fail in this runtime, and not in Rust's, for
 // a defect outside this repository: by the name the matrix gives a pair,
 // each with its defect. The matrix holds each to failing, so an entry
@@ -1644,21 +1806,19 @@ var divergent = map[string]string{}
 
 // matrix is the cross product of docs and every format: each document read
 // with its format's grammar, written in every format, and read back under
-// the target's conventions, or refused as the target declares. At least
-// floor documents, at most tooDeepAtMost of them deeper than every format
-// reads, and at least refusalsAtLeast pairs refused as their target
-// declares; a document of a format whose reader is a registered defect is
-// left out as a source, and counted.
-func matrix(t *testing.T, docs []document, floor, tooDeepAtMost, refusalsAtLeast int) {
+// the target's conventions, or refused as the target declares, held to b;
+// a document of a format whose reader is a registered defect is left out
+// as a source, and counted.
+func matrix(t *testing.T, docs []document, b bounds) {
 	limits := tt.DefaultLimits()
 	targets := translate.Formats()
-	if len(targets) != 18 {
+	if len(targets) != 22 {
 		t.Fatalf("the formats: %s", translate.Names())
 	}
 	total := len(docs) * len(targets)
-	var failures, refusedSources, tooDeep, defective, refusals, diverged, repaired []string
+	var failures, refusedSources, tooDeep, tooLarge, defective, refusals, diverged, repaired []string
 	met := map[string]bool{}
-	pairs := 0
+	pairs, grammarsWritten := 0, 0
 	started := time.Now()
 	reported := time.Now()
 	for n, doc := range docs {
@@ -1671,6 +1831,8 @@ func matrix(t *testing.T, docs []document, floor, tooDeepAtMost, refusalsAtLeast
 			refusedSources = append(refusedSources, fmt.Sprintf("%s: %v", doc.name, f))
 		} else if d := depth(&value); d > depthBound {
 			tooDeep = append(tooDeep, fmt.Sprintf("%s: %d levels", doc.name, d))
+		} else if n := size(&value); n > sizeBound {
+			tooLarge = append(tooLarge, fmt.Sprintf("%s: %d values", doc.name, n))
 		} else {
 			source, read = value, true
 		}
@@ -1690,6 +1852,8 @@ func matrix(t *testing.T, docs []document, floor, tooDeepAtMost, refusalsAtLeast
 				why = fmt.Errorf("is refused otherwise than declared (%s, %s...): %v", held.code, held.reason, f)
 			case !held.written:
 				refusals = append(refusals, name+": "+held.reason)
+			case f != nil && held.unless && f.Code == held.code && strings.HasPrefix(f.Message, held.reason):
+				refusals = append(refusals, name+": "+f.Message)
 			case f != nil:
 				why = fmt.Errorf("does not write: %v", f)
 			// A records source read through its lift writes its table, not
@@ -1699,6 +1863,9 @@ func matrix(t *testing.T, docs []document, floor, tooDeepAtMost, refusalsAtLeast
 					why = fmt.Errorf("the written document does not read back: %v", f)
 				}
 			default:
+				if held.unless {
+					grammarsWritten++
+				}
 				why = check(t, from, to, source, written)
 			}
 			_, known := divergent[name]
@@ -1726,31 +1893,49 @@ func matrix(t *testing.T, docs []document, floor, tooDeepAtMost, refusalsAtLeast
 	for _, line := range tooDeep {
 		t.Logf("deeper than every format reads: %s", line)
 	}
+	for _, line := range tooLarge {
+		t.Logf("larger than %d values: %s", sizeBound, line)
+	}
 	for _, line := range diverged {
 		t.Logf("divergent, as registered: %s", line)
 	}
 	for _, line := range failures {
 		t.Logf("FAIL %s", line)
 	}
-	schemaOnly := 0
+	schemaOnly, unwritable, unranked := 0, 0, 0
 	for _, r := range refusals {
-		if strings.Contains(r, "schema_only:") {
+		switch {
+		case strings.Contains(r, "schema_only:"):
 			schemaOnly++
+		case strings.Contains(r, ": the grammar spec cannot be written as "):
+			unwritable++
+			if strings.Contains(r, "(tokenOrder, Go's serialization") {
+				unranked++
+			}
 		}
 	}
-	t.Logf("matrix: %d pairs of %d documents; %d refused by their own reader, %d too deep, %d left out for a registered "+
-		"reader defect, %d divergent as registered; %d pairs refused as their target declares (%d by a schema-only "+
-		"target, %d by Semantic Versioning's embedding)",
-		pairs, len(docs), len(refusedSources), len(tooDeep), len(defective), len(diverged), len(refusals), schemaOnly,
-		len(refusals)-schemaOnly)
-	if pairs+(len(refusedSources)+len(tooDeep)+len(defective))*len(targets) != total || len(docs) < floor {
+	t.Logf("matrix: %d pairs of %d documents; %d refused by their own reader, %d too deep, %d too large, %d left out "+
+		"for a registered reader defect, %d divergent as registered; %d pairs refused as their target declares (%d by a "+
+		"schema-only target, %d by a grammar notation's render, %d of them for the order Go's serialization loses, %d by "+
+		"Semantic Versioning's embedding); %d grammars written in a grammar notation",
+		pairs, len(docs), len(refusedSources), len(tooDeep), len(tooLarge), len(defective), len(diverged), len(refusals),
+		schemaOnly, unwritable, unranked, len(refusals)-schemaOnly-unwritable, grammarsWritten)
+	leftOut := len(refusedSources) + len(tooDeep) + len(tooLarge) + len(defective)
+	if pairs+leftOut*len(targets) != total || len(docs) < b.floor {
 		t.Fatalf("the corpora shrank: %d documents", len(docs))
 	}
-	if len(tooDeep) > tooDeepAtMost {
+	if len(tooDeep) > b.tooDeep {
 		t.Fatalf("%d documents are deeper than every format reads (above)", len(tooDeep))
 	}
-	if len(refusals) < refusalsAtLeast {
-		t.Fatalf("%d pairs are refused as their target declares, fewer than the %d the corpora give", len(refusals), refusalsAtLeast)
+	if len(tooLarge) > b.tooLarge {
+		t.Fatalf("%d documents hold more than %d values (above)", len(tooLarge), sizeBound)
+	}
+	if len(refusals) < b.refusals {
+		t.Fatalf("%d pairs are refused as their target declares, fewer than the %d the corpora give", len(refusals), b.refusals)
+	}
+	if grammarsWritten < b.grammarsWritten {
+		t.Fatalf("%d grammars are written in a grammar notation, fewer than the %d the corpora give", grammarsWritten,
+			b.grammarsWritten)
 	}
 	for name := range divergent {
 		if !met[name] {
@@ -1794,10 +1979,11 @@ func TestParsePathReadsKeysAndIndexes(t *testing.T) {
 }
 
 // TestEveryDocumentTranslatesIntoEveryFormat is transduce's fixtures, one
-// document per format at least, and the documents of JSONTestSuite every
-// JSON parser must accept, into every format.
+// document per format at least, the documents of JSONTestSuite every JSON
+// parser must accept, and the grammar notations' example grammars, into
+// every format.
 func TestEveryDocumentTranslatesIntoEveryFormat(t *testing.T) {
-	matrix(t, corpus(t), 132, 0, 500)
+	matrix(t, corpus(t), bounds{floor: 151, tooDeep: 0, tooLarge: 1, refusals: 1066, grammarsWritten: 14})
 }
 
 // request is a request from from to to, with no path and no program.

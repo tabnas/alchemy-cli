@@ -445,10 +445,14 @@ describe('cli', () => {
 describe('cli translate', () => {
   const PEOPLE = '{"people":[{"name":"Ann","age":31.50},{"name":"Bo","age":7}],"n":null}'
   const IDS = [
+    'abnf',
+    'c',
     'css',
     'csv',
+    'ebnf',
     'expr',
     'feed',
+    'gbnf',
     'ini',
     'json',
     'json5',
@@ -518,7 +522,13 @@ describe('cli translate', () => {
     // schema-only: the composition refuses any other format's tree for them.
     assert.deepStrictEqual(
       formats.filter((f: any) => null !== f.schema && 'tree' === f.writes && null === f.embed).map((f: any) => f.id),
-      ['css', 'pgn', 'proto'],
+      ['abnf', 'c', 'css', 'ebnf', 'gbnf', 'pgn', 'proto'],
+    )
+    // The grammar notations share a schema, the grammar spec their
+    // compilers emit, so each writes the others' documents.
+    assert.deepStrictEqual(
+      ['abnf', 'ebnf', 'gbnf', 'c'].map((id) => byId(id).schema),
+      ['grammar-spec', 'grammar-spec', 'grammar-spec', 'c'],
     )
     assert.deepStrictEqual(
       [byId('pgn').schema, byId('semver').embed, byId('feed').embed, byId('expr').embed],
@@ -663,19 +673,14 @@ describe('cli translate', () => {
     assert.deepStrictEqual([fail.row, fail.col], [1, 21])
   })
 
-  // What a target declares it cannot carry it refuses before writing
-  // anything, status 1: a schema-only target refuses another format's tree
-  // when the route is composed, before the input is read, and Semantic
-  // Versioning's embedding refuses a tree that is not a version. Each takes
-  // its own format's documents, and a program that makes its tree.
   // What a package's own parse checks before its rules run, the command
-  // checks too: a JSON5 document holding no value is refused with json5's
-  // own codes, not the engine's unexpected, status 1, as the Rust and Go
-  // commands refuse it (json5's TypeScript error carries no position, theirs
-  // 1:1). proto's TypeScript package has no cap to check: a .proto file
-  // nested past the cap proto's Rust reader holds documents to (100) is
-  // translated, and one nested 300 deep is refused with a structured
-  // failure, the depth limit transduce holds a walk to, not a crash.
+  // checks too, status 1, writing nothing: a JSON5 document holding no
+  // value is refused with json5's own codes, not the engine's unexpected, as
+  // the Rust and Go commands refuse it (json5's TypeScript error carries no
+  // position, theirs 1:1); a .proto file nesting past proto's cap is refused
+  // before the engine runs (its parse's preflight); and a grammar
+  // notation's document its compiler refuses is refused with the compiler's
+  // message.
   it('translate checks what a package checks before its parse', () => {
     for (const [input, code] of [
       ['', 'json5_empty'],
@@ -696,17 +701,30 @@ describe('cli translate', () => {
     const deep = (n: number): string =>
       'syntax = "proto3";\n' + 'message M {'.repeat(n) + '}'.repeat(n) + '\n'
     out = alchemy(['translate', '--from', 'proto', '--to', 'json', '-'], deep(101))
-    assert.equal(out.status, 0, out.stderr)
-    out = alchemy(['translate', '--from', 'proto', '--to', 'json', '-'], deep(300))
-    assert.equal(out.status, 5, out.stderr)
+    assert.equal(out.status, 1, out.stderr)
     assert.equal(out.stdout, '')
     assert.deepStrictEqual(failJson(out), {
-      code: 'RESOURCE_LIMIT_EXCEEDED',
-      message: 'a container is nested deeper than 256',
-      limit: { name: 'max_depth', value: 256 },
+      code: 'INPUT_INVALID',
+      message: 'proto: document nests 101 levels deep, past the 100 this parser accepts',
+      output: 'none',
+    })
+    out = alchemy(['translate', '--from', 'abnf', '--to', 'json', '-'], 'a = "b" c\n')
+    assert.equal(out.status, 1, out.stderr)
+    assert.equal(out.stdout, '')
+    assert.deepStrictEqual(failJson(out), {
+      code: 'INPUT_INVALID',
+      message: "abnf: rule 'a' references unknown rule 'c'",
       output: 'none',
     })
   })
+
+  // What a target declares it cannot carry it refuses before writing
+  // anything, status 1: a schema-only target refuses another format's tree
+  // when the route is composed, before the input is read, a grammar
+  // notation's render refuses a grammar spec it has no form for, naming
+  // what it met, and Semantic Versioning's embedding refuses a tree that is
+  // not a version. Each takes its own format's documents, and a program
+  // that makes its tree; a grammar notation takes the others' too.
 
   it('translate refuses what a target declares it cannot carry', () => {
     let out = alchemy(['translate', '--from', 'json', '--to', 'css', '/nonexistent/input.json'])
@@ -733,6 +751,34 @@ describe('cli translate', () => {
       file: 'tabnas-semver/alchemy/embed.alc',
       output: 'none',
     })
+    for (const [to, schema] of [
+      ['abnf', 'grammar-spec'],
+      ['c', 'c'],
+    ]) {
+      out = alchemy(['translate', '--from', 'json', '--to', to, '-'], '{}')
+      assert.equal(out.status, 1, out.stderr)
+      assert.equal(out.stdout, '')
+      assert.deepStrictEqual(failJson(out), {
+        code: 'TARGET_VALUE_UNREPRESENTABLE',
+        message:
+          `schema_only: ${to} writes a ${schema} tree, the tree its own documents read as, and this document is ` +
+          'not one; a program that makes one can be composed with the render',
+        output: 'none',
+      })
+    }
+    out = alchemy(['translate', '--from', 'abnf', '--to', 'ebnf', '-'], 'greet = "hi"\n')
+    assert.equal(out.status, 1, out.stderr)
+    assert.equal(out.stdout, '')
+    assert.deepStrictEqual(failJson(out), {
+      code: 'TARGET_VALUE_UNREPRESENTABLE',
+      message:
+        'the grammar spec cannot be written as EBNF: the case-insensitive literal "hi" is no one W3C EBNF ' +
+        'terminal: it would be written as [hH] [iI], and this front end reads whitespace between terminals',
+      row: 234,
+      col: 3,
+      file: 'tabnas-ebnf/alchemy/render.alc',
+      output: 'none',
+    })
     const tree = '{"type":"stylesheet","rules":[{"type":"rule","selectors":["a"],"declarations":' +
       '[{"type":"declaration","property":"color","value":"red"}]}]}'
     const echo = tempFile('echo-css.alc', 'def export [input] input\n')
@@ -748,6 +794,12 @@ describe('cli translate', () => {
         'syntax = "proto3";\nmessage M { int32 a = 1; }\n',
         'syntax = "proto3";\nmessage M {\n  int32 a = 1;\n}\n',
       ],
+      // White space after the last token is not in the tree (C's loss
+      // list), so the final line feed is not written.
+      [['--from', 'c', '--to', 'c', '-'], 'int main(void) { return 0; }\n', 'int main(void) { return 0; }'],
+      [['--from', 'ebnf', '--to', 'abnf', '-'], 'top ::= "a" b\nb ::= "c"\n', 'top = %s"a" b\nb = %s"c"\n'],
+      [['--from', 'ebnf', '--to', 'gbnf', '-'], 'top ::= "a" b\nb ::= "c"\n', 'root ::= top\ntop ::= "a" b\nb ::= "c"\n'],
+      [['--from', 'abnf', '--to', 'ebnf', '-'], 'top = "a"\n', 'top ::= [aA]\n'],
     ] as Array<[string[], string, string]>) {
       out = alchemy(['translate', ...args], stdin)
       assert.equal(out.status, 0, `${args}: ${out.stderr}`)
