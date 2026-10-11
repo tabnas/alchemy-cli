@@ -96,6 +96,17 @@ function formatOf(extension: string): string | undefined {
 
 type Doc = { name: string; id: string; text: string }
 
+// What `test/notation-samples.json` holds: the inputs this repository
+// gives the grammar notations' example grammars, the ones their
+// repositories' own tests give them, by the name the cross product gives a
+// document (`samples`), and the pairs that recognise some of their samples
+// otherwise across the lexing, each with exactly those samples, by the name
+// the cross product gives a pair (`otherwise`).
+const NOTATION: {
+  samples: Readonly<Record<string, ReadonlyArray<string>>>
+  otherwise: Readonly<Record<string, ReadonlyArray<string>>>
+} = JSON.parse(readFileSync(join(__dirname, '..', '..', 'test', 'notation-samples.json'), 'utf8'))
+
 // The grammar notations' example grammars, each notation's directory in
 // its repository's checkout.
 const NOTATION_EXAMPLES: ReadonlyArray<[string, string]> = [
@@ -1128,6 +1139,86 @@ function checkGrammar(from: Format, target: Format, source: Datum, written: stri
         `where ${JSON.stringify(written)} was written`
 }
 
+// Whether a grammar spec sets the lexing GBNF's compiler gives a spec:
+// exact, no white space skipped and no matcher of the engine's own
+// (`space.lex` off).
+function exactLexing(spec: Datum): boolean {
+  const member = (d: Datum | undefined, key: string): Datum | undefined =>
+    undefined !== d && 'object' === d.type ? d.members.get(key) : undefined
+  const lex = member(member(member(spec, 'options'), 'space'), 'lex')
+  return undefined !== lex && 'bool' === lex.type && false === lex.value
+}
+
+// The engine with a grammar spec installed, as a fresh instance each:
+// installing applies the spec's lexer options to the instance.
+function grammarEngine(spec: Datum): Tabnas {
+  const engine = new Tabnas()
+  engine.grammar(JSON.parse(toText(spec)))
+  return engine
+}
+
+// Whether an engine parses a sample.
+function accepts(engine: Tabnas, sample: string): boolean {
+  try {
+    engine.parse(sample)
+    return true
+  } catch (_err) {
+    return false
+  }
+}
+
+// What a grammar spec, `source`, written in `target` as `written`
+// recognises against what the spec that text compiles to recognises, over
+// the document's samples: each sample is parsed with both, and both accept
+// it or both refuse it. A render writes a spec as far as its notation can
+// say it and recognises what it recognised (each loss list's sentence on
+// the tree builders), but for the lexing: a spec of another notation
+// compiles back under the target's own settings (its loss list), so across
+// GBNF's exact lexing and the others' default one, which skips white
+// space, a sample holding white space may be recognised otherwise, as
+// declared; the caller holds those to the samples
+// `test/notation-samples.json` registers for the pair. The number of
+// samples compared and the samples recognised otherwise across the lexing,
+// or why not.
+function recognition(
+  target: Format,
+  source: Datum,
+  written: string,
+  samples: ReadonlyArray<string>,
+): { compared: number; otherwise: string[] } | string {
+  if (0 === samples.length) return { compared: 0, otherwise: [] }
+  let back: Datum
+  try {
+    back = target.read(written, Limits.default())
+  } catch (err) {
+    return `the written grammar does not read back: ${why(err)}`
+  }
+  const across = exactLexing(source) !== exactLexing(back)
+  let read: Tabnas
+  let writtenEngine: Tabnas
+  try {
+    read = grammarEngine(source)
+    writtenEngine = grammarEngine(back)
+  } catch (err) {
+    return `the spec does not install: ${why(err)}`
+  }
+  const otherwise: string[] = []
+  for (const sample of samples) {
+    const was = accepts(read, sample)
+    const is = accepts(writtenEngine, sample)
+    if (was === is) continue
+    if (across && /[ \t\n\r]/.test(sample)) {
+      otherwise.push(sample)
+      continue
+    }
+    return (
+      `recognises ${JSON.stringify(sample)} otherwise: the grammar read ${was ? 'accepts' : 'refuses'} it, ` +
+      `the one written ${is ? 'accepts' : 'refuses'} it, where ${JSON.stringify(written)} was written`
+    )
+  }
+  return { compared: samples.length, otherwise }
+}
+
 // Whether the document read back from `written` in `target` is what the
 // target's conventions make of `source`, read as `from`: undefined when it
 // is, why not when it is not.
@@ -1274,9 +1365,19 @@ const SIZE_BOUND = 10_000
 // What a run of the matrix is held to: at least `floor` documents, at most
 // `tooDeep` of them deeper than every format reads and `tooLarge` larger
 // than every format writes in moments, at least `refusals` pairs refused as
-// their target declares, and at least `grammarsWritten` grammars written in
-// a grammar notation.
-type Bounds = { floor: number; tooDeep: number; tooLarge: number; refusals: number; grammarsWritten: number }
+// their target declares, at least `grammarsWritten` grammars written in a
+// grammar notation, and at least `samplesCompared` samples of theirs
+// (NOTATION's `samples`) compared between the grammar read and the one
+// written, each recognised by both alike but those NOTATION's `otherwise`
+// registers for the pair.
+type Bounds = {
+  floor: number
+  tooDeep: number
+  tooLarge: number
+  refusals: number
+  grammarsWritten: number
+  samplesCompared: number
+}
 
 // The cross product of `docs` and every format: each document read with
 // its format's grammar, written in every format, and read back under the
@@ -1295,6 +1396,8 @@ function matrix(docs: Doc[], bounds: Bounds): void {
   const defective: string[] = []
   const refusals: string[] = []
   let grammarsWritten = 0
+  let samplesCompared = 0
+  const declaredOtherwise: string[] = []
   let pairs = 0
   const started = Date.now()
   let reported = Date.now()
@@ -1357,6 +1460,21 @@ function matrix(docs: Doc[], bounds: Bounds): void {
         if (undefined !== held.unless) grammarsWritten += 1
         try {
           failure = check(from, to, source as Datum, written)
+          if (undefined === failure && undefined !== held.unless) {
+            const recognised = recognition(to, source as Datum, written, NOTATION.samples[name] ?? [])
+            if ('string' === typeof recognised) failure = recognised
+            else {
+              samplesCompared += recognised.compared
+              const registered = NOTATION.otherwise[pair] ?? []
+              if (JSON.stringify(recognised.otherwise) !== JSON.stringify(registered)) {
+                failure =
+                  `recognises ${JSON.stringify(recognised.otherwise)} otherwise across the lexing, where ` +
+                  `test/notation-samples.json registers ${JSON.stringify(registered)} for the pair`
+              } else if (0 < recognised.otherwise.length) {
+                declaredOtherwise.push(`${pair}: ${recognised.otherwise.length} of ${recognised.compared} samples`)
+              }
+            }
+          }
         } catch (err) {
           failure = `the check failed: ${why(err)}`
         }
@@ -1374,6 +1492,12 @@ function matrix(docs: Doc[], bounds: Bounds): void {
   for (const line of refusedSources) process.stderr.write(`refused source: ${line}\n`)
   for (const line of tooDeep) process.stderr.write(`deeper than every format reads: ${line}\n`)
   for (const line of tooLarge) process.stderr.write(`larger than ${SIZE_BOUND} values: ${line}\n`)
+  for (const line of declaredOtherwise) {
+    process.stderr.write(
+      'recognised otherwise across the lexing, as the loss lists declare and test/notation-samples.json ' +
+        `registers: ${line} holding white space\n`,
+    )
+  }
   for (const line of failures) process.stderr.write(`FAIL ${line}\n`)
   const schemaOnly = refusals.filter((r) => r.includes('schema_only:')).length
   const unwritable = refusals.filter((r) => r.includes(': the grammar spec cannot be written as ')).length
@@ -1383,7 +1507,9 @@ function matrix(docs: Doc[], bounds: Bounds): void {
       `registered reader defect; ` +
       `${refusals.length} pairs refused as their target declares (${schemaOnly} by a schema-only target, ` +
       `${unwritable} by a grammar notation's render, ${refusals.length - schemaOnly - unwritable} by Semantic ` +
-      `Versioning's embedding); ${grammarsWritten} grammars written in a grammar notation\n`,
+      `Versioning's embedding); ${grammarsWritten} grammars written in a grammar notation, ${samplesCompared} of ` +
+      `their samples compared, ${declaredOtherwise.length} pairs recognising some otherwise across the lexing, ` +
+      `as registered\n`,
   )
   const leftOut = refusedSources.length + tooDeep.length + tooLarge.length + defective.length
   assert.ok(
@@ -1398,6 +1524,10 @@ function matrix(docs: Doc[], bounds: Bounds): void {
   assert.ok(
     refusals.length >= bounds.refusals,
     `${refusals.length} pairs are refused as their target declares, fewer than the ${bounds.refusals} the corpus gives`,
+  )
+  assert.ok(
+    samplesCompared >= bounds.samplesCompared,
+    `${samplesCompared} samples are compared, fewer than the ${bounds.samplesCompared} the corpus gives`,
   )
   assert.ok(
     grammarsWritten >= bounds.grammarsWritten,
@@ -1422,7 +1552,7 @@ describe('translate', () => {
   // transduce's fixtures, one document per format at least, and the
   // documents of JSONTestSuite every JSON parser must accept.
   it('every document translates into every format', () => {
-    matrix(corpus(), { floor: 151, tooDeep: 0, tooLarge: 4, refusals: 1084, grammarsWritten: 36 })
+    matrix(corpus(), { floor: 151, tooDeep: 0, tooLarge: 4, refusals: 1084, grammarsWritten: 36, samplesCompared: 236 })
   })
 
   // Each registered reader defect still stands: a version past 2^53 - 1

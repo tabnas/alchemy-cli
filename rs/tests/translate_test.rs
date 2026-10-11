@@ -191,8 +191,14 @@ const NOTATION_EXAMPLES: [(&str, &str); 3] = [
 /// it, once each, and the grammar notations' example grammars. A row that
 /// sets options of its own (`opts`) is read by another reader than the
 /// format's default, and an error row's document is one the format refuses,
-/// so neither is a document of the format here.
-fn spec_corpus(docs: &mut Vec<(String, &'static str, String)>) {
+/// so neither is a document of the format here. Where a row holds a grammar
+/// and an input to it (ABNF's), every input a grammar's rows give it, those
+/// it accepts and those it refuses, is a sample of that grammar's, added to
+/// `samples` under the name of its document.
+fn spec_corpus(
+    docs: &mut Vec<(String, &'static str, String)>,
+    samples: &mut HashMap<String, Vec<String>>,
+) {
     let examples: Vec<Corpus> = NOTATION_EXAMPLES
         .iter()
         .map(|(id, dir)| (*id, siblings().join(dir), None, Some(*id)))
@@ -202,28 +208,89 @@ fn spec_corpus(docs: &mut Vec<(String, &'static str, String)>) {
         let files = tabnas_support::load_spec_dir(&dir, &tabnas_support::SpecOptions::default())
             .unwrap_or_else(|e| panic!("{id}: cannot read {}: {e}", dir.display()));
         let mut seen = HashSet::new();
+        let mut inputs: HashMap<String, Vec<String>> = HashMap::new();
+        let first = docs.len();
         for file in files {
             if !file.header.iter().any(|name| name == column) {
                 continue;
             }
+            let given = column != "input" && file.header.iter().any(|name| name == "input");
             for row in &file.rows {
-                if !row.named("opts").trim().is_empty()
-                    || tabnas_support::is_error_expect(row.named("expected"))
-                {
+                if !row.named("opts").trim().is_empty() {
                     continue;
                 }
-                let input = row.unesc_named(column);
-                if seen.insert(input.clone()) {
+                let document = row.unesc_named(column);
+                if given {
+                    let sample = row.unesc_named("input");
+                    let known = inputs.entry(document.clone()).or_default();
+                    if !known.contains(&sample) {
+                        known.push(sample);
+                    }
+                }
+                if tabnas_support::is_error_expect(row.named("expected")) {
+                    continue;
+                }
+                if seen.insert(document.clone()) {
                     docs.push((
                         format!("{repository}/{}:{}", file.file, row.line),
                         id,
-                        input,
+                        document,
                     ));
                 }
             }
         }
+        for (name, _, text) in &docs[first..] {
+            if let Some(given) = inputs.get(text) {
+                samples.insert(name.clone(), given.clone());
+            }
+        }
     }
     read_corpora(docs, &examples);
+}
+
+/// What `test/notation-samples.json` holds: the inputs this repository
+/// gives the grammar notations' example grammars, the ones their
+/// repositories' own tests give them, by the name the cross product gives a
+/// document (`samples`), and the pairs that recognise some of their samples
+/// otherwise across the lexing, each with exactly those samples, by the
+/// name the cross product gives a pair (`otherwise`).
+struct Notation {
+    samples: HashMap<String, Vec<String>>,
+    otherwise: HashMap<String, Vec<String>>,
+}
+
+fn notation_samples() -> Notation {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../test/notation-samples.json");
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+    let file: serde_json::Value = serde_json::from_str(&text).expect("the samples are JSON");
+    let lists = |key: &str| -> HashMap<String, Vec<String>> {
+        file[key]
+            .as_object()
+            .unwrap_or_else(|| panic!("{key} is an object"))
+            .iter()
+            .map(|(name, list)| {
+                let list = list
+                    .as_array()
+                    .unwrap_or_else(|| panic!("{key}: {name} is a list"))
+                    .iter()
+                    .map(|sample| {
+                        sample
+                            .as_str()
+                            .unwrap_or_else(|| {
+                                panic!("{key}: {name} holds a sample that is no string")
+                            })
+                            .to_string()
+                    })
+                    .collect();
+                (name.clone(), list)
+            })
+            .collect()
+    };
+    Notation {
+        samples: lists("samples"),
+        otherwise: lists("otherwise"),
+    }
 }
 
 fn format(id: &str) -> &'static Format {
@@ -1460,6 +1527,78 @@ fn check_grammar(
     }
 }
 
+/// Whether a grammar spec sets the lexing GBNF's compiler gives a spec:
+/// exact, no white space skipped and no matcher of the engine's own
+/// (`space.lex` off).
+fn exact_lexing(spec: &Datum) -> bool {
+    spec.as_object()
+        .and_then(|spec| spec.get("options"))
+        .and_then(Datum::as_object)
+        .and_then(|options| options.get("space"))
+        .and_then(Datum::as_object)
+        .and_then(|space| space.get("lex"))
+        == Some(&Datum::Bool(false))
+}
+
+/// The engine with a grammar spec installed, as a fresh instance each:
+/// installing applies the spec's lexer options to the instance.
+fn grammar_engine(spec: &Datum) -> Result<tabnas::Tabnas, String> {
+    let mut engine = tabnas::Tabnas::new();
+    engine
+        .grammar_json(&spec.to_string())
+        .map_err(|e| format!("the spec does not install: {e}"))?;
+    Ok(engine)
+}
+
+/// What a grammar spec, `source`, written in `target` as `written`
+/// recognises against what the spec that text compiles to recognises, over
+/// the document's samples: each sample is parsed with both, and both accept
+/// it or both refuse it. A render writes a spec as far as its notation can
+/// say it and recognises what it recognised (each loss list's sentence on
+/// the tree builders), but for the lexing: a spec of another notation
+/// compiles back under the target's own settings (its loss list), so across
+/// GBNF's exact lexing and the others' default one, which skips white
+/// space, a sample holding white space may be recognised otherwise, as
+/// declared; the caller holds those to the samples `test/notation-samples.json`
+/// registers for the pair. Ok is the number of samples compared and the
+/// samples recognised otherwise across the lexing.
+fn recognition(
+    target: &Format,
+    source: &Datum,
+    written: &str,
+    samples: &[String],
+) -> Result<(usize, Vec<String>), String> {
+    if samples.is_empty() {
+        return Ok((0, Vec::new()));
+    }
+    let back = target
+        .read(written, &Limits::default())
+        .map_err(|f| format!("the written grammar does not read back: {f}"))?;
+    let across = exact_lexing(source) != exact_lexing(&back);
+    let (read, written_engine) = (grammar_engine(source)?, grammar_engine(&back)?);
+    let mut otherwise = Vec::new();
+    for sample in samples {
+        let (was, is) = (
+            read.parse(sample).is_ok(),
+            written_engine.parse(sample).is_ok(),
+        );
+        if was == is {
+            continue;
+        }
+        if across && sample.contains([' ', '\t', '\n', '\r']) {
+            otherwise.push(sample.clone());
+            continue;
+        }
+        return Err(format!(
+            "recognises {sample:?} otherwise: the grammar read {} it, the one written {} it, \
+             where {written:?} was written",
+            if was { "accepts" } else { "refuses" },
+            if is { "accepts" } else { "refuses" },
+        ));
+    }
+    Ok((samples.len(), otherwise))
+}
+
 /// Whether the document read back from `written` in `target` is what the
 /// target's conventions make of `source`, read as `from`.
 fn check(from: &Format, target: &Format, source: &Datum, written: &str) -> Result<(), String> {
@@ -1610,8 +1749,12 @@ const DEFAULT_SIZE_BOUND: usize = 10_000;
 /// most `too_deep` of them deeper than every format reads and `too_large`
 /// larger than `size` values, at least `refusals` pairs refused as their
 /// target declares, at least `grammars_written` grammars written in a
-/// grammar notation, and the pairs of its corpus that fail for a defect of
-/// their target's package (`defective_pairs`, `DEFECTIVE_PAIRS`).
+/// grammar notation, at least `samples_compared` samples of theirs
+/// (`samples`, by document) compared between the grammar read and the one
+/// written, each recognised by both alike but those `otherwise` registers
+/// for the pair (every pair it registers one the run compares, when
+/// `every_otherwise_met`), and the pairs of its corpus that fail for a
+/// defect of their target's package (`defective_pairs`, `DEFECTIVE_PAIRS`).
 struct Bounds {
     floor: usize,
     too_deep: usize,
@@ -1620,6 +1763,10 @@ struct Bounds {
     refusals: usize,
     grammars_written: usize,
     defective_pairs: &'static [(&'static str, &'static str)],
+    samples: HashMap<String, Vec<String>>,
+    samples_compared: usize,
+    otherwise: HashMap<String, Vec<String>>,
+    every_otherwise_met: bool,
 }
 
 /// The pairs of the release run that fail for a defect of their target's
@@ -1664,6 +1811,9 @@ fn matrix(docs: Vec<(String, &'static str, String)>, bounds: Bounds) {
     let mut defective = Vec::new();
     let mut refusals: Vec<String> = Vec::new();
     let mut grammars_written = 0;
+    let mut samples_compared = 0;
+    let mut declared_otherwise = Vec::new();
+    let mut otherwise_met = HashSet::new();
     let mut diverged = Vec::new();
     let mut repaired = Vec::new();
     let mut met = HashSet::new();
@@ -1719,7 +1869,24 @@ fn matrix(docs: Vec<(String, &'static str, String)>, bounds: Bounds) {
                 (Expect::WrittenUnlessRefused(..), Err(f)) => Err(format!("does not write: {f}")),
                 (Expect::WrittenUnlessRefused(..), Ok(written)) => {
                     grammars_written += 1;
-                    check(from, to, source, &written)
+                    let samples = bounds.samples.get(name).map_or(&[][..], Vec::as_slice);
+                    check(from, to, source, &written).and_then(|()| {
+                        let (compared, otherwise) = recognition(to, source, &written, samples)?;
+                        samples_compared += compared;
+                        let registered = bounds.otherwise.get(&pair).map_or(&[][..], Vec::as_slice);
+                        if otherwise != registered {
+                            return Err(format!(
+                                "recognises {otherwise:?} otherwise across the lexing, where \
+                                 test/notation-samples.json registers {registered:?} for the pair"
+                            ));
+                        }
+                        if !otherwise.is_empty() {
+                            otherwise_met.insert(pair.clone());
+                            declared_otherwise
+                                .push(format!("{pair}: {} of {compared} samples", otherwise.len()));
+                        }
+                        Ok(())
+                    })
                 }
                 (Expect::Written, Err(f)) => Err(format!("does not write: {f}")),
                 (Expect::Written, Ok(written)) => {
@@ -1772,6 +1939,12 @@ fn matrix(docs: Vec<(String, &'static str, String)>, bounds: Bounds) {
     for line in &too_large {
         eprintln!("larger than {} values: {line}", bounds.size);
     }
+    for line in &declared_otherwise {
+        eprintln!(
+            "recognised otherwise across the lexing, as the loss lists declare and \
+             test/notation-samples.json registers: {line} holding white space"
+        );
+    }
     for line in &diverged {
         eprintln!("defective, as registered: {line}");
     }
@@ -1792,7 +1965,8 @@ fn matrix(docs: Vec<(String, &'static str, String)>, bounds: Bounds) {
          pairs refused as their target declares \
          ({schema_only} by a schema-only target, {unwritable} by a grammar notation's render, \
          {} by Semantic Versioning's embedding); {grammars_written} grammars written in a \
-         grammar notation",
+         grammar notation, {samples_compared} of their samples compared, {} pairs recognising \
+         some otherwise across the lexing, as registered",
         docs.len(),
         refused_sources.len(),
         too_deep.len(),
@@ -1801,6 +1975,7 @@ fn matrix(docs: Vec<(String, &'static str, String)>, bounds: Bounds) {
         diverged.len(),
         refusals.len(),
         refusals.len() - schema_only - unwritable,
+        declared_otherwise.len(),
     );
     let left_out = refused_sources.len() + too_deep.len() + too_large.len() + defective.len();
     assert!(
@@ -1836,6 +2011,24 @@ fn matrix(docs: Vec<(String, &'static str, String)>, bounds: Bounds) {
         "the registered defective pairs {repaired:?} translate as the conventions say: delete their \
          entries"
     );
+    assert!(
+        samples_compared >= bounds.samples_compared,
+        "{samples_compared} samples are compared, fewer than the {} the corpora give",
+        bounds.samples_compared
+    );
+    if bounds.every_otherwise_met {
+        let mut unmet: Vec<&String> = bounds
+            .otherwise
+            .keys()
+            .filter(|pair| !otherwise_met.contains(*pair))
+            .collect();
+        unmet.sort();
+        assert!(
+            unmet.is_empty(),
+            "test/notation-samples.json registers {unmet:?} as recognising samples otherwise, \
+             pairs this run does not compare: delete their entries"
+        );
+    }
     assert!(
         grammars_written >= bounds.grammars_written,
         "{grammars_written} grammars are written in a grammar notation, fewer than the {} the \
@@ -1876,6 +2069,10 @@ fn every_document_translates_into_every_format() {
         refusals: 1000,
         grammars_written: 0,
         defective_pairs: &[],
+        samples: HashMap::new(),
+        samples_compared: 0,
+        otherwise: HashMap::new(),
+        every_otherwise_met: false,
     };
     on_stack(|| matrix(corpus(), bounds));
 }
@@ -1888,7 +2085,11 @@ fn every_document_translates_into_every_format() {
 #[ignore = "the cross product of every format's fixtures: ci/rust/run.sh runs it in release"]
 fn every_fixture_of_every_format_translates_into_every_format() {
     let mut docs = Vec::new();
-    spec_corpus(&mut docs);
+    let Notation {
+        mut samples,
+        otherwise,
+    } = notation_samples();
+    spec_corpus(&mut docs, &mut samples);
     let bounds = Bounds {
         floor: 3994,
         too_deep: 2,
@@ -1897,6 +2098,10 @@ fn every_fixture_of_every_format_translates_into_every_format() {
         refusals: 29828,
         grammars_written: 133,
         defective_pairs: &DEFECTIVE_PAIRS,
+        samples,
+        samples_compared: 456,
+        otherwise,
+        every_otherwise_met: true,
     };
     on_stack(|| matrix(docs, bounds));
 }

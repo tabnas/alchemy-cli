@@ -43,6 +43,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -53,6 +54,7 @@ import (
 	"github.com/tabnas/alchemy-cli/go/translate"
 	alchemy "github.com/tabnas/alchemy/go"
 	at "github.com/tabnas/alchemy/go/translate"
+	tabnas "github.com/tabnas/parser/go"
 	tt "github.com/tabnas/transduce/go"
 )
 
@@ -98,6 +100,45 @@ func extension(name string) string {
 // document is one document of a corpus: its name, its format and its text.
 type document struct {
 	name, format, text string
+}
+
+// notation is what test/notation-samples.json holds: the inputs this
+// repository gives the grammar notations' example grammars, the ones their
+// repositories' own tests give them, by the name the cross product gives a
+// document (Samples), and the pairs that recognise some of their samples
+// otherwise across the lexing, each with exactly those samples, by the name
+// the cross product gives a pair (Otherwise).
+type notation struct {
+	Samples   map[string][]string `json:"samples"`
+	Otherwise map[string][]string `json:"otherwise"`
+}
+
+func notationSamples(t testing.TB) notation {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "..", "test", "notation-samples.json"))
+	if err != nil {
+		t.Fatalf("cannot read the samples: %v", err)
+	}
+	var file notation
+	if err := json.Unmarshal(data, &file); err != nil {
+		t.Fatalf("the samples are not JSON: %v", err)
+	}
+	return file
+}
+
+// jsonList is a list of samples as JSON, as test/notation-samples.json
+// holds it.
+func jsonList(list []string) string {
+	var out strings.Builder
+	enc := json.NewEncoder(&out)
+	enc.SetEscapeHTML(false)
+	if list == nil {
+		list = []string{}
+	}
+	if err := enc.Encode(list); err != nil {
+		return fmt.Sprintf("%q", list)
+	}
+	return strings.TrimSuffix(out.String(), "\n")
 }
 
 // notationExamples is the grammar notations' example grammars: each
@@ -1638,6 +1679,85 @@ func checkGrammar(from, target *translate.Format, source tt.Datum, written strin
 		"written", again, written)
 }
 
+// exactLexing is whether a grammar spec sets the lexing GBNF's compiler
+// gives a spec: exact, no white space skipped and no matcher of the
+// engine's own (space.lex off).
+func exactLexing(spec *tt.Datum) bool {
+	options, ok := spec.Get("options")
+	if !ok {
+		return false
+	}
+	space, ok := options.Get("space")
+	if !ok {
+		return false
+	}
+	lex, ok := space.Get("lex")
+	return ok && lex.Kind == tt.DatumBool && !lex.Bool
+}
+
+// grammarEngine is the engine with a grammar spec installed, a fresh
+// instance each: installing applies the spec's lexer options to the
+// instance.
+func grammarEngine(spec *tt.Datum) (*tabnas.Tabnas, error) {
+	gs, err := tabnas.GrammarSpecFromJSON([]byte(spec.String()))
+	if err != nil {
+		return nil, err
+	}
+	engine := tabnas.Make()
+	if err := engine.Grammar(gs); err != nil {
+		return nil, err
+	}
+	return engine, nil
+}
+
+// recognition is what a grammar spec, source, written in target as written
+// recognises against what the spec that text compiles to recognises, over
+// the document's samples: each sample is parsed with both, and both accept
+// it or both refuse it. A render writes a spec as far as its notation can
+// say it and recognises what it recognised (each loss list's sentence on
+// the tree builders), but for the lexing: a spec of another notation
+// compiles back under the target's own settings (its loss list), so across
+// GBNF's exact lexing and the others' default one, which skips white
+// space, a sample holding white space may be recognised otherwise, as
+// declared; the caller holds those to the samples
+// test/notation-samples.json registers for the pair. It is the number of
+// samples compared and the samples recognised otherwise across the lexing.
+func recognition(target *translate.Format, source tt.Datum, written string, samples []string) (int, []string, error) {
+	if len(samples) == 0 {
+		return 0, nil, nil
+	}
+	back, f := target.Read(written, tt.DefaultLimits())
+	if f != nil {
+		return 0, nil, fmt.Errorf("the written grammar does not read back: %v", f)
+	}
+	across := exactLexing(&source) != exactLexing(&back)
+	read, err := grammarEngine(&source)
+	if err != nil {
+		return 0, nil, fmt.Errorf("the spec read does not install: %v", err)
+	}
+	writtenEngine, err := grammarEngine(&back)
+	if err != nil {
+		return 0, nil, fmt.Errorf("the spec written does not install: %v", err)
+	}
+	var otherwise []string
+	verb := map[bool]string{true: "accepts", false: "refuses"}
+	for _, sample := range samples {
+		_, wasErr := read.Parse(sample)
+		_, isErr := writtenEngine.Parse(sample)
+		was, is := wasErr == nil, isErr == nil
+		if was == is {
+			continue
+		}
+		if across && strings.ContainsAny(sample, " \t\n\r") {
+			otherwise = append(otherwise, sample)
+			continue
+		}
+		return 0, nil, fmt.Errorf("recognises %q otherwise: the grammar read %s it, the one written %s it, where %q "+
+			"was written", sample, verb[was], verb[is], written)
+	}
+	return len(samples), otherwise, nil
+}
+
 func check(t testing.TB, from, target *translate.Format, source tt.Datum, written string) error {
 	if grammarNotation(target) {
 		return checkGrammar(from, target, source, written)
@@ -1791,10 +1911,14 @@ const sizeBound = 10_000
 // bounds is what a run of the matrix is held to: at least floor
 // documents, at most tooDeep of them deeper than every format reads and
 // tooLarge larger than every format writes in moments, at least refusals
-// pairs refused as their target declares, and at least grammarsWritten
-// grammars written in a grammar notation.
+// pairs refused as their target declares, at least grammarsWritten
+// grammars written in a grammar notation, and at least samplesCompared
+// samples of theirs (notation's Samples, by document) compared between the
+// grammar read and the one written, each recognised by both alike but
+// those notation's Otherwise registers for the pair.
 type bounds struct {
-	floor, tooDeep, tooLarge, refusals, grammarsWritten int
+	floor, tooDeep, tooLarge, refusals, grammarsWritten, samplesCompared int
+	notation                                                             notation
 }
 
 // divergent is the pairs that fail in this runtime, and not in Rust's, for
@@ -1818,7 +1942,8 @@ func matrix(t *testing.T, docs []document, b bounds) {
 	total := len(docs) * len(targets)
 	var failures, refusedSources, tooDeep, tooLarge, defective, refusals, diverged, repaired []string
 	met := map[string]bool{}
-	pairs, grammarsWritten := 0, 0
+	pairs, grammarsWritten, samplesCompared := 0, 0, 0
+	var declaredOtherwise []string
 	started := time.Now()
 	reported := time.Now()
 	for n, doc := range docs {
@@ -1867,6 +1992,21 @@ func matrix(t *testing.T, docs []document, b bounds) {
 					grammarsWritten++
 				}
 				why = check(t, from, to, source, written)
+				if why == nil && held.unless {
+					compared, otherwise, err := recognition(to, source, written, b.notation.Samples[doc.name])
+					why = err
+					samplesCompared += compared
+					registered := b.notation.Otherwise[name]
+					switch {
+					case err != nil:
+					case !slices.Equal(otherwise, registered):
+						why = fmt.Errorf("recognises %s otherwise across the lexing, where test/notation-samples.json "+
+							"registers %s for the pair", jsonList(otherwise), jsonList(registered))
+					case len(otherwise) > 0:
+						declaredOtherwise = append(declaredOtherwise, fmt.Sprintf("%s: %d of %d samples", name,
+							len(otherwise), compared))
+					}
+				}
 			}
 			_, known := divergent[name]
 			if known {
@@ -1896,6 +2036,10 @@ func matrix(t *testing.T, docs []document, b bounds) {
 	for _, line := range tooLarge {
 		t.Logf("larger than %d values: %s", sizeBound, line)
 	}
+	for _, line := range declaredOtherwise {
+		t.Logf("recognised otherwise across the lexing, as the loss lists declare and test/notation-samples.json "+
+			"registers: %s holding white space", line)
+	}
 	for _, line := range diverged {
 		t.Logf("divergent, as registered: %s", line)
 	}
@@ -1917,9 +2061,11 @@ func matrix(t *testing.T, docs []document, b bounds) {
 	t.Logf("matrix: %d pairs of %d documents; %d refused by their own reader, %d too deep, %d too large, %d left out "+
 		"for a registered reader defect, %d divergent as registered; %d pairs refused as their target declares (%d by a "+
 		"schema-only target, %d by a grammar notation's render, %d of them for the order Go's serialization loses, %d by "+
-		"Semantic Versioning's embedding); %d grammars written in a grammar notation",
+		"Semantic Versioning's embedding); %d grammars written in a grammar notation, %d of their samples compared, %d "+
+		"pairs recognising some otherwise across the lexing, as registered",
 		pairs, len(docs), len(refusedSources), len(tooDeep), len(tooLarge), len(defective), len(diverged), len(refusals),
-		schemaOnly, unwritable, unranked, len(refusals)-schemaOnly-unwritable, grammarsWritten)
+		schemaOnly, unwritable, unranked, len(refusals)-schemaOnly-unwritable, grammarsWritten, samplesCompared,
+		len(declaredOtherwise))
 	leftOut := len(refusedSources) + len(tooDeep) + len(tooLarge) + len(defective)
 	if pairs+leftOut*len(targets) != total || len(docs) < b.floor {
 		t.Fatalf("the corpora shrank: %d documents", len(docs))
@@ -1932,6 +2078,9 @@ func matrix(t *testing.T, docs []document, b bounds) {
 	}
 	if len(refusals) < b.refusals {
 		t.Fatalf("%d pairs are refused as their target declares, fewer than the %d the corpora give", len(refusals), b.refusals)
+	}
+	if samplesCompared < b.samplesCompared {
+		t.Fatalf("%d samples are compared, fewer than the %d the corpora give", samplesCompared, b.samplesCompared)
 	}
 	if grammarsWritten < b.grammarsWritten {
 		t.Fatalf("%d grammars are written in a grammar notation, fewer than the %d the corpora give", grammarsWritten,
@@ -1983,7 +2132,8 @@ func TestParsePathReadsKeysAndIndexes(t *testing.T) {
 // parser must accept, and the grammar notations' example grammars, into
 // every format.
 func TestEveryDocumentTranslatesIntoEveryFormat(t *testing.T) {
-	matrix(t, corpus(t), bounds{floor: 151, tooDeep: 0, tooLarge: 1, refusals: 1066, grammarsWritten: 14})
+	matrix(t, corpus(t), bounds{floor: 151, tooDeep: 0, tooLarge: 1, refusals: 1066, grammarsWritten: 14,
+		samplesCompared: 98, notation: notationSamples(t)})
 }
 
 // request is a request from from to to, with no path and no program.

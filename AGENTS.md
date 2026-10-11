@@ -154,7 +154,23 @@ whose alternatives the compiler reordered, a left recursion through
 another rule), as one the render writes again as the same text; from
 another notation, which compiles back under the target's own settings
 and recognises what it recognised, as a spec the render writes again as
-text that reads back as that spec.
+text that reads back as that spec. And every grammar written is held to
+what it recognises: the spec read and the spec the written text compiles
+to, each installed on an engine of its own, parse each of the document's
+samples alike. The samples are the inputs the notations' repositories'
+own tests give their example grammars, accepted and refused alike
+(`test/notation-samples.json`, which all three runtimes read), and, in
+Rust's release run, the inputs ABNF's fixture rows give each grammar.
+The one difference the loss lists declare is the lexing: a spec of
+another notation compiles back under the target's settings, so across
+GBNF's exact lexing and the others' default one, which skips white
+space, a sample holding white space may be recognised otherwise. Such a
+pair is registered, never passed: the same file's `otherwise` names
+each pair with exactly the samples it recognises otherwise, every cross
+product holds each pair it compares to that list, and Rust's release
+run, which compares every pair named, holds every entry to a pair it
+compares. A grammar recognising any other sample otherwise fails, unless
+its pair is registered with its package's defect (`DEFECTIVE_PAIRS`).
 
 A format is read with its package's parser, through transduce's parser
 source, unless the parser's own value is not yet the tree its parts

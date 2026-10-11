@@ -803,7 +803,7 @@ fn translate_refuses_what_a_target_cannot_carry() {
             "message": "the grammar spec cannot be written as EBNF: the case-insensitive literal \"hi\" \
                         is no one W3C EBNF terminal: it would be written as [hH] [iI], and this front \
                         end reads whitespace between terminals",
-            "row": 234,
+            "row": 237,
             "col": 3,
             "file": "tabnas-ebnf/alchemy/render.alc",
             "output": "none"

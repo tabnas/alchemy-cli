@@ -15,7 +15,7 @@ require (
 	github.com/tabnas/chess/go v0.1.14
 	github.com/tabnas/css/go v0.5.14
 	github.com/tabnas/csv/go v0.6.6
-	github.com/tabnas/ebnf/go v0.1.16
+	github.com/tabnas/ebnf/go v0.1.17
 	github.com/tabnas/expr/go v0.5.17
 	github.com/tabnas/feed/go v0.6.16
 	github.com/tabnas/gbnf/go v0.1.18
