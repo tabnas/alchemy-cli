@@ -693,11 +693,21 @@ fn formats_lists_the_formats_translate_reads_and_writes() {
     }
     assert_eq!(schema("c"), "c");
     // Why a format's documents are read whole, where its manifest says:
-    // TOML's and INI's sentences as their manifests give them; JSON's none.
+    // every format transduce does not stream, each in the sentence its
+    // manifest gives; JSON's none.
     let by_id = |id: &str| formats.iter().find(|f| f["id"] == id).expect("a format");
     for (id, manifest) in [
-        ("toml", tabnas_toml::translate().unwrap().manifest),
+        ("abnf", tabnas_abnf::translate().unwrap().manifest),
+        ("c", tabnas_c::translate().unwrap().manifest),
+        ("ebnf", tabnas_ebnf::translate().unwrap().manifest),
+        ("expr", tabnas_expr::translate().unwrap().manifest),
+        ("feed", tabnas_feed::translate().unwrap().manifest),
+        ("gbnf", tabnas_gbnf::translate().unwrap().manifest),
         ("ini", tabnas_ini::translate().unwrap().manifest),
+        ("pgn", tabnas_chess::translate().unwrap().manifest),
+        ("proto", tabnas_proto::translate().unwrap().manifest),
+        ("semver", tabnas_semver::translate().unwrap().manifest),
+        ("toml", tabnas_toml::translate().unwrap().manifest),
     ] {
         let manifest: serde_json::Value = serde_json::from_str(manifest).expect("JSON");
         let whole = &manifest["translate"]["whole"];
