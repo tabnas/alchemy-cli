@@ -81,7 +81,7 @@ import * as translate from './translate'
 // admin/publish.sh rewrites both, and test/version.test.ts fails the build
 // if they drift. Mirrors `const VERSION` in go/cmd/alchemy/main.go and
 // `VERSION` in rs/src/bin/alchemy.rs.
-export const VERSION = '0.1.8'
+export const VERSION = '0.1.9'
 
 const OPTIONS: CompileOptions = { routers, renderers }
 
