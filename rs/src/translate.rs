@@ -19,8 +19,10 @@
 //! incremental source refuses part way: the grammar's own value is the
 //! document, so it is read again whole. Where a package's parser builds a
 //! value that is not yet the tree its parts declare, and the package's API
-//! reads a document as that tree (expr's simplified form), that tree is
-//! the document, read whole. Nothing here knows a
+//! reads a document as that tree (expr's simplified form, proto's
+//! descriptor, C's realized syntax tree, and the grammar spec a grammar
+//! notation's document compiles to), that tree is the document, read
+//! whole. Nothing here knows a
 //! format by its name: a format is what its manifest says, and a package
 //! whose manifest names no parts this host can take is not a format here.
 
@@ -134,19 +136,6 @@ fn read_pgn(text: &str) -> ParserSource<'_> {
     ParserSource::new(parser, text)
 }
 
-/// proto's check before its parser runs, which its `parse` and `parse_with`
-/// make and its parser does not: a document nesting deeper than its cap
-/// (`tabnas_proto::MAX_NESTING_DEPTH`) is refused before the engine builds
-/// a tree that deep, whose drop could abort the process.
-fn proto_preflight(text: &str) -> Result<(), Fail> {
-    tabnas_proto::preflight(text).map_err(|error| Fail::input(error.to_string()))
-}
-
-/// The reader of proto's grammar, run after [`proto_preflight`].
-fn read_proto(text: &str) -> ParserSource<'_> {
-    ParserSource::new(tabnas_proto::make(), text)
-}
-
 /// json5's check before its parser runs, which its `parse_with` makes and
 /// its parser does not: a document holding no value is refused as
 /// `json5_empty` or `json5_no_value`, rather than as the engine's
@@ -170,6 +159,23 @@ fn read_json5(text: &str) -> ParserSource<'_> {
     ParserSource::new(tabnas_json5::make(), text)
 }
 
+/// An engine error as transduce's parser source reports one: the input's,
+/// with the engine's code and position, and a cancel, which no abort of
+/// this command's asks for, a guard of the grammar's own. (The engine's
+/// error is the one every grammar re-exports under a name of its own.)
+fn engine_failure(error: &tabnas_json::JsonError) -> Fail {
+    let mut fail = Fail::from_tabnas(error);
+    if error.code == "cancel" {
+        fail.message = format!(
+            "the grammar stopped the parse with a guard of its own ({}: {}); a grammar \
+             may refuse nesting or size below this crate's Limits",
+            error.code,
+            error.detail.trim_end()
+        );
+    }
+    fail
+}
+
 /// An expression as expr's API reads one for its shared fixtures, the tree
 /// its parts declare: each operation a list whose first element is the
 /// operator's source text (`parse_simplified`). The parser's own value
@@ -178,27 +184,119 @@ fn read_json5(text: &str) -> ParserSource<'_> {
 fn read_expr(text: &str) -> Result<Datum, Fail> {
     tabnas_expr::parse_simplified(&tabnas_expr::make(), text)
         .map(|tree| Datum::from_tabnas(&tree))
-        .map_err(|error| {
-            // As transduce's parser source reports an engine error: the
-            // input's, with the engine's code and position, and a cancel,
-            // which no abort of this command's asks for, a guard of the
-            // grammar's own.
-            let mut fail = Fail::from_tabnas(&error);
-            if error.code == "cancel" {
-                fail.message = format!(
-                    "the grammar stopped the parse with a guard of its own ({}: {}); a grammar \
-                     may refuse nesting or size below this crate's Limits",
-                    error.code,
-                    error.detail.trim_end()
-                );
-            }
-            fail
+        .map_err(|error| engine_failure(&error))
+}
+
+/// A `.proto` document as proto's API reads one, the tree its parts
+/// declare: the FileDescriptorProto the canonical parse returns, every
+/// member named and ordered as its object has them (`parse_value`). Its
+/// parse makes the check the parser does not, before the engine runs: a
+/// document nesting deeper than its cap (`tabnas_proto::MAX_NESTING_DEPTH`)
+/// is refused before the engine builds a tree that deep, whose drop could
+/// abort the process. The parser's own value is the grammar's syntax tree,
+/// which only the package's API reads.
+fn read_proto(text: &str) -> Result<Datum, Fail> {
+    tabnas_proto::parse_value(text, None)
+        .map(|tree| Datum::from_tabnas(&tree))
+        .map_err(|error| match error {
+            tabnas_proto::ProtoError::Parse(error) => engine_failure(&error),
+            refused => Fail::input(refused.to_string()),
         })
+}
+
+/// A C translation unit as c's API reads one, the tree its parts declare
+/// (`parse`, which realizes the parse into plain values). The parser's own
+/// value is a handle into the parse's per-thread arena, which only the
+/// package's API reads.
+fn read_c(text: &str) -> Result<Datum, Fail> {
+    tabnas_c::parse(text)
+        .map(|tree| Datum::from_tabnas(&tree))
+        .map_err(|error| engine_failure(&error))
+}
+
+/// A grammar spec's strict JSON text, which a notation's compiler writes, as
+/// the tree it holds, read with the JSON grammar.
+fn spec_tree(json: &str) -> Result<Datum, Fail> {
+    tabnas_json::parse(json)
+        .map(|spec| Datum::from_tabnas(&spec))
+        .map_err(|error| engine_failure(&error))
+}
+
+/// An ABNF document as abnf's API reads one for a host, the tree its parts
+/// declare: the pure-data grammar spec its compiler writes (`abnf_compile`,
+/// recognition off, so that the tree builders stay, as strict JSON), read
+/// as JSON. The grammar spec is the schema grammar-spec, which the EBNF and
+/// GBNF compilers emit too.
+fn read_abnf(text: &str) -> Result<Datum, Fail> {
+    let options = tabnas_abnf::AbnfCompileOptions {
+        start: None,
+        tag: None,
+        recognition: false,
+        strict: true,
+        indent: None,
+    };
+    let compiled = tabnas_abnf::abnf_compile(text, &options)
+        .map_err(|error| Fail::input(error.to_string()))?;
+    spec_tree(&compiled)
+}
+
+/// A notation's conversion, converted with the builtins on, as the
+/// shared compiler writes it for a host: the pure-data grammar spec, with
+/// its tree builders (`compile_spec` with recognition off, which is
+/// `to_jsonic` over `to_pure_spec`), as strict JSON, read as JSON. The
+/// compiler is tabnas-bnf, whose serializers tabnas-abnf re-exports, so
+/// reading a notation takes no package beyond the notations'.
+fn compiled_tree(spec: &tabnas_abnf::GrammarSpec) -> Result<Datum, Fail> {
+    let pure = tabnas_abnf::to_pure_spec(spec).map_err(|error| Fail::input(error.to_string()))?;
+    let json = tabnas_abnf::to_jsonic(
+        &pure,
+        tabnas_abnf::JsonicOptions {
+            strict: true,
+            indent: None,
+        },
+    );
+    spec_tree(&json)
+}
+
+/// An EBNF document as ebnf's API reads one for a host, the tree its parts
+/// declare: the grammar spec the shared compiler writes of `ebnf_convert`
+/// with the builtins on ([`compiled_tree`]).
+fn read_ebnf(text: &str) -> Result<Datum, Fail> {
+    let convert = tabnas_ebnf::EbnfConvertOptions {
+        builtins: true,
+        ..tabnas_ebnf::EbnfConvertOptions::default()
+    };
+    let spec = tabnas_ebnf::ebnf_convert(text, Some(&convert))
+        .map_err(|error| Fail::input(error.to_string()))?;
+    compiled_tree(&spec)
+}
+
+/// A GBNF document as gbnf's API reads one for a host, the tree its parts
+/// declare: the grammar spec the shared compiler writes of `gbnf_convert`
+/// with the builtins on, and the notation's own defaults otherwise (the
+/// start `root`, eager classes where they are unambiguous)
+/// ([`compiled_tree`]).
+fn read_gbnf(text: &str) -> Result<Datum, Fail> {
+    let convert = tabnas_gbnf::GbnfConvertOptions::new(tabnas_gbnf::ConvertOptions {
+        builtins: true,
+        ..tabnas_gbnf::ConvertOptions::default()
+    });
+    let spec = tabnas_gbnf::gbnf_convert(text, Some(&convert))
+        .map_err(|error| Fail::input(error.to_string()))?;
+    compiled_tree(&spec)
 }
 
 /// Every grammar package this command carries, with its reader.
 fn packages() -> Vec<(Option<Descriptor>, Reader)> {
     vec![
+        (
+            descriptor!("tabnas-abnf", tabnas_abnf, embed),
+            Reader::Tree(read_abnf),
+        ),
+        (
+            descriptor!("tabnas-c", tabnas_c, embed),
+            Reader::Tree(read_c),
+        ),
         (
             descriptor!("tabnas-chess", tabnas_chess, embed),
             Reader::Parser(read_pgn),
@@ -212,12 +310,20 @@ fn packages() -> Vec<(Option<Descriptor>, Reader)> {
             reader!(tabnas_csv),
         ),
         (
+            descriptor!("tabnas-ebnf", tabnas_ebnf, embed),
+            Reader::Tree(read_ebnf),
+        ),
+        (
             descriptor!("tabnas-expr", tabnas_expr, embed),
             Reader::Tree(read_expr),
         ),
         (
             descriptor!("tabnas-feed", tabnas_feed, embed),
             reader!(tabnas_feed),
+        ),
+        (
+            descriptor!("tabnas-gbnf", tabnas_gbnf, embed),
+            Reader::Tree(read_gbnf),
         ),
         (
             descriptor!("tabnas-ini", tabnas_ini, embed),
@@ -249,7 +355,7 @@ fn packages() -> Vec<(Option<Descriptor>, Reader)> {
         ),
         (
             descriptor!("tabnas-proto", tabnas_proto, embed),
-            Reader::Checked(proto_preflight, read_proto),
+            Reader::Tree(read_proto),
         ),
         (
             descriptor!("tabnas-semver", tabnas_semver, embed),

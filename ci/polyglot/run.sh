@@ -17,8 +17,9 @@ SIBLINGS=$(sed -n 's/^SIBLINGS="\(.*\)"$/\1/p' "$ROOT/ci/rust/run.sh")
 # then transduce and render, which build on alchemy's shared types. Every
 # grammar `translate` reads and writes is here, so TypeScript runs on the
 # same sibling sources the Rust gate and the Go workspace do; ini takes
-# hoover, and feed takes xml.
-TS_PACKAGES="parser support json jsonic hoover csv ini json5 jsonc jsonl markdown toml xml yaml zon chess css expr feed proto semver alchemy transduce render"
+# hoover, feed takes xml, c takes expr, the grammar notations take bnf,
+# and proto's build takes abnf.
+TS_PACKAGES="parser support json jsonic hoover csv ini json5 jsonc jsonl markdown toml xml yaml zon chess css expr c feed bnf abnf ebnf gbnf proto semver alchemy transduce render"
 
 for package in $TS_PACKAGES; do
   if [[ ! -f "$FLEET_ROOT/$package/ts/package.json" ]]; then

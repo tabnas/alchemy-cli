@@ -18,15 +18,17 @@ jobs:
   # ci/rust/run.sh lists them for the Rust gate, which takes every crate by
   # path. jsonc is here for its checkout all the same: translate's cross
   # product (go/translate's test, as rs/tests/translate_test.rs) reads the
-  # JSONTestSuite documents it vendors. debug is here though nothing in
-  # this repository imports it: json's nested test module (go/debugtest)
-  # replaces debug with its sibling checkout, the shared go job's workspace
-  # takes in every module it finds, and jsonic requires debug, so without
-  # the clone the workspace cannot load jsonic's requirements.
+  # JSONTestSuite documents it vendors; so are abnf, ebnf and gbnf, whose
+  # example grammars it reads too (gbnf after abnf, which its build takes).
+  # debug is here though nothing in this repository imports it: json's
+  # nested test module (go/debugtest) replaces debug with its sibling
+  # checkout, the shared go job's workspace takes in every module it finds,
+  # and jsonic requires debug, so without the clone the workspace cannot
+  # load jsonic's requirements.
   ci:
     uses: tabnas/.github/.github/workflows/polyglot-ci.yml@main
     with:
-      deps: "parser debug json jsonic jsonc csv alchemy transduce render"
+      deps: "parser debug json jsonic jsonc csv abnf ebnf gbnf alchemy transduce render"
 
   # The shared workflow runs `go test ./...` with no build tags. `alchemy
   # run` reads its document through transduce's incremental source, which
@@ -58,7 +60,7 @@ jobs:
         shell: bash
         run: |
           set -e
-          for dep in parser debug json jsonic jsonc csv alchemy transduce render; do
+          for dep in parser debug json jsonic jsonc csv abnf ebnf gbnf alchemy transduce render; do
             git clone --depth 1 "https://github.com/tabnas/$dep.git" "$dep"
           done
 

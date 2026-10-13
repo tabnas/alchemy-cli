@@ -23,18 +23,22 @@ path = "src/bin/alchemy.rs"
 [dependencies]
 # Sibling checkouts, the standard tabnas development model: the language
 # and its shared types, the routers (and the parser source `run` and
-# `translate` read their input through), the renderers, and the eighteen
-# grammars `translate` reads and writes, each with its translation parts
-# (`run` parses its input with the JSON one).
+# `translate` read their input through), the renderers, and the grammars
+# `translate` reads and writes, each with its translation parts (`run`
+# parses its input with the JSON one).
 tabnas-alchemy = { path = "../../alchemy/rs" }
 tabnas-transduce = { path = "../../transduce/rs" }
 tabnas-render = { path = "../../render/rs" }
 tabnas-json = { path = "../../json/rs" }
+tabnas-abnf = { path = "../../abnf/rs" }
+tabnas-c = { path = "../../c/rs" }
 tabnas-chess = { path = "../../chess/rs" }
 tabnas-css = { path = "../../css/rs" }
 tabnas-csv = { path = "../../csv/rs" }
+tabnas-ebnf = { path = "../../ebnf/rs" }
 tabnas-expr = { path = "../../expr/rs" }
 tabnas-feed = { path = "../../feed/rs" }
+tabnas-gbnf = { path = "../../gbnf/rs" }
 tabnas-ini = { path = "../../ini/rs" }
 tabnas-json5 = { path = "../../json5/rs" }
 tabnas-jsonc = { path = "../../jsonc/rs" }

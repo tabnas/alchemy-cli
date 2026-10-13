@@ -17,10 +17,11 @@ source "$ROOT/ci/phase.sh"
 # and render, the JSON grammar, the engine, and csv and jsonic, which
 # transduce's line sources take; then the other grammars `translate` reads
 # and writes, which the tests of alchemy's programs read too (ini takes
-# hoover); and this crate's own dev-dependency, the fixture runner. The
-# tests also read alchemy's test/spec, transduce's rs/tests and every
-# grammar's test/spec from the checkouts.
-SIBLINGS="parser json jsonic csv alchemy transduce render support hoover ini json5 jsonc jsonl markdown toml xml yaml zon chess css expr feed proto semver"
+# hoover, and the grammar notations take bnf, their shared compiler); and
+# this crate's own dev-dependency, the fixture runner. The tests also read
+# alchemy's test/spec, transduce's rs/tests, every grammar's test/spec and
+# the grammar notations' example grammars from the checkouts.
+SIBLINGS="parser json jsonic csv alchemy transduce render support hoover ini json5 jsonc jsonl markdown toml xml yaml zon chess css expr feed proto semver bnf abnf ebnf gbnf c"
 
 # TypeScript- and Go-only additions needed by ci/polyglot/run.sh: none.
 TS_SIBLINGS=""
@@ -94,8 +95,9 @@ trap 'if [ -f "$LOCK_BEFORE" ] && ! cmp -s "$LOCK_BEFORE" Cargo.lock; then cp "$
 phase "gate: fmt" "${CARGO[@]}" fmt --check
 phase "gate: build" "${CARGO[@]}" build --all-targets
 phase "gate: test" "${CARGO[@]}" test --all-targets
-# The cross product of every format's own fixture corpus (tests/translate_test.rs,
-# ignored in a debug run): about 63,000 pairs, minutes in release.
+# The cross product of every format's own fixture corpus and the grammar
+# notations' example grammars (tests/translate_test.rs, ignored in a debug
+# run): about 84,000 pairs, minutes in release.
 phase "gate: the formats' fixtures, every format into every other (release)" \
   "${CARGO[@]}" test --release --test translate_test -- --ignored --nocapture
 # No `test --doc`: the crate is a binary with no library target, which
