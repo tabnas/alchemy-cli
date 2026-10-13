@@ -24,7 +24,15 @@ import (
 
 	tabnasabnf "github.com/tabnas/abnf/go"
 	"github.com/tabnas/alchemy-cli/go/translate"
+	tabnasc "github.com/tabnas/c/go"
+	tabnaschess "github.com/tabnas/chess/go"
+	tabnasebnf "github.com/tabnas/ebnf/go"
+	tabnasexpr "github.com/tabnas/expr/go"
+	tabnasfeed "github.com/tabnas/feed/go"
+	tabnasgbnf "github.com/tabnas/gbnf/go"
 	tabnasini "github.com/tabnas/ini/go"
+	tabnasproto "github.com/tabnas/proto/go"
+	tabnassemver "github.com/tabnas/semver/go"
 	tabnastoml "github.com/tabnas/toml/go"
 	tt "github.com/tabnas/transduce/go"
 )
@@ -133,8 +141,21 @@ func TestFormatsPrintsTheRegistryAsJSON(t *testing.T) {
 		t.Errorf("%v", byID["c"])
 	}
 	// Why a format's documents are read whole, where its manifest says:
-	// TOML's and INI's sentences as their manifests give them.
-	for id, manifest := range map[string]string{"toml": tabnastoml.Translate().Manifest, "ini": tabnasini.Translate().Manifest} {
+	// every format transduce does not stream, each in the sentence its
+	// manifest gives.
+	for id, manifest := range map[string]string{
+		"abnf":   tabnasabnf.Translate().Manifest,
+		"c":      tabnasc.Translate().Manifest,
+		"ebnf":   tabnasebnf.Translate().Manifest,
+		"expr":   tabnasexpr.Translate().Manifest,
+		"feed":   tabnasfeed.Translate().Manifest,
+		"gbnf":   tabnasgbnf.Translate().Manifest,
+		"ini":    tabnasini.Translate().Manifest,
+		"pgn":    tabnaschess.Translate().Manifest,
+		"proto":  tabnasproto.Translate().Manifest,
+		"semver": tabnassemver.Translate().Manifest,
+		"toml":   tabnastoml.Translate().Manifest,
+	} {
 		var m struct {
 			Translate struct {
 				Whole string `json:"whole"`

@@ -13,8 +13,17 @@ import { accessSync, constants, mkdirSync, mkdtempSync, readFileSync, writeFileS
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import { translate as abnfParts } from '@tabnas/abnf'
 import { source } from '@tabnas/alchemy'
+import { translate as cParts } from '@tabnas/c'
+import { translate as chessParts } from '@tabnas/chess'
+import { translate as ebnfParts } from '@tabnas/ebnf'
+import { translate as exprParts } from '@tabnas/expr'
+import { translate as feedParts } from '@tabnas/feed'
+import { translate as gbnfParts } from '@tabnas/gbnf'
 import { translate as iniParts } from '@tabnas/ini'
+import { translate as protoParts } from '@tabnas/proto'
+import { translate as semverParts } from '@tabnas/semver'
 import { translate as tomlParts } from '@tabnas/toml'
 
 import { EXPECTED_CSV, PROGRAM, RECORDS } from './common'
@@ -535,10 +544,20 @@ describe('cli translate', () => {
       ['pgn-database', 'semver-embed', 'feed-embed', 'expr-embed'],
     )
     // Why a format's documents are read whole, where its manifest says:
-    // TOML's and INI's sentences as their manifests give them.
+    // every format transduce does not stream, each in the sentence its
+    // manifest gives.
     for (const [id, parts] of [
-      ['toml', tomlParts()],
+      ['abnf', abnfParts()],
+      ['c', cParts()],
+      ['ebnf', ebnfParts()],
+      ['expr', exprParts()],
+      ['feed', feedParts()],
+      ['gbnf', gbnfParts()],
       ['ini', iniParts()],
+      ['pgn', chessParts()],
+      ['proto', protoParts()],
+      ['semver', semverParts()],
+      ['toml', tomlParts()],
     ] as const) {
       const whole = JSON.parse(String(parts?.manifest)).translate.whole
       assert.ok('string' === typeof whole && '' !== whole, id)

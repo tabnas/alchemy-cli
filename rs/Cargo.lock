@@ -151,7 +151,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-abnf"
-version = "0.4.23"
+version = "0.4.24"
 dependencies = [
  "indexmap",
  "regex",
@@ -218,7 +218,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-c"
-version = "0.5.14"
+version = "0.5.15"
 dependencies = [
  "indexmap",
  "serde_json",
@@ -229,7 +229,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-chess"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "indexmap",
  "regex",
@@ -259,7 +259,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-ebnf"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "indexmap",
  "regex",
@@ -270,7 +270,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-expr"
-version = "0.5.18"
+version = "0.5.19"
 dependencies = [
  "indexmap",
  "tabnas-jsonic",
@@ -279,7 +279,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-feed"
-version = "0.6.17"
+version = "0.6.18"
 dependencies = [
  "indexmap",
  "regex",
@@ -290,7 +290,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-gbnf"
-version = "0.1.19"
+version = "0.1.20"
 dependencies = [
  "indexmap",
  "regex",
@@ -388,7 +388,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-proto"
-version = "0.6.10"
+version = "0.6.11"
 dependencies = [
  "indexmap",
  "serde",
@@ -405,7 +405,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-semver"
-version = "0.0.10"
+version = "0.0.11"
 dependencies = [
  "indexmap",
  "serde_json",
