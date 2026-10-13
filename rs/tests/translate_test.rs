@@ -420,9 +420,12 @@ fn grammar_notation(format: &Format) -> bool {
 /// it has no form for something in it, which it refuses naming what it
 /// met, as its loss list declares (an action, a negated class in ABNF, the
 /// engine's own tokens in GBNF, ...); Semantic Versioning's embedding
-/// refuses a tree that is not a version, as its part declares. Every other
-/// pair is written, Markdown's table among them: it writes from records,
-/// which any tree makes.
+/// refuses a tree that is not a version, as its part declares; and expr's
+/// render refuses a list led by an object whose `src` its reader would
+/// take for the list's operator, where that is no default operator's
+/// source text (a C syntax tree's token), as its loss list declares
+/// ([`expr_refuses`]). Every other pair is written, Markdown's table among
+/// them: it writes from records, which any tree makes.
 fn expect(from: &Format, to: &Format, source: &Datum) -> Expect {
     let target = &to.part;
     let foreign = target.writes == tabnas_alchemy::translate::Shape::Tree
@@ -436,6 +439,10 @@ fn expect(from: &Format, to: &Format, source: &Datum) -> Expect {
         _ if foreign && to.id() == "semver" && !semver_version(source) => Expect::Refused(
             Code::TargetValueUnrepresentable,
             "the document is not a version: ".to_string(),
+        ),
+        _ if to.id() == "expr" && expr_refuses(source) => Expect::Refused(
+            Code::TargetValueUnrepresentable,
+            "the object at ".to_string(),
         ),
         _ if grammar_notation(to) => Expect::WrittenUnlessRefused(
             Code::TargetValueUnrepresentable,
@@ -955,14 +962,44 @@ fn zon_back(d: &Datum) -> Datum {
     }
 }
 
+/// The default operators' source texts, which expr's render writes as the
+/// operator (`(` a group): an operation is a list whose first element is
+/// one, or an object whose `src` is one.
+const EXPR_OPERATORS: [&str; 6] = ["+", "-", "*", "/", "%", "("];
+
+/// Whether expr's render refuses a tree (its loss list): it holds a list
+/// whose first element is an object with a `src` member a simplifier would
+/// read as the list's operator, anything but the empty string, false,
+/// null or zero, which is no default operator's source text, as the tokens
+/// a C syntax tree puts first in a node's children are.
+fn expr_refuses(d: &Datum) -> bool {
+    match d {
+        Datum::Array(items) => {
+            let led = match items.first() {
+                Some(Datum::Object(m)) => match m.get("src") {
+                    None | Some(Datum::Null | Datum::Bool(false)) => false,
+                    Some(Datum::String(src)) => {
+                        !src.is_empty() && !EXPR_OPERATORS.contains(&&**src)
+                    }
+                    Some(Datum::Number { value, lexeme }) => {
+                        *value != 0.0 || lexeme.as_deref().is_some_and(|l| l.starts_with('-'))
+                    }
+                    Some(_) => true,
+                },
+                _ => false,
+            };
+            led || items.iter().any(expr_refuses)
+        }
+        Datum::Object(members) => members.values().any(expr_refuses),
+        _ => false,
+    }
+}
+
 /// A tree as expr's reader reads one back (its simplified tree, the form
 /// its shared fixtures hold): a list whose first element is an object whose
-/// `src` is a string, not empty, has that string in the object's place.
-/// expr's loss list declares that for a default operator's source text,
-/// which its render writes as the operator; its reader reads every object
-/// at a list's head with a `src` so (a C syntax tree's tokens among them),
-/// which the loss list does not declare, and which the three runtimes read
-/// alike.
+/// `src` is a default operator's source text has that text in the object's
+/// place, as expr's loss list declares. Any other such `src` its render
+/// refuses ([`expr_refuses`]), so no tree holding one is read back.
 fn expr_simplify(d: &Datum) -> Datum {
     match d {
         Datum::Array(items) => Datum::Array(
@@ -971,7 +1008,9 @@ fn expr_simplify(d: &Datum) -> Datum {
                 .enumerate()
                 .map(|(i, item)| match (i, item) {
                     (0, Datum::Object(m)) => match m.get("src") {
-                        Some(Datum::String(src)) if !src.is_empty() => Datum::String(src.clone()),
+                        Some(Datum::String(src)) if EXPR_OPERATORS.contains(&&**src) => {
+                            Datum::String(src.clone())
+                        }
                         _ => expr_simplify(item),
                     },
                     _ => expr_simplify(item),
@@ -1776,14 +1815,12 @@ struct Bounds {
 /// records: one that passes, or that names no pair of the corpus, fails the
 /// test until it is deleted. Every runtime would fail them alike, the
 /// renders being the same alchemy files; only the release run reads the
-/// documents.
-const DEFECTIVE_PAIRS: [(&str, &str); 1] = [(
-    "abnf/alignment-abnf-ast.tsv:28 (abnf) -> ebnf",
-    "tabnas-ebnf's render writes ABNF's bounded repetition (g = \"z\" *200\"a\") as 200 \
-     nested optional groups, which its own reader refuses past about 130 (\"grammar nests \
-     too deeply\"), where its loss list declares no such refusal: the render writes a \
-     document its reader does not read",
-)];
+/// documents. None is open: tabnas-ebnf 0.1.18 fixed the last,
+/// `abnf/alignment-abnf-ast.tsv:28 (abnf) -> ebnf`, whose bounded
+/// repetition (`*200"a"`) its render wrote as 200 nested optional groups,
+/// past what its own reader reads; the render now refuses such a
+/// repetition, as its loss list declares.
+const DEFECTIVE_PAIRS: [(&str, &str); 0] = [];
 
 /// The cross product of `docs` and every format: each document read with
 /// its format's grammar, written in every format, and read back under the
@@ -1950,14 +1987,18 @@ fn matrix(docs: Vec<(String, &'static str, String)>, bounds: Bounds) {
         .iter()
         .filter(|r| r.contains(": the grammar spec cannot be written as "))
         .count();
+    let expr_refused = refusals
+        .iter()
+        .filter(|r| r.contains(": the object at "))
+        .count();
     eprintln!(
         "matrix: {pairs} pairs of {} documents; {} refused by their own reader, {} too deep, \
          {} too large, {} left out for a registered reader defect, {} defective as registered; {} \
          pairs refused as their target declares \
          ({schema_only} by a schema-only target, {unwritable} by a grammar notation's render, \
-         {} by Semantic Versioning's embedding); {grammars_written} grammars written in a \
-         grammar notation, {samples_compared} of their samples compared, {} pairs recognising \
-         some otherwise across the lexing, as registered",
+         {expr_refused} by expr's render, {} by Semantic Versioning's embedding); \
+         {grammars_written} grammars written in a grammar notation, {samples_compared} of their \
+         samples compared, {} pairs recognising some otherwise across the lexing, as registered",
         docs.len(),
         refused_sources.len(),
         too_deep.len(),
@@ -1965,7 +2006,7 @@ fn matrix(docs: Vec<(String, &'static str, String)>, bounds: Bounds) {
         defective.len(),
         diverged.len(),
         refusals.len(),
-        refusals.len() - schema_only - unwritable,
+        refusals.len() - schema_only - unwritable - expr_refused,
         declared_otherwise.len(),
     );
     let left_out = refused_sources.len() + too_deep.len() + too_large.len() + defective.len();
@@ -2082,12 +2123,12 @@ fn every_fixture_of_every_format_translates_into_every_format() {
     } = notation_samples();
     spec_corpus(&mut docs, &mut samples);
     let bounds = Bounds {
-        floor: 3994,
+        floor: 4000,
         too_deep: 2,
         size: SIZE_BOUND,
         too_large: 1,
-        refusals: 29828,
-        grammars_written: 133,
+        refusals: 29898,
+        grammars_written: 132,
         defective_pairs: &DEFECTIVE_PAIRS,
         samples,
         samples_compared: 456,

@@ -207,16 +207,13 @@ format's package builds with its own API (for a version past 2^53 - 1,
 its own round trip), so an entry fails once the reader is repaired, and
 is then deleted. Go also pins the order a reader's objects are written
 in where it is not the Rust and TypeScript readers' (`orderDivergent`:
-plain maps in sorted key order, typed values in their fields' order, and
-the grammar spec tabnas-bnf's Go serializer writes in name order, its
-match tokens' order in a list of its own), which the matrix, comparing
-values, cannot see. That spec has lost the order of its rules, which
-ranks its tokens, so each notation's render refuses one that Go reads
-with two match tokens or more, as its loss list declares, and writes the
-others with their rules in name order; a Go test pins it, and fails once
-the serializer keeps the order. A defect is the package's to repair;
-never register one to make a pair pass without naming it, and never work
-around one here in silence.
+plain maps in sorted key order, and typed values in their fields'
+order), which the matrix, comparing values, cannot see. (The grammar
+spec was one until tabnas-bnf 0.1.30, whose Go serializer wrote it in
+name order, its match tokens' order in a list of its own; it now writes
+the order the compiler emits, as TypeScript and Rust do.) A defect is the
+package's to repair; never register one to make a pair pass without
+naming it, and never work around one here in silence.
 
 ## Build and test
 

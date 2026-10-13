@@ -9,16 +9,16 @@ go 1.24.7
 // Renderers that transduce and render build on them, are in all three from
 // v0.2.0.
 require (
-	github.com/tabnas/abnf/go v0.4.22
+	github.com/tabnas/abnf/go v0.4.23
 	github.com/tabnas/alchemy/go v0.2.6
 	github.com/tabnas/c/go v0.5.14
 	github.com/tabnas/chess/go v0.1.14
 	github.com/tabnas/css/go v0.5.14
 	github.com/tabnas/csv/go v0.6.6
-	github.com/tabnas/ebnf/go v0.1.17
-	github.com/tabnas/expr/go v0.5.17
-	github.com/tabnas/feed/go v0.6.16
-	github.com/tabnas/gbnf/go v0.1.18
+	github.com/tabnas/ebnf/go v0.1.18
+	github.com/tabnas/expr/go v0.5.18
+	github.com/tabnas/feed/go v0.6.17
+	github.com/tabnas/gbnf/go v0.1.19
 	github.com/tabnas/ini/go v0.5.19
 	github.com/tabnas/json/go v0.5.17
 	github.com/tabnas/json5/go v0.5.15
@@ -26,7 +26,7 @@ require (
 	github.com/tabnas/jsonic/go v0.7.9
 	github.com/tabnas/jsonl/go v0.1.16
 	github.com/tabnas/markdown/go v0.7.12
-	github.com/tabnas/proto/go v0.6.9
+	github.com/tabnas/proto/go v0.6.10
 	github.com/tabnas/render/go v0.2.4
 	github.com/tabnas/semver/go v0.0.10
 	github.com/tabnas/toml/go v0.5.17
@@ -48,6 +48,6 @@ require (
 )
 
 require (
-	github.com/tabnas/bnf/go v0.1.29 // indirect
+	github.com/tabnas/bnf/go v0.1.30 // indirect
 	github.com/tabnas/hoover/go v0.3.14 // indirect
 )

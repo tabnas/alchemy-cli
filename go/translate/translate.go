@@ -398,9 +398,9 @@ func protoTree(text string) (any, *tt.Fail) {
 // (AbnfCompile, recognition off, so that the tree builders stay, as strict
 // JSON), read as JSON. The grammar spec is the schema grammar-spec, which
 // the EBNF and GBNF compilers emit too. Go's serializer writes its members
-// in name order, and the match tokens' order in a list of its own
-// (options.match.tokenOrder), where TypeScript's and Rust's write them in
-// the order the compiler emits them.
+// in the order the compiler emits them, as TypeScript's and Rust's do, from
+// tabnas-bnf 0.1.30; before, it wrote them in name order, and the match
+// tokens' order in a list of its own (options.match.tokenOrder).
 func abnfTree(text string) (any, *tt.Fail) {
 	recognition := false
 	compiled, err := tabnasabnf.AbnfCompile(text, &tabnasabnf.AbnfCompileOptions{Recognition: &recognition, Strict: true})

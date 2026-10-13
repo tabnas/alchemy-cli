@@ -236,9 +236,12 @@ function grammarNotation(format: Format): boolean {
 // it has no form for something in it, which it refuses naming what it met,
 // as its loss list declares (an action, a negated class in ABNF, the
 // engine's own tokens in GBNF, ...); Semantic Versioning's embedding
-// refuses a tree that is not a version, as its part declares. Every other
-// pair is written, Markdown's table among them: it writes from records,
-// which any tree makes.
+// refuses a tree that is not a version, as its part declares; and expr's
+// render refuses a list led by an object whose `src` its reader would take
+// for the list's operator, where that is no default operator's source text
+// (a C syntax tree's token), as its loss list declares (exprRefuses).
+// Every other pair is written, Markdown's table among them: it writes from
+// records, which any tree makes.
 function expect(from: Format, to: Format, source: Datum): Expect {
   const target = to.part
   const foreign = 'tree' === target.writes && undefined !== target.schema && from.part.schema !== target.schema
@@ -251,6 +254,9 @@ function expect(from: Format, to: Format, source: Datum): Expect {
   }
   if (foreign && 'semver' === to.id && !semverVersion(source)) {
     return { written: false, code: 'TARGET_VALUE_UNREPRESENTABLE', reason: 'the document is not a version: ' }
+  }
+  if ('expr' === to.id && exprRefuses(source)) {
+    return { written: false, code: 'TARGET_VALUE_UNREPRESENTABLE', reason: 'the object at ' }
   }
   if (grammarNotation(to)) {
     return {
@@ -704,21 +710,51 @@ function zonBack(d: Datum): Datum {
   return d
 }
 
+// The default operators' source texts, which expr's render writes as the
+// operator (`(` a group): an operation is a list whose first element is one,
+// or an object whose `src` is one.
+const EXPR_OPERATORS: ReadonlyArray<string> = ['+', '-', '*', '/', '%', '(']
+
+// Whether expr's render refuses a tree (its loss list): it holds a list
+// whose first element is an object with a `src` member a simplifier would
+// read as the list's operator, anything but the empty string, false, null
+// or zero, which is no default operator's source text, as the tokens a C
+// syntax tree puts first in a node's children are.
+function exprRefuses(d: Datum): boolean {
+  if ('array' === d.type) {
+    const first = d.items[0]
+    if (undefined !== first && 'object' === first.type) {
+      const src = first.members.get('src')
+      const read =
+        undefined === src || 'null' === src.type
+          ? false
+          : 'bool' === src.type
+            ? src.value
+            : 'string' === src.type
+              ? '' !== src.value && !EXPR_OPERATORS.includes(src.value)
+              : 'number' === src.type
+                ? 0 !== src.value || (null !== src.lexeme && src.lexeme.startsWith('-'))
+                : true
+      if (read) return true
+    }
+    return d.items.some(exprRefuses)
+  }
+  if ('object' === d.type) return [...d.members.values()].some(exprRefuses)
+  return false
+}
+
 // A tree as expr's reader reads one back (its simplified tree, the form its
 // shared fixtures hold): a list whose first element is an object whose
-// `src` is a string, not empty, has that string in the object's place.
-// expr's loss list declares that for a default operator's source text,
-// which its render writes as the operator; its reader reads every object at
-// a list's head with a `src` so (a C syntax tree's tokens among them),
-// which the loss list does not declare, and which the three runtimes read
-// alike.
+// `src` is a default operator's source text has that text in the object's
+// place, as expr's loss list declares. Any other such `src` its render
+// refuses (exprRefuses), so no tree holding one is read back.
 function exprSimplify(d: Datum): Datum {
   if ('array' === d.type) {
     return arr(
       d.items.map((item, i) => {
         if (0 === i && 'object' === item.type) {
           const src = item.members.get('src')
-          if (undefined !== src && 'string' === src.type && '' !== src.value) return src
+          if (undefined !== src && 'string' === src.type && EXPR_OPERATORS.includes(src.value)) return src
         }
         return exprSimplify(item)
       }),
@@ -1501,12 +1537,14 @@ function matrix(docs: Doc[], bounds: Bounds): void {
   for (const line of failures) process.stderr.write(`FAIL ${line}\n`)
   const schemaOnly = refusals.filter((r) => r.includes('schema_only:')).length
   const unwritable = refusals.filter((r) => r.includes(': the grammar spec cannot be written as ')).length
+  const exprRefused = refusals.filter((r) => r.includes(': the object at ')).length
   process.stderr.write(
     `matrix: ${pairs} pairs of ${docs.length} documents; ${refusedSources.length} refused by their own ` +
       `reader, ${tooDeep.length} too deep, ${tooLarge.length} too large, ${defective.length} left out for a ` +
       `registered reader defect; ` +
       `${refusals.length} pairs refused as their target declares (${schemaOnly} by a schema-only target, ` +
-      `${unwritable} by a grammar notation's render, ${refusals.length - schemaOnly - unwritable} by Semantic ` +
+      `${unwritable} by a grammar notation's render, ${exprRefused} by expr's render, ` +
+      `${refusals.length - schemaOnly - unwritable - exprRefused} by Semantic ` +
       `Versioning's embedding); ${grammarsWritten} grammars written in a grammar notation, ${samplesCompared} of ` +
       `their samples compared, ${declaredOtherwise.length} pairs recognising some otherwise across the lexing, ` +
       `as registered\n`,

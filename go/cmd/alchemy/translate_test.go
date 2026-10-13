@@ -284,7 +284,7 @@ func TestTranslateRefusesWhatATargetCannotCarry(t *testing.T) {
 		1, "TARGET_VALUE_UNREPRESENTABLE", "")
 	if f["message"] != "the grammar spec cannot be written as EBNF: the case-insensitive literal \"hi\" is no one W3C "+
 		"EBNF terminal: it would be written as [hH] [iI], and this front end reads whitespace between terminals" ||
-		f["row"] != 237.0 || f["col"] != 3.0 || f["file"] != "tabnas-ebnf/alchemy/render.alc" {
+		f["row"] != 243.0 || f["col"] != 3.0 || f["file"] != "tabnas-ebnf/alchemy/render.alc" {
 		t.Errorf("%v", f)
 	}
 	echo := tempFile(t, "echo-css.alc", "def export [input] input\n")
