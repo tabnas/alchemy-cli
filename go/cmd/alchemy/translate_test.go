@@ -22,6 +22,7 @@ import (
 	"strings"
 	"testing"
 
+	tabnasabnf "github.com/tabnas/abnf/go"
 	"github.com/tabnas/alchemy-cli/go/translate"
 	tabnasini "github.com/tabnas/ini/go"
 	tabnastoml "github.com/tabnas/toml/go"
@@ -68,7 +69,9 @@ func TestFormatsPrintsTheRegistryAsJSON(t *testing.T) {
 		t.Fatalf("%+v", o)
 	}
 	// Each format's fields in their order, abnf's whole up to its loss.
-	if !strings.HasPrefix(o.stdout, `[{"id":"abnf","reads":["tree"],"writes":"tree","root":"object","schema":"grammar-spec","whole":null,"lift":null,"embed":null,"render":"abnf-render","loss":["`) {
+	// Its whole is its manifest's sentence, null where it gives none.
+	if !strings.HasPrefix(o.stdout, `[{"id":"abnf","reads":["tree"],"writes":"tree","root":"object","schema":"grammar-spec","whole":`+
+		wholeJSON(t, tabnasabnf.Translate().Manifest)+`,"lift":null,"embed":null,"render":"abnf-render","loss":["`) {
 		t.Errorf("%s", o.stdout)
 	}
 	var formats []map[string]any
@@ -151,6 +154,30 @@ func TestFormatsPrintsTheRegistryAsJSON(t *testing.T) {
 	if o := invoke(t, []string{"formats", "x"}, nil); o.status != 2 || !strings.Contains(failJSON(t, o)["message"].(string), "usage:") {
 		t.Errorf("%+v", o)
 	}
+}
+
+// wholeJSON is a manifest's translate.whole as `alchemy formats` writes
+// it: the sentence as a JSON string, or null where the manifest gives none.
+func wholeJSON(t *testing.T, manifest string) string {
+	t.Helper()
+	var m struct {
+		Translate struct {
+			Whole *string `json:"whole"`
+		} `json:"translate"`
+	}
+	if err := json.Unmarshal([]byte(manifest), &m); err != nil {
+		t.Fatal(err)
+	}
+	if m.Translate.Whole == nil {
+		return "null"
+	}
+	var b strings.Builder
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(*m.Translate.Whole); err != nil {
+		t.Fatal(err)
+	}
+	return strings.TrimSuffix(b.String(), "\n")
 }
 
 // A document read with --from's grammar and written in --to's format,
