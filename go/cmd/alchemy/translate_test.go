@@ -26,6 +26,7 @@ import (
 	"github.com/tabnas/alchemy-cli/go/translate"
 	tabnasc "github.com/tabnas/c/go"
 	tabnaschess "github.com/tabnas/chess/go"
+	tabnascss "github.com/tabnas/css/go"
 	tabnasebnf "github.com/tabnas/ebnf/go"
 	tabnasexpr "github.com/tabnas/expr/go"
 	tabnasfeed "github.com/tabnas/feed/go"
@@ -146,6 +147,7 @@ func TestFormatsPrintsTheRegistryAsJSON(t *testing.T) {
 	for id, manifest := range map[string]string{
 		"abnf":   tabnasabnf.Translate().Manifest,
 		"c":      tabnasc.Translate().Manifest,
+		"css":    tabnascss.Translate().Manifest,
 		"ebnf":   tabnasebnf.Translate().Manifest,
 		"expr":   tabnasexpr.Translate().Manifest,
 		"feed":   tabnasfeed.Translate().Manifest,

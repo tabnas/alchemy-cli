@@ -17,6 +17,7 @@ import { translate as abnfParts } from '@tabnas/abnf'
 import { source } from '@tabnas/alchemy'
 import { translate as cParts } from '@tabnas/c'
 import { translate as chessParts } from '@tabnas/chess'
+import { translate as cssParts } from '@tabnas/css'
 import { translate as ebnfParts } from '@tabnas/ebnf'
 import { translate as exprParts } from '@tabnas/expr'
 import { translate as feedParts } from '@tabnas/feed'
@@ -549,6 +550,7 @@ describe('cli translate', () => {
     for (const [id, parts] of [
       ['abnf', abnfParts()],
       ['c', cParts()],
+      ['css', cssParts()],
       ['ebnf', ebnfParts()],
       ['expr', exprParts()],
       ['feed', feedParts()],

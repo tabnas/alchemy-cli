@@ -699,6 +699,7 @@ fn formats_lists_the_formats_translate_reads_and_writes() {
     for (id, manifest) in [
         ("abnf", tabnas_abnf::translate().unwrap().manifest),
         ("c", tabnas_c::translate().unwrap().manifest),
+        ("css", tabnas_css::translate().unwrap().manifest),
         ("ebnf", tabnas_ebnf::translate().unwrap().manifest),
         ("expr", tabnas_expr::translate().unwrap().manifest),
         ("feed", tabnas_feed::translate().unwrap().manifest),
