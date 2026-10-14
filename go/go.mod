@@ -12,7 +12,7 @@ require (
 	github.com/tabnas/abnf/go v0.4.24
 	github.com/tabnas/alchemy/go v0.2.7
 	github.com/tabnas/c/go v0.5.15
-	github.com/tabnas/chess/go v0.1.16
+	github.com/tabnas/chess/go v0.1.17
 	github.com/tabnas/css/go v0.5.16
 	github.com/tabnas/csv/go v0.6.6
 	github.com/tabnas/ebnf/go v0.1.19
