@@ -217,11 +217,13 @@ fn invalid_trailing_input_fails_after_rows_were_exported() {
         assert!(fail.committed_output, "native={}", program.native());
         assert!(out.starts_with("\"Identifier\",\"Full name\",\"Balance\"\r\n"));
         assert!(out.len() > 32 * 1024);
-        // The writer coalesces by fragment, never holding a row back to
-        // end on a record boundary (spec 17.4): what was committed is a
-        // prefix of the whole output, and may end inside a record.
+        // The CSV renderer marks the end of each row, and the writer holds
+        // a row until its end (tabnas/alchemy#29), where it once drained
+        // wherever its budget fell (spec 17.4): what was committed is a
+        // prefix of the whole output, and ends with a whole row.
         assert!(full.starts_with(&out), "native={}", program.native());
         assert!(out.len() < full.len());
+        assert!(out.ends_with("\r\n"), "native={}", program.native());
     }
     // A small document: the rows were buffered, not committed, so nothing
     // reached the writer and the failure says so.
@@ -794,4 +796,114 @@ fn a_scan_emit_initial_state_is_measured_and_capped() {
             Metrics::get(&metrics.retained_bytes_high)
         );
     }
+}
+
+/// The source of the record-end runs: an array of `n` small objects, then
+/// one cut off inside a member, which the json grammar refuses. The whole
+/// elements are past the writer's 32 KiB budget, so it drains part of the
+/// text before the failure.
+fn cut_array(n: usize) -> String {
+    let items: Vec<String> = (0..n)
+        .map(|i| format!(r#"{{"id":{i},"name":"item {i}"}}"#))
+        .collect();
+    format!(r#"[{},{{"id":{n},"name":}}]"#, items.join(","))
+}
+
+/// tabnas/alchemy#29: `json` over a program's events marks each value
+/// directly inside the root, and the writer holds a value until its end,
+/// so a run that fails inside one leaves the values before it whole.
+#[test]
+fn a_failed_json_run_leaves_whole_values() {
+    let program = compile("def export [input] (json input)", "export.alc").unwrap();
+    let (outcome, out) = drive(&program, &cut_array(4000), None, &Limits::default());
+    let fail = outcome.expect_err("the source fails");
+    assert_eq!(fail.code, Code::InputInvalid, "{fail}");
+    assert!(fail.committed_output, "{fail}");
+    let n = out.matches(r#""id":"#).count();
+    assert!(n > 0 && n < 4000, "{n} values written");
+    let whole: Vec<String> = (0..n)
+        .map(|i| format!(r#"{{"id":{i},"name":"item {i}"}}"#))
+        .collect();
+    assert_eq!(out, format!("[{}", whole.join(",")));
+}
+
+/// tabnas/alchemy#29: a step of `scan-emit` answers `:record-end` where a
+/// record of its text ends, `join` writes it as no item, and the writer
+/// holds a record until its end, so a run that fails inside one leaves the
+/// records before it whole, natively and interpreted. Without the marks
+/// the writer drains at its budget, wherever that falls.
+#[test]
+fn a_failed_scan_emit_run_leaves_whole_records() {
+    let source = r#"def step [s event]
+  match event
+    case array-start (transition (push :array s) [])
+    case array-end (transition (pop s) [])
+    case object-start (transition (push :object s) [])
+    case object-end
+      match (count s)
+        case 2 (transition (pop s) [:record-end])
+        case _ (transition (pop s) [])
+    case (key name) (transition s [(quoted name) ": "])
+    case (scalar value) (transition s [(scalar-text csv-options value) "\n"])
+
+def export [input]
+  join ""
+    scan-emit [] step (fn [s] []) (events input)
+"#;
+    let native = compile(source, "lines.alc").unwrap();
+    let interpreted = native.with_native(false).unwrap();
+    for program in [native, interpreted] {
+        let (outcome, out) = drive(&program, &cut_array(4000), None, &Limits::default());
+        let fail = outcome.expect_err("the source fails");
+        assert_eq!(fail.code, Code::InputInvalid, "{fail}");
+        assert!(fail.committed_output, "{fail}");
+        let n = out.matches("\"id\": ").count();
+        assert!(n > 0 && n < 4000, "{n} records written");
+        let whole = (0..n)
+            .map(|i| format!("\"id\": {i}\n\"name\": item {i}\n"))
+            .collect::<Vec<_>>()
+            .concat();
+        assert_eq!(out, whole);
+    }
+    // A run that does not fail writes the same text as one without marks.
+    let program = compile(source, "lines.alc").unwrap();
+    assert_eq!(
+        ok(&program, r#"[{"a":1},{"b":"x"}]"#, None),
+        "\"a\": 1\n\"b\": x\n"
+    );
+}
+
+/// tabnas/alchemy#29: `concat-map` marks the end of each item it writes,
+/// and `replace-text`, which writes an item in several fragments, passes
+/// the marks on, so a run that fails part way leaves whole items. Each
+/// item is longer than the writer's budget, so without the marks its last
+/// fragment is still buffered when the failure drops the buffer.
+#[test]
+fn a_failed_concat_map_run_through_replace_text_leaves_whole_items() {
+    let source = r#"def line [x]
+  concat (get "name" x) "\n"
+
+def export [input]
+  replace-text "\n" "\r\n"
+    concat-map line (select (path each-index) input)
+"#;
+    let program = compile(source, "lines.alc").unwrap();
+    let name = |i: usize| format!("{i}{}", "x".repeat(40 * 1024));
+    let items: Vec<String> = (0..3)
+        .map(|i| format!(r#"{{"name":"{}"}}"#, name(i)))
+        .collect();
+    let text = format!(r#"[{},{{"name":}}]"#, items.join(","));
+    let (outcome, out) = drive(&program, &text, None, &Limits::default());
+    let fail = outcome.expect_err("the source fails");
+    assert_eq!(fail.code, Code::InputInvalid, "{fail}");
+    assert!(fail.committed_output, "{fail}");
+    let whole = (0..3)
+        .map(|i| format!("{}\r\n", name(i)))
+        .collect::<Vec<_>>()
+        .concat();
+    assert!(
+        out == whole,
+        "{} bytes written, not the 3 whole items",
+        out.len()
+    );
 }

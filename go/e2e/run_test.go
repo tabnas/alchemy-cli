@@ -132,11 +132,15 @@ func TestInvalidTrailingInputFailsAfterRowsWereExported(t *testing.T) {
 		if !strings.HasPrefix(out, "\"Identifier\",\"Full name\",\"Balance\"\r\n") || len(out) <= 32*1024 {
 			t.Errorf("native %v: %d bytes", program.Native(), len(out))
 		}
-		// The writer coalesces by fragment, never holding a row back to
-		// end on a record boundary (spec 17.4): what was committed is a
-		// prefix of the whole output, and may end inside a record.
+		// The CSV renderer marks the end of each row, and the writer holds
+		// a row until its end (tabnas/alchemy#29), where it once drained
+		// wherever its budget fell (spec 17.4): what was committed is a
+		// prefix of the whole output, and ends with a whole row.
 		if !strings.HasPrefix(full, out) || len(out) >= len(full) {
 			t.Errorf("native %v: %d of %d bytes", program.Native(), len(out), len(full))
+		}
+		if !strings.HasSuffix(out, "\r\n") {
+			t.Errorf("native %v: the output ends inside a row", program.Native())
 		}
 	}
 	// A small document: the rows were buffered, not committed, so nothing
@@ -575,5 +579,122 @@ func TestAScanEmitInitialStateIsMeasuredAndCapped(t *testing.T) {
 		if buffer.String() != "done" || metrics.RetainedBytesHigh.Load() < 1000 {
 			t.Errorf("%s: %q %d", input, buffer.String(), metrics.RetainedBytesHigh.Load())
 		}
+	}
+}
+
+// cutArray is the source of the record-end runs: an array of n small
+// objects, then one cut off inside a member, which the json grammar
+// refuses. The whole elements are past the writer's 32 KiB budget, so it
+// drains part of the text before the failure.
+func cutArray(n int) string {
+	items := make([]string, n)
+	for i := range items {
+		items[i] = fmt.Sprintf(`{"id":%d,"name":"item %d"}`, i, i)
+	}
+	return fmt.Sprintf(`[%s,{"id":%d,"name":}]`, strings.Join(items, ","), n)
+}
+
+// tabnas/alchemy#29 (rs/tests/run_test.rs): json over a program's events
+// marks each value directly inside the root, and the writer holds a value
+// until its end, so a run that fails inside one leaves the values before
+// it whole.
+func TestAFailedJSONRunLeavesWholeValues(t *testing.T) {
+	requireIncremental(t)
+	program := mustCompile(t, "def export [input] (json input)", "export.alc")
+	f, out := hostErr(t, program, cutArray(4000), tt.DefaultLimits())
+	if f.Code != CodeInputInvalid || !f.CommittedOutput {
+		t.Fatalf("%v", f)
+	}
+	n := strings.Count(out, `"id":`)
+	if n == 0 || n >= 4000 {
+		t.Fatalf("%d values written", n)
+	}
+	whole := make([]string, n)
+	for i := range whole {
+		whole[i] = fmt.Sprintf(`{"id":%d,"name":"item %d"}`, i, i)
+	}
+	if want := "[" + strings.Join(whole, ","); out != want {
+		t.Errorf("%d bytes written, not %d whole values", len(out), n)
+	}
+}
+
+// tabnas/alchemy#29: a step of scan-emit answers :record-end where a
+// record of its text ends, join writes it as no item, and the writer
+// holds a record until its end, so a run that fails inside one leaves the
+// records before it whole, natively and interpreted.
+func TestAFailedScanEmitRunLeavesWholeRecords(t *testing.T) {
+	requireIncremental(t)
+	source := `def step [s event]
+  match event
+    case array-start (transition (push :array s) [])
+    case array-end (transition (pop s) [])
+    case object-start (transition (push :object s) [])
+    case object-end
+      match (count s)
+        case 2 (transition (pop s) [:record-end])
+        case _ (transition (pop s) [])
+    case (key name) (transition s [(quoted name) ": "])
+    case (scalar value) (transition s [(scalar-text csv-options value) "\n"])
+
+def export [input]
+  join ""
+    scan-emit [] step (fn [s] []) (events input)
+`
+	native := mustCompile(t, source, "lines.alc")
+	interpreted, f := native.WithNative(false)
+	if f != nil {
+		t.Fatal(f)
+	}
+	for _, program := range []*Program{native, interpreted} {
+		f, out := hostErr(t, program, cutArray(4000), tt.DefaultLimits())
+		if f.Code != CodeInputInvalid || !f.CommittedOutput {
+			t.Fatalf("native %v: %v", program.Native(), f)
+		}
+		n := strings.Count(out, `"id": `)
+		if n == 0 || n >= 4000 {
+			t.Fatalf("native %v: %d records written", program.Native(), n)
+		}
+		var whole strings.Builder
+		for i := 0; i < n; i++ {
+			fmt.Fprintf(&whole, "\"id\": %d\n\"name\": item %d\n", i, i)
+		}
+		if out != whole.String() {
+			t.Errorf("native %v: %d bytes written, not %d whole records", program.Native(), len(out), n)
+		}
+	}
+	// A run that does not fail writes the same text as one without marks.
+	if out := hostOK(t, native, `[{"a":1},{"b":"x"}]`, RenderDefault); out != "\"a\": 1\n\"b\": x\n" {
+		t.Errorf("%q", out)
+	}
+}
+
+// tabnas/alchemy#29: concat-map marks the end of each item it writes, and
+// replace-text, which writes an item in several fragments, passes the
+// marks on, so a run that fails part way leaves whole items. Each item is
+// longer than the writer's budget, so without the marks its last fragment
+// is still buffered when the failure drops the buffer.
+func TestAFailedConcatMapRunThroughReplaceTextLeavesWholeItems(t *testing.T) {
+	requireIncremental(t)
+	source := `def line [x]
+  concat (get "name" x) "\n"
+
+def export [input]
+  replace-text "\n" "\r\n"
+    concat-map line (select (path each-index) input)
+`
+	program := mustCompile(t, source, "lines.alc")
+	name := func(i int) string { return fmt.Sprintf("%d%s", i, strings.Repeat("x", 40*1024)) }
+	items := make([]string, 3)
+	var whole strings.Builder
+	for i := range items {
+		items[i] = fmt.Sprintf(`{"name":"%s"}`, name(i))
+		whole.WriteString(name(i) + "\r\n")
+	}
+	f, out := hostErr(t, program, "["+strings.Join(items, ",")+`,{"name":}]`, tt.DefaultLimits())
+	if f.Code != CodeInputInvalid || !f.CommittedOutput {
+		t.Fatalf("%v", f)
+	}
+	if out != whole.String() {
+		t.Errorf("%d bytes written, not the 3 whole items", len(out))
 	}
 }
