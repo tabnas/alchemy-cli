@@ -694,7 +694,8 @@ fn formats_lists_the_formats_translate_reads_and_writes() {
     assert_eq!(schema("c"), "c");
     // Why a format's documents are read whole, where its manifest says:
     // every format transduce does not stream, each in the sentence its
-    // manifest gives; JSON's none.
+    // manifest gives; JSON's none, nor PGN's, which streams a game at a
+    // time.
     let by_id = |id: &str| formats.iter().find(|f| f["id"] == id).expect("a format");
     for (id, manifest) in [
         ("abnf", tabnas_abnf::translate().unwrap().manifest),
@@ -705,7 +706,6 @@ fn formats_lists_the_formats_translate_reads_and_writes() {
         ("feed", tabnas_feed::translate().unwrap().manifest),
         ("gbnf", tabnas_gbnf::translate().unwrap().manifest),
         ("ini", tabnas_ini::translate().unwrap().manifest),
-        ("pgn", tabnas_chess::translate().unwrap().manifest),
         ("proto", tabnas_proto::translate().unwrap().manifest),
         ("semver", tabnas_semver::translate().unwrap().manifest),
         ("toml", tabnas_toml::translate().unwrap().manifest),
@@ -716,6 +716,7 @@ fn formats_lists_the_formats_translate_reads_and_writes() {
         assert_eq!(&by_id(id)["whole"], whole, "{id}");
     }
     assert!(by_id("json")["whole"].is_null());
+    assert!(by_id("pgn")["whole"].is_null());
     let keys: Vec<&str> = by_id("css")
         .as_object()
         .expect("an object")

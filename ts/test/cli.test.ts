@@ -16,7 +16,6 @@ import { join } from 'node:path'
 import { translate as abnfParts } from '@tabnas/abnf'
 import { source } from '@tabnas/alchemy'
 import { translate as cParts } from '@tabnas/c'
-import { translate as chessParts } from '@tabnas/chess'
 import { translate as cssParts } from '@tabnas/css'
 import { translate as ebnfParts } from '@tabnas/ebnf'
 import { translate as exprParts } from '@tabnas/expr'
@@ -546,7 +545,7 @@ describe('cli translate', () => {
     )
     // Why a format's documents are read whole, where its manifest says:
     // every format transduce does not stream, each in the sentence its
-    // manifest gives.
+    // manifest gives; PGN's none, since it streams a game at a time.
     for (const [id, parts] of [
       ['abnf', abnfParts()],
       ['c', cParts()],
@@ -556,7 +555,6 @@ describe('cli translate', () => {
       ['feed', feedParts()],
       ['gbnf', gbnfParts()],
       ['ini', iniParts()],
-      ['pgn', chessParts()],
       ['proto', protoParts()],
       ['semver', semverParts()],
       ['toml', tomlParts()],
@@ -565,6 +563,7 @@ describe('cli translate', () => {
       assert.ok('string' === typeof whole && '' !== whole, id)
       assert.strictEqual(byId(id).whole, whole, id)
     }
+    assert.strictEqual(byId('pgn').whole, null)
     // `formats` takes no arguments.
     const extra = alchemy(['formats', 'json'])
     assert.equal(extra.status, 2)

@@ -42,7 +42,7 @@
     "@tabnas/abnf": ">=0.4.24",
     "@tabnas/alchemy": ">=0.2.7",
     "@tabnas/c": ">=0.5.15",
-    "@tabnas/chess": ">=0.1.16",
+    "@tabnas/chess": ">=0.1.17",
     "@tabnas/css": ">=0.5.16",
     "@tabnas/csv": ">=0",
     "@tabnas/ebnf": ">=0.1.19",

@@ -25,7 +25,6 @@ import (
 	tabnasabnf "github.com/tabnas/abnf/go"
 	"github.com/tabnas/alchemy-cli/go/translate"
 	tabnasc "github.com/tabnas/c/go"
-	tabnaschess "github.com/tabnas/chess/go"
 	tabnascss "github.com/tabnas/css/go"
 	tabnasebnf "github.com/tabnas/ebnf/go"
 	tabnasexpr "github.com/tabnas/expr/go"
@@ -142,8 +141,10 @@ func TestFormatsPrintsTheRegistryAsJSON(t *testing.T) {
 		t.Errorf("%v", byID["c"])
 	}
 	// Why a format's documents are read whole, where its manifest says:
-	// every format transduce does not stream, each in the sentence its
-	// manifest gives.
+	// every format transduce's Rust and TypeScript lists leave out, each
+	// in the sentence its manifest gives. PGN's says nothing: it streams a
+	// game at a time there, though Go reads it whole (transduce's
+	// DIVERGENCE.md 5).
 	for id, manifest := range map[string]string{
 		"abnf":   tabnasabnf.Translate().Manifest,
 		"c":      tabnasc.Translate().Manifest,
@@ -153,7 +154,6 @@ func TestFormatsPrintsTheRegistryAsJSON(t *testing.T) {
 		"feed":   tabnasfeed.Translate().Manifest,
 		"gbnf":   tabnasgbnf.Translate().Manifest,
 		"ini":    tabnasini.Translate().Manifest,
-		"pgn":    tabnaschess.Translate().Manifest,
 		"proto":  tabnasproto.Translate().Manifest,
 		"semver": tabnassemver.Translate().Manifest,
 		"toml":   tabnastoml.Translate().Manifest,
@@ -167,8 +167,10 @@ func TestFormatsPrintsTheRegistryAsJSON(t *testing.T) {
 			t.Errorf("%s: whole %v, its manifest's %q (%v)", id, byID[id]["whole"], m.Translate.Whole, err)
 		}
 	}
-	if byID["json"]["whole"] != nil {
-		t.Errorf("json: whole %v", byID["json"]["whole"])
+	for _, id := range []string{"json", "pgn"} {
+		if byID[id]["whole"] != nil {
+			t.Errorf("%s: whole %v", id, byID[id]["whole"])
+		}
 	}
 	if byID["pgn"]["schema"] != "pgn-database" || byID["semver"]["embed"] != "semver-embed" ||
 		byID["feed"]["embed"] != "feed-embed" || byID["expr"]["embed"] != "expr-embed" {
