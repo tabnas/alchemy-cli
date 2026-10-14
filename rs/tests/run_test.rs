@@ -859,9 +859,10 @@ def export [input]
         assert!(fail.committed_output, "{fail}");
         let n = out.matches("\"id\": ").count();
         assert!(n > 0 && n < 4000, "{n} records written");
-        let whole: String = (0..n)
+        let whole = (0..n)
             .map(|i| format!("\"id\": {i}\n\"name\": item {i}\n"))
-            .collect();
+            .collect::<Vec<_>>()
+            .concat();
         assert_eq!(out, whole);
     }
     // A run that does not fail writes the same text as one without marks.
@@ -896,7 +897,10 @@ def export [input]
     let fail = outcome.expect_err("the source fails");
     assert_eq!(fail.code, Code::InputInvalid, "{fail}");
     assert!(fail.committed_output, "{fail}");
-    let whole: String = (0..3).map(|i| format!("{}\r\n", name(i))).collect();
+    let whole = (0..3)
+        .map(|i| format!("{}\r\n", name(i)))
+        .collect::<Vec<_>>()
+        .concat();
     assert!(
         out == whole,
         "{} bytes written, not the 3 whole items",
