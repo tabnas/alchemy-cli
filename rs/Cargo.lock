@@ -173,7 +173,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-alchemy-cli"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "serde_json",
  "tabnas-abnf",
