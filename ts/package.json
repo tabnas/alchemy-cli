@@ -1,6 +1,6 @@
 {
   "name": "@tabnas/alchemy-cli",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "main": "dist/cli.js",
   "type": "commonjs",
   "types": "dist/cli.d.ts",
@@ -61,7 +61,7 @@
     "@tabnas/render": ">=0.2.5",
     "@tabnas/semver": ">=0.0.11",
     "@tabnas/toml": ">=0.5.18",
-    "@tabnas/transduce": ">=0",
+    "@tabnas/transduce": ">=0.2.8",
     "@tabnas/xml": ">=0.7.18",
     "@tabnas/yaml": ">=0.5.24",
     "@tabnas/zon": ">=0.5.17"
