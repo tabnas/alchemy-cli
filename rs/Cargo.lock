@@ -173,7 +173,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-alchemy-cli"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "serde_json",
  "tabnas-abnf",
@@ -432,7 +432,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-transduce"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "tabnas-alchemy",
  "tabnas-csv",
