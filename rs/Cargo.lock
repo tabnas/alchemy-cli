@@ -163,7 +163,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-alchemy"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "indexmap",
  "serde_json",
@@ -229,7 +229,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-chess"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "indexmap",
  "regex",
@@ -240,7 +240,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-css"
-version = "0.5.15"
+version = "0.5.16"
 dependencies = [
  "tabnas-jsonic",
  "tabnas-parser",
@@ -308,7 +308,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-ini"
-version = "0.5.19"
+version = "0.5.20"
 dependencies = [
  "indexmap",
  "serde_json",
@@ -328,7 +328,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-json5"
-version = "0.5.15"
+version = "0.5.16"
 dependencies = [
  "indexmap",
  "regex",
@@ -359,7 +359,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-jsonl"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "serde_json",
  "tabnas-json",
@@ -398,7 +398,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-render"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "tabnas-alchemy",
 ]
@@ -421,7 +421,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-toml"
-version = "0.5.17"
+version = "0.5.18"
 dependencies = [
  "indexmap",
  "regex",
@@ -442,7 +442,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-xml"
-version = "0.7.17"
+version = "0.7.18"
 dependencies = [
  "indexmap",
  "regex",
@@ -452,7 +452,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-yaml"
-version = "0.5.23"
+version = "0.5.24"
 dependencies = [
  "indexmap",
  "regex",
@@ -463,7 +463,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-zon"
-version = "0.5.16"
+version = "0.5.17"
 dependencies = [
  "indexmap",
  "serde",

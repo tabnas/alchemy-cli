@@ -102,11 +102,13 @@ describe('run', () => {
       assert.ok(fail.committedOutput, `native=${program.native}`)
       assert.ok(out.startsWith('"Identifier","Full name","Balance"\r\n'))
       assert.ok(Buffer.byteLength(out) > 32 * 1024)
-      // The writer coalesces by fragment, never holding a row back to end
-      // on a record boundary (spec 17.4): what was committed is a prefix of
-      // the whole output, and may end inside a record.
+      // The CSV renderer marks the end of each row, and the writer holds a
+      // row until its end (tabnas/alchemy#29), where it once drained
+      // wherever its budget fell (spec 17.4): what was committed is a
+      // prefix of the whole output, and ends with a whole row.
       assert.ok(full.startsWith(out), `native=${program.native}`)
       assert.ok(out.length < full.length)
+      assert.ok(out.endsWith('\r\n'), `native=${program.native}`)
     }
     // A small document: the rows were buffered, not committed, so nothing
     // reached the writer and the failure says so.
@@ -453,5 +455,82 @@ describe('run', () => {
       assert.equal(writer.text(), 'done', input)
       assert.ok(metrics.retained_bytes_high >= 1000, `${input}: ${metrics.retained_bytes_high}`)
     }
+  })
+})
+
+// The source of the record-end runs: an array of `n` small objects, then
+// one cut off inside a member, which the json grammar refuses. The whole
+// elements are past the writer's 32 KiB budget, so it drains part of the
+// text before the failure.
+function cutArray(n: number): string {
+  const items = Array.from({ length: n }, (_, i) => `{"id":${i},"name":"item ${i}"}`)
+  return `[${items.join(',')},{"id":${n},"name":}]`
+}
+
+// tabnas/alchemy#29 (rs/tests/run_test.rs): a run that fails part way
+// leaves whole records, as each text marks them and the writer holds a
+// record until its end.
+describe('run: a failed run leaves whole records', () => {
+  it('json over events leaves whole values', () => {
+    const program = compile('def export [input] (json input)', 'export.alc')
+    const { fail, out } = err(program, cutArray(4000))
+    assert.equal(fail.code, 'INPUT_INVALID', String(fail))
+    assert.ok(fail.committedOutput, String(fail))
+    const n = out.split('"id":').length - 1
+    assert.ok(n > 0 && n < 4000, `${n} values written`)
+    const whole = Array.from({ length: n }, (_, i) => `{"id":${i},"name":"item ${i}"}`)
+    assert.equal(out, `[${whole.join(',')}`)
+  })
+
+  it('a scan-emit step answers :record-end, natively and interpreted', () => {
+    const source = `def step [s event]
+  match event
+    case array-start (transition (push :array s) [])
+    case array-end (transition (pop s) [])
+    case object-start (transition (push :object s) [])
+    case object-end
+      match (count s)
+        case 2 (transition (pop s) [:record-end])
+        case _ (transition (pop s) [])
+    case (key name) (transition s [(quoted name) ": "])
+    case (scalar value) (transition s [(scalar-text csv-options value) "\\n"])
+
+def export [input]
+  join ""
+    scan-emit [] step (fn [s] []) (events input)
+`
+    const native = compile(source, 'lines.alc')
+    for (const program of [native, native.withNative(false)]) {
+      const { fail, out } = err(program, cutArray(4000))
+      assert.equal(fail.code, 'INPUT_INVALID', String(fail))
+      assert.ok(fail.committedOutput, String(fail))
+      const n = out.split('"id": ').length - 1
+      assert.ok(n > 0 && n < 4000, `${n} records written`)
+      const whole = Array.from({ length: n }, (_, i) => `"id": ${i}\n"name": item ${i}\n`).join('')
+      assert.equal(out, whole)
+    }
+    // A run that does not fail writes the same text as one without marks.
+    assert.equal(ok(native, '[{"a":1},{"b":"x"}]'), '"a": 1\n"b": x\n')
+  })
+
+  it('concat-map through replace-text leaves whole items', () => {
+    // Each item is longer than the writer's budget, so without the marks
+    // its last fragment is still buffered when the failure drops the
+    // buffer.
+    const source = `def line [x]
+  concat (get "name" x) "\\n"
+
+def export [input]
+  replace-text "\\n" "\\r\\n"
+    concat-map line (select (path each-index) input)
+`
+    const program = compile(source, 'lines.alc')
+    const name = (i: number) => `${i}${'x'.repeat(40 * 1024)}`
+    const items = [0, 1, 2].map((i) => `{"name":"${name(i)}"}`)
+    const { fail, out } = err(program, `[${items.join(',')},{"name":}]`)
+    assert.equal(fail.code, 'INPUT_INVALID', String(fail))
+    assert.ok(fail.committedOutput, String(fail))
+    const whole = [0, 1, 2].map((i) => `${name(i)}\r\n`).join('')
+    assert.ok(out === whole, `${out.length} characters written, not the 3 whole items`)
   })
 })
