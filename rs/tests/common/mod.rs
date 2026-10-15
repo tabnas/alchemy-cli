@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use tabnas_alchemy::shared::{Fail, Renderers, Routers};
 use tabnas_alchemy::value::Val;
-use tabnas_alchemy::{Program, Source};
+use tabnas_alchemy::{Input, Program, Source};
 use tabnas_support::Value;
 
 /// The routers a host passes alchemy: transduce's.
@@ -28,6 +28,12 @@ pub fn renderers() -> Arc<dyn Renderers> {
 /// renderers, as a host compiles.
 pub fn compile(src: &str, file: &str) -> Result<Program, Fail> {
     tabnas_alchemy::compile(src, file, routers(), renderers())
+}
+
+/// [`tabnas_alchemy::compile_with`] with transduce's routers and render's
+/// renderers: a program over the input the host declares.
+pub fn compile_with(src: &str, file: &str, input: Input) -> Result<Program, Fail> {
+    tabnas_alchemy::compile_with(src, file, input, routers(), renderers())
 }
 
 /// [`tabnas_alchemy::compile_sources`] with transduce's routers and

@@ -101,9 +101,9 @@ func pipeRow(input string) (string, *Fail) {
 
 // checkRow is a program that checks as its plan report; one that does not
 // fails with the resolver's, the checker's or the plan evaluation's code,
-// at the position it names.
-func checkRow(input string) (string, *Fail) {
-	program, f := Compile(input, "check", routers, renderers)
+// at the position it names. input is what the host declares.
+func checkRow(src string, input Input) (string, *Fail) {
+	program, f := CompileWith(src, "check", input, routers, renderers)
 	if f != nil {
 		return "", f
 	}
@@ -299,7 +299,9 @@ func TestSpecRun(t *testing.T) {
 
 // rowFailures is what a row's program meets, as the runners above meet it:
 // the reader's (reader.tsv), the desugarer's (pipe.tsv), compile's
-// (check.tsv), or a run's on both paths (run.tsv). ran is false for a run
+// (check.tsv, over the input its protocol column declares: empty for JSON
+// events, parser for the parser's rule passes), or a run's on both paths
+// (run.tsv). ran is false for a run
 // row this build cannot run: one that reads its document, in a build
 // without the incremental adapter.
 func rowFailures(t *testing.T, file string, row *support.Row) (fails []*Fail, ran bool) {
@@ -311,7 +313,15 @@ func rowFailures(t *testing.T, file string, row *support.Row) (fails []*Fail, ra
 	case "pipe.tsv":
 		_, f = pipeRow(input)
 	case "check.tsv":
-		_, f = checkRow(input)
+		declared := InputJSONEvents
+		switch protocol := row.Named("protocol"); protocol {
+		case "":
+		case "parser":
+			declared = InputParserEvents
+		default:
+			t.Fatalf("%s: the protocol is empty or parser, not %q", row.Where(), protocol)
+		}
+		_, f = checkRow(input, declared)
 	default:
 		render := runRender(t, row)
 		if !tt.AdapterBuilt() && !beforeTheSource(input, render) {

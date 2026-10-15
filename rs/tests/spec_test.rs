@@ -18,11 +18,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
 use tabnas_alchemy::shared::{Code, Fail, Limits, Metrics};
-use tabnas_alchemy::{desugar, parse, Program, Renderer};
+use tabnas_alchemy::{desugar, parse, Input, Program, Renderer};
 use tabnas_support::{is_error_expect, load_spec_dir, Failure, Row, Runner, SpecOptions};
 use tabnas_transduce::{ParserSource, Prune, SourceMode};
 
-use common::{compile, spec_dir, text_value};
+use common::{compile, compile_with, spec_dir, text_value};
 
 /// A program run over a JSON document: the bytes it writes, or the
 /// failure. See alchemy's `test/AGENTS.md` for the columns.
@@ -147,8 +147,10 @@ fn run_failure(fail: &Fail) -> Failure {
 
 /// The failures a row's program meets, as the runners meet them: the
 /// reader's (`reader.tsv`), the desugarer's (`pipe.tsv`) and compile's
-/// (`check.tsv`), whose runners are alchemy's, or a run's on both paths
-/// (`run.tsv`), whose runner is above.
+/// (`check.tsv`, over the input its `protocol` column declares: empty for
+/// JSON events, `parser` for the parser's rule passes), whose runners are
+/// alchemy's, or a run's on both paths (`run.tsv`), whose runner is
+/// above.
 fn row_failures(file: &str, row: &Row) -> Vec<Fail> {
     let input = row.unesc(0);
     match file {
@@ -158,7 +160,20 @@ fn row_failures(file: &str, row: &Row) -> Vec<Fail> {
             .err()
             .into_iter()
             .collect(),
-        "check.tsv" => compile(&input, "check").err().into_iter().collect(),
+        "check.tsv" => {
+            let declared = match row.named("protocol") {
+                "" => Input::JsonEvents,
+                "parser" => Input::ParserEvents,
+                other => panic!(
+                    "{}: the protocol is empty or parser, not {other:?}",
+                    row.location()
+                ),
+            };
+            compile_with(&input, "check", declared)
+                .err()
+                .into_iter()
+                .collect()
+        }
         _ => {
             let doc = match row.unesc_named("doc") {
                 doc if doc.is_empty() => "null".to_string(),
