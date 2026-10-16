@@ -1055,3 +1055,205 @@ fn numbers_are_read_and_written_as_the_renderers_do() {
         );
     }
 }
+
+/// transduce's routers, counting the native transduce-trees they make, so
+/// a test can tell the native path from the library's scan.
+struct CountingRouters(Arc<std::sync::atomic::AtomicUsize>);
+
+impl tabnas_alchemy::shared::Routers<tabnas_alchemy::value::Val> for CountingRouters {
+    fn router(
+        &self,
+        specs: Vec<tabnas_alchemy::shared::CaptureSpec>,
+        limits: &Limits,
+        duplicates: tabnas_alchemy::shared::Duplicates,
+        metrics: Arc<Metrics>,
+        downstream: Box<dyn tabnas_alchemy::shared::RouteSink + Send>,
+    ) -> Result<Box<dyn Sink + Send>, Fail> {
+        tabnas_alchemy::shared::Routers::<tabnas_alchemy::value::Val>::router(
+            &tabnas_transduce::routers(),
+            specs,
+            limits,
+            duplicates,
+            metrics,
+            downstream,
+        )
+    }
+
+    fn table_from_json(
+        &self,
+        binding: tabnas_alchemy::shared::TableBinding,
+        limits: &Limits,
+        duplicates: tabnas_alchemy::shared::Duplicates,
+        metrics: Arc<Metrics>,
+        sink: Box<dyn tabnas_alchemy::shared::TableSink + Send>,
+    ) -> Result<Box<dyn Sink + Send>, Fail> {
+        tabnas_alchemy::shared::Routers::<tabnas_alchemy::value::Val>::table_from_json(
+            &tabnas_transduce::routers(),
+            binding,
+            limits,
+            duplicates,
+            metrics,
+            sink,
+        )
+    }
+
+    fn scan_emit(
+        &self,
+        initial: tabnas_alchemy::value::Val,
+        step: tabnas_alchemy::shared::ScanStep<tabnas_alchemy::value::Val>,
+        finish: tabnas_alchemy::shared::ScanFinish<tabnas_alchemy::value::Val>,
+        out: tabnas_alchemy::shared::ScanOut<tabnas_alchemy::value::Val>,
+    ) -> Box<dyn tabnas_alchemy::shared::ScanEmitter<tabnas_alchemy::value::Val>> {
+        tabnas_transduce::routers().scan_emit(initial, step, finish, out)
+    }
+
+    fn guarded(
+        &self,
+        inner: Box<dyn Sink + Send>,
+        limits: &Limits,
+        abort: tabnas_alchemy::shared::AbortFlag,
+        metrics: Arc<Metrics>,
+    ) -> Box<dyn Sink + Send> {
+        tabnas_alchemy::shared::Routers::<tabnas_alchemy::value::Val>::guarded(
+            &tabnas_transduce::routers(),
+            inner,
+            limits,
+            abort,
+            metrics,
+        )
+    }
+
+    fn transduce_tree(
+        &self,
+        spec: tabnas_alchemy::shared::TreeSpec,
+        downstream: Box<dyn Sink + Send>,
+    ) -> Result<Box<dyn tabnas_alchemy::shared::ParserSink + Send>, Box<dyn Sink + Send>> {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        tabnas_alchemy::shared::Routers::<tabnas_alchemy::value::Val>::transduce_tree(
+            &tabnas_transduce::routers(),
+            spec,
+            downstream,
+        )
+    }
+}
+
+/// One document's rule passes into a program over parser events, its
+/// output rendered as JSON; the output, or the failure.
+fn run_passes(program: &Program, make: fn() -> Tabnas, text: &str) -> Result<String, Fail> {
+    let buffer = Shared::default();
+    let sink = program.parser_sink(
+        Box::new(buffer.clone()),
+        Some(Renderer::Json),
+        &Limits::default(),
+        Metrics::new(),
+    )?;
+    let (outcome, _) = tabnas_transduce::ParserEventSource::new(make(), text).run_boxed(sink);
+    outcome?;
+    let bytes = buffer.0.lock().unwrap().clone();
+    Ok(String::from_utf8(bytes).expect("utf-8 output"))
+}
+
+/// The library's `transduce-tree` and transduce's native one (decision 3
+/// of alchemy's streaming plan): over every JSON fixture of transduce's,
+/// the generated documents and the documents below, for the json part's
+/// spec and for specs that announce a named key, take a close pass's
+/// value and hand a container on through a replaced rule, the same bytes
+/// both ways, or the same code. The native ran each time the natives
+/// were on, and never when they were off.
+#[test]
+fn transduce_tree_native_and_interpreted_agree() {
+    let specs = [
+        (
+            "the json part's spec",
+            "record\n    entry :map (record (entry :container :object))\n    entry :list (record (entry :container :array))\n    entry :pair (record (entry :key 0))\n    entry :val (record (entry :scalar 0))",
+        ),
+        (
+            "a close pass's value, keyed by name",
+            "record\n    entry :map (record (entry :container :object))\n    entry :list (record (entry :container :array))\n    entry :pair (record (entry :key 0))\n    entry :val (record (entry :scalar :value))",
+        ),
+        (
+            "a container handed on through a replaced rule",
+            "record\n    entry :list (record (entry :container :array))\n    entry :elem (record (entry :container :array))\n    entry :val (record (entry :scalar 0))",
+        ),
+        (
+            "a key whose token is not a string",
+            "record\n    entry :val (record (entry :key 0) (entry :scalar 0))",
+        ),
+        (
+            "a named key on every value",
+            "record\n    entry :list (record (entry :container :array))\n    entry :val (record (entry :key \"v\") (entry :scalar 0))",
+        ),
+    ];
+    let mut documents: Vec<(String, String)> = Vec::new();
+    let dir = fixtures_dir();
+    let mut entries: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .expect("transduce's fixtures are beside this checkout")
+        .map(|e| e.expect("a directory entry").path())
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("json"))
+        .collect();
+    entries.sort();
+    for path in entries {
+        let text = std::fs::read_to_string(&path).expect("a fixture reads");
+        documents.push((path.display().to_string(), text));
+    }
+    for n in [0, 1, 2, 50] {
+        documents.push((format!("records_json({n})"), support::records_json(n)));
+    }
+    for text in [
+        "1",
+        "2.50",
+        "-0",
+        "1E+2",
+        "\"s\"",
+        "null",
+        "[]",
+        "{}",
+        "[[[]],[{}]]",
+        r#"{"a":[1,2.50,"x",{"b":null}],"c":{},"d":[],"e":1e21,"f":true}"#,
+        r#"{"é":"日本","a\"b":"\u0000"}"#,
+        r#"{"a":1,"a":2}"#,
+        "[1,",
+        "{\"a\" 1}",
+    ] {
+        documents.push((format!("{text:?}"), text.to_string()));
+    }
+    let made = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut compared = 0;
+    let mut failures = Vec::new();
+    for (spec_name, spec) in specs {
+        let src = format!("def spec\n  {spec}\n\ndef export [input] (transduce-tree spec input)\n");
+        let native = tabnas_alchemy::compile_with(
+            &src,
+            "tree.alc",
+            tabnas_alchemy::Input::ParserEvents,
+            Arc::new(CountingRouters(made.clone())),
+            common::renderers(),
+        )
+        .expect("the program compiles");
+        let interpreted = native.with_native(false).unwrap();
+        for (name, text) in &documents {
+            let before = made.load(std::sync::atomic::Ordering::Relaxed);
+            let a = run_passes(&native, tabnas_json::make, text);
+            let ran_native = made.load(std::sync::atomic::Ordering::Relaxed) - before;
+            let b = run_passes(&interpreted, tabnas_json::make, text);
+            let after = made.load(std::sync::atomic::Ordering::Relaxed) - before;
+            assert_eq!(
+                (ran_native, after),
+                (1, 1),
+                "{spec_name}, {name}: the native ran once, the library's scan without it"
+            );
+            let name = format!("{spec_name}, {name}");
+            match (a, b) {
+                (Ok(a), Ok(b)) if a == b => {}
+                (Err(a), Err(b)) if a.code == b.code => {}
+                (a, b) => failures.push(format!(
+                    "{name}\n  native:      {a:?}\n  interpreted: {b:?}"
+                )),
+            }
+            compared += 1;
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+    assert!(compared > 100, "{compared} documents compared");
+    eprintln!("transduce-tree: {compared} documents agree both ways");
+}

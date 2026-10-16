@@ -24,8 +24,10 @@ import { make as makeCsv } from '@tabnas/csv'
 import { make as makeJson } from '@tabnas/json'
 import { make as makeJsonl } from '@tabnas/jsonl'
 import { Yaml } from '@tabnas/yaml'
-import { BytesWriter } from '@tabnas/render'
+import { BytesWriter, renderers } from '@tabnas/render'
+import { ParserEventSource, routers } from '@tabnas/transduce'
 
+import * as alchemy from '@tabnas/alchemy'
 import { Program } from '@tabnas/alchemy'
 import { Code, Ev, Limits, Metrics, replay } from '@tabnas/alchemy/shared'
 
@@ -510,3 +512,99 @@ function attemptFail(work: () => unknown): any {
   }
   throw new Error('expected a failure')
 }
+
+// The specs the transduce-tree comparison runs: the json part's, and specs
+// that take a close pass's value, hand a container on through a replaced
+// rule, refuse a key that is not a string and announce a named key.
+const TREE_SPECS: Array<[string, string]> = [
+  [
+    "the json part's spec",
+    'record\n    entry :map (record (entry :container :object))\n    entry :list (record (entry :container :array))\n    entry :pair (record (entry :key 0))\n    entry :val (record (entry :scalar 0))',
+  ],
+  [
+    "a close pass's value, keyed by name",
+    'record\n    entry :map (record (entry :container :object))\n    entry :list (record (entry :container :array))\n    entry :pair (record (entry :key 0))\n    entry :val (record (entry :scalar :value))',
+  ],
+  [
+    'a container handed on through a replaced rule',
+    'record\n    entry :list (record (entry :container :array))\n    entry :elem (record (entry :container :array))\n    entry :val (record (entry :scalar 0))',
+  ],
+  ['a key whose token is not a string', 'record\n    entry :val (record (entry :key 0) (entry :scalar 0))'],
+  [
+    'a named key on every value',
+    'record\n    entry :list (record (entry :container :array))\n    entry :val (record (entry :key "v") (entry :scalar 0))',
+  ],
+]
+
+describe('differential: transduce-tree', () => {
+  // The library's `transduce-tree` and transduce's native one (decision 3
+  // of alchemy's streaming plan), over every JSON fixture of transduce's,
+  // the generated documents and the documents below: the same bytes both
+  // ways, or the same code (rs/tests/stdlib_test.rs). The native ran each
+  // time the natives were on, and never when they were off.
+  it('the native and the interpreted transduce-tree agree', () => {
+    const documents: Array<[string, string]> = []
+    for (const f of readdirSync(FIXTURES).sort()) {
+      if ('.json' === extname(f)) documents.push([f, readFileSync(join(FIXTURES, f), 'utf8')])
+    }
+    for (const n of [0, 1, 2, 50]) documents.push([`recordsJson(${n})`, recordsJson(n)])
+    for (const text of [
+      '1',
+      '2.50',
+      '-0',
+      '1E+2',
+      '"s"',
+      'null',
+      '[]',
+      '{}',
+      '[[[]],[{}]]',
+      '{"a":[1,2.50,"x",{"b":null}],"c":{},"d":[],"e":1e21,"f":true}',
+      '{"é":"日本","a\\"b":"\\u0000"}',
+      '{"a":1,"a":2}',
+      '[1,',
+      '{"a" 1}',
+    ]) {
+      documents.push([JSON.stringify(text), text])
+    }
+    let made = 0
+    const counting: any = {
+      ...routers,
+      transduceTree(spec: any, downstream: any) {
+        made++
+        return routers.transduceTree!(spec, downstream)
+      },
+    }
+    const run = (program: Program, text: string) =>
+      attempt(() => {
+        const writer = new BytesWriter()
+        const sink = program.parserSink(writer, 'json')
+        new ParserEventSource(makeJson(), text).run(sink)
+        return writer.text()
+      })
+    const failures: string[] = []
+    let compared = 0
+    for (const [specName, spec] of TREE_SPECS) {
+      const src = `def spec\n  ${spec}\n\ndef export [input] (transduce-tree spec input)\n`
+      const native = alchemy.compile(src, 'tree.alc', { routers: counting, renderers, input: 'ParserEvents/1' })
+      const interpreted = native.withNative(false)
+      for (const [name, text] of documents) {
+        const before = made
+        const a = run(native, text)
+        const ranNative = made - before
+        const b = run(interpreted, text)
+        assert.deepStrictEqual([ranNative, made - before], [1, 1], `${specName}, ${name}: the native ran once`)
+        const label = `${specName}, ${name}`
+        if (a.ok && b.ok) {
+          if (a.text !== b.text) failures.push(`${label}\n  native:      ${a.text}\n  interpreted: ${b.text}`)
+        } else if (!a.ok && !b.ok) {
+          if (a.fail?.code !== b.fail?.code) failures.push(`${label}\n  native:      ${a.fail}\n  interpreted: ${b.fail}`)
+        } else {
+          failures.push(`${label}\n  native:      ${a.ok ? a.text : a.fail}\n  interpreted: ${b.ok ? b.text : b.fail}`)
+        }
+        compared++
+      }
+    }
+    assert.deepStrictEqual(failures, [])
+    assert.ok(100 < compared, `${compared} documents compared`)
+  })
+})
