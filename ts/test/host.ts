@@ -46,6 +46,12 @@ export function compile(src: string, file: string): alchemy.Program {
   return alchemy.compile(src, file, OPTIONS)
 }
 
+// `compile` over the input the host declares: JSON events, or the parser's
+// rule passes.
+export function compileWith(src: string, file: string, input: alchemy.Input): alchemy.Program {
+  return alchemy.compile(src, file, { ...OPTIONS, input })
+}
+
 // `compileSources` as a host calls it, with `OPTIONS`.
 export function compileSources(sources: ReadonlyArray<alchemy.Source>): alchemy.Program {
   return alchemy.compileSources(sources, OPTIONS)

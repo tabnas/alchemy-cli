@@ -38,7 +38,7 @@ import {
 } from '@tabnas/alchemy'
 import { Limits, Metrics } from '@tabnas/alchemy/shared'
 
-import { OWN_CODES, compile, failCode, sibling } from './host'
+import { OWN_CODES, compile, compileWith, failCode, sibling } from './host'
 
 // alchemy's fixtures, in the checkout beside this one.
 const SPEC_DIR = sibling('alchemy', 'test', 'spec')
@@ -132,8 +132,10 @@ makeRunner({
 }).file(join(SPEC_DIR, 'run.tsv'))
 
 // The failures a row's program meets: the reader's (reader.tsv), the
-// desugarer's (pipe.tsv), compile's (check.tsv), or a run's, both paths
-// (run.tsv), as the runners above meet them.
+// desugarer's (pipe.tsv), compile's (check.tsv, over the input its
+// `protocol` column declares: empty for JSON events, `parser` for the
+// parser's rule passes), or a run's, both paths (run.tsv), as the runners
+// above meet them.
 function rowFailures(file: string, input: string, row: SpecRow): unknown[] {
   const met = (work: () => unknown): unknown[] => {
     try {
@@ -148,8 +150,13 @@ function rowFailures(file: string, input: string, row: SpecRow): unknown[] {
       return met(() => parse(input))
     case 'pipe.tsv':
       return met(() => desugarProgram(parse(input), input))
-    case 'check.tsv':
-      return met(() => compile(input, 'check'))
+    case 'check.tsv': {
+      const protocol = row.named('protocol')
+      if ('' !== protocol && 'parser' !== protocol) {
+        throw new Error(`${row.where()}: the protocol is empty or parser, not ${JSON.stringify(protocol)}`)
+      }
+      return met(() => compileWith(input, 'check', 'parser' === protocol ? 'ParserEvents/1' : 'JsonEvents/1'))
+    }
     default: {
       const cell = row.unescNamed('doc')
       const doc = '' === cell ? 'null' : cell
