@@ -29,7 +29,7 @@ import { ParserEventSource, routers } from '@tabnas/transduce'
 
 import * as alchemy from '@tabnas/alchemy'
 import { Program } from '@tabnas/alchemy'
-import { Code, Ev, Fail, Limits, Metrics, replay } from '@tabnas/alchemy/shared'
+import { Code, Ev, Limits, Metrics, replay } from '@tabnas/alchemy/shared'
 
 import { EXPECTED_CSV, PROGRAM, RECORDS } from './common'
 import { compile, events, replayed } from './host'
@@ -598,7 +598,12 @@ describe('differential: transduce-tree', () => {
         if (a.ok && b.ok) {
           if (a.text !== b.text) failures.push(`${label}\n  native:      ${a.text}\n  interpreted: ${b.text}`)
         } else if (!a.ok && !b.ok) {
-          const same = a.fail instanceof Fail && b.fail instanceof Fail && a.fail.code === b.fail.code
+          // Both must fail with one code, each carrying one: a plain crash on
+          // both sides is no match. The codes are compared as strings rather
+          // than the failures as `Fail`s, since where the linked siblings load
+          // a second copy of the shared module (Windows), a `Fail` thrown
+          // through transduce is not an instance of this file's `Fail`.
+          const same = 'string' === typeof a.fail?.code && a.fail.code === b.fail?.code
           if (!same) failures.push(`${label}\n  native:      ${a.fail}\n  interpreted: ${b.fail}`)
         } else {
           failures.push(`${label}\n  native:      ${a.ok ? a.text : a.fail}\n  interpreted: ${b.ok ? b.text : b.fail}`)
