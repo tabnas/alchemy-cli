@@ -539,3 +539,49 @@ func TestRunRefusesWithoutTheIncrementalAdapter(t *testing.T) {
 		t.Errorf("%d %q %v", o.status, o.stdout, f)
 	}
 }
+
+// transducer is the json transducer: the library's transduce-tree over the
+// json grammar's rules, as its module's part spells it.
+const transducer = "def export [input]\n  transduce-tree\n    record\n      entry :map (record (entry :container :object))\n      entry :list (record (entry :container :array))\n      entry :pair (record (entry :key 0))\n      entry :val (record (entry :scalar 0))\n    input\n"
+
+// run --grammar FORMAT parses INPUT with that format's grammar and runs the
+// program over its rule passes, in every build (the source of rule passes
+// needs no adapter), natively and interpreted: a transducer over json's
+// writes the document, a number's lexeme kept; a document the grammar
+// refuses is INPUT_INVALID; a format that is not parsed, or is unknown, is
+// refused with status 2, naming the formats that are (C is parsed here,
+// where the Rust crate reads it as its realized tree; pgn and feed are
+// read as trees here); a program over JSON events, compiled over parser
+// events, is a protocol mismatch; and the option takes a value.
+func TestRunTakesAGrammarWhoseRulePassesTheProgramReads(t *testing.T) {
+	programPath := tempFile(t, "transducer.alc", transducer)
+	doc := `{"a":[1,2.50,"x",{"b":null}],"c":{},"d":[],"e":1e21,"f":true}`
+	for _, args := range [][]string{
+		{"run", "--grammar", "json", programPath, "-"},
+		{"run", "--grammar", "json", "--no-native", programPath, "-"},
+	} {
+		if o := invoke(t, args, text(doc)); o.status != 0 || o.stdout != doc+"\n" {
+			t.Errorf("%v: %+v", args, o)
+		}
+	}
+	if o := invoke(t, []string{"run", "--grammar", "json", programPath, "-"}, text("[1,")); o.status != 1 || o.stdout != "" || failJSON(t, o)["code"] != "INPUT_INVALID" {
+		t.Errorf("%+v", o)
+	}
+	for _, name := range []string{"abnf", "nope"} {
+		o := invoke(t, []string{"run", "--grammar", name, programPath, "-"}, text(doc))
+		f := failJSON(t, o)
+		want := "--grammar takes a format whose documents are parsed (c, css, csv, ini, json, json5, jsonc, jsonic, jsonl, markdown, semver, toml, xml, yaml or zon), not " + fmt.Sprintf("%q", name)
+		if o.status != 2 || f["code"] != "INPUT_INVALID" || f["message"] != want {
+			t.Errorf("%s: %+v", name, o)
+		}
+	}
+	events := tempFile(t, "events.alc", "def export [input] (json input)\n")
+	o := invoke(t, []string{"run", "--grammar", "json", events, "-"}, text(doc))
+	f := failJSON(t, o)
+	if message, _ := f["message"].(string); o.status == 0 || f["code"] != "DSL_TYPE_ERROR" || !strings.HasPrefix(message, "protocol_mismatch") {
+		t.Errorf("%+v", o)
+	}
+	if o := invoke(t, []string{"run", programPath, "-", "--grammar"}, text(doc)); o.status != 2 {
+		t.Errorf("%+v", o)
+	}
+}

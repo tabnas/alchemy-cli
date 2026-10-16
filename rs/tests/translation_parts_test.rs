@@ -3,7 +3,11 @@
 // the compile-time contract without introducing a shared crate type. Moved
 // here from tabnas-alchemy's tests, since it renders each grammar's sample
 // on transduce's routers and render's renderers; the composition that only
-// compiles stays in alchemy's translation_parts_test.rs.
+// compiles stays in alchemy's translation_parts_test.rs. The transducer
+// part a package may ship (its manifest's `translate.transduce`) is held
+// here too: present when declared and absent when not, under the entry the
+// package names, read by the command, and composing over the format's
+// parser's rule passes.
 
 mod common;
 
@@ -11,7 +15,9 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 use tabnas_alchemy::shared::{replay, Fail, Limits, Metrics, OwnedJsonEvent};
+use tabnas_alchemy::translate::{compose_parsed, Options};
 use tabnas_alchemy::{Program, Source};
+use tabnas_alchemy_cli::translate as cli_translate;
 use tabnas_transduce::ParserSource;
 
 use common::compile_sources;
@@ -26,8 +32,11 @@ struct StructuralParts {
     manifest: &'static str,
     lift: Option<StructuralPart>,
     render: Option<StructuralPart>,
+    transduce: Option<StructuralPart>,
 }
 
+/// A package's parts, read field by field; a package whose interface
+/// carries a transducer says so with `transduce`.
 macro_rules! structural_parts {
     ($parts:expr) => {{
         let parts = $parts.expect("the grammar exposes translation parts");
@@ -38,6 +47,25 @@ macro_rules! structural_parts {
                 source: part.source,
             }),
             render: parts.render.map(|part| StructuralPart {
+                entry: part.entry,
+                source: part.source,
+            }),
+            transduce: None,
+        }
+    }};
+    ($parts:expr, transduce) => {{
+        let parts = $parts.expect("the grammar exposes translation parts");
+        StructuralParts {
+            manifest: parts.manifest,
+            lift: parts.lift.map(|part| StructuralPart {
+                entry: part.entry,
+                source: part.source,
+            }),
+            render: parts.render.map(|part| StructuralPart {
+                entry: part.entry,
+                source: part.source,
+            }),
+            transduce: parts.transduce.map(|part| StructuralPart {
                 entry: part.entry,
                 source: part.source,
             }),
@@ -231,6 +259,41 @@ fn structural_translation_parts_agree_with_their_descriptors_and_compile() {
         let render_path = translate["render"].as_str();
         assert_part(format, "lift", lift_path, parts.lift);
         assert_part(format, "render", render_path, parts.render);
+
+        // The transducer part, where the manifest names one: the package
+        // exposes it under its entry, the command reads it from the
+        // package (`Format::transducer`), and it composes over the
+        // format's parser's rule passes into a tree target. Where the
+        // manifest names none, neither has one.
+        let transduce_path = translate["transduce"].as_str();
+        assert_part(format, "transduce", transduce_path, parts.transduce);
+        let registered = cli_translate::format(format)
+            .unwrap_or_else(|| panic!("{format} is one of the command's formats"));
+        assert_eq!(
+            registered.transducer().map(|alc| alc.entry.as_str()),
+            parts.transduce.map(|part| part.entry),
+            "{format}: the command's transducer is the package's"
+        );
+        if let (Some(alc), Some(path)) = (registered.transducer(), transduce_path) {
+            assert!(
+                alc.file.ends_with(path),
+                "{format}: the transducer is {}, not {path}",
+                alc.file
+            );
+            let target = &cli_translate::format("json")
+                .expect("json is a format")
+                .part;
+            let composition =
+                compose_parsed(&registered.part, alc, target, &Options::default(), "parts")
+                    .unwrap_or_else(|fail| {
+                        panic!("{format}: the transducer does not compose: {fail}")
+                    });
+            composition
+                .compile(None, common::routers(), common::renderers())
+                .unwrap_or_else(|fail| {
+                    panic!("{format}: the transducer's composition does not compile: {fail}")
+                });
+        }
 
         let mut preferred = None;
         for (index, read_shape) in reads.iter().enumerate() {

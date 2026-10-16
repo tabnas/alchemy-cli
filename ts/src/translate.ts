@@ -23,9 +23,18 @@
 // value that is not yet the tree its parts declare, and the package's API
 // reads a document as that tree (expr's simplified form, proto's
 // descriptor, and the grammar spec a grammar notation's document compiles
-// to), that tree is the document, read whole. Nothing here knows a format
-// by its name: a format is what its manifest says, and a package whose
-// manifest names no parts this host can take is not a format here.
+// to), that tree is the document, read whole. A package that ships a
+// transducer part (its manifest's `translate.transduce`, the alchemy file
+// whose entry makes the format's JSON events of the parser's rule passes)
+// is read through it instead: the route is composed over the transducer
+// (`composeParsed`), and the input's rule passes stream through transduce's
+// `ParserEventSource` into the program, whatever the grammar, with nothing
+// held but what the part keeps; where the part's events are not what the
+// grammar's value holds (a repeated member, which it streams twice and
+// `tree-contract` refuses), the document is read again whole, as above.
+// Nothing here knows a format by its name: a format is what its manifest
+// says, and a package whose manifest names no parts this host can take is
+// not a format here.
 
 import { abnfCompile, toJsonic, toPureSpec, translate as abnfParts } from '@tabnas/abnf'
 import { Program, compile as compileProgram, isFail, translate } from '@tabnas/alchemy'
@@ -60,6 +69,7 @@ import {
   Guarded,
   Limits,
   Metrics,
+  ParserEventSource,
   ParserSource,
   Prune,
   SourceMode,
@@ -89,6 +99,15 @@ type Parts = {
   readonly lift?: translate.PartText
   readonly embed?: translate.PartText
   readonly render?: translate.PartText
+  readonly transduce?: translate.PartText
+}
+
+// A package's parts as alchemy's descriptor, with the transducer part its
+// manifest may name beside it: the descriptor carries none, and
+// `Part.transducer` reads the two together.
+type Described = {
+  readonly descriptor: translate.Descriptor
+  readonly transduce?: translate.PartText
 }
 
 // How a format's documents are read: with its grammar's parser, a fresh
@@ -197,16 +216,49 @@ class CheckedSource implements DocumentSource {
 }
 
 // One format this command reads and writes: its parts, as its package's
-// manifest names them, and how its documents are read.
+// manifest names them, how its documents are read, and the transducer
+// part its package ships (its manifest's `translate.transduce`: the
+// alchemy file whose entry makes the format's JSON events of its parser's
+// rule passes, through which `translate` reads the format's documents),
+// where it ships one.
 export class Format {
   constructor(
     readonly part: translate.Part,
     private readonly reading: Reading,
+    readonly transducer?: translate.Alc,
   ) {}
 
   // The manifest's `languageId`.
   get id(): string {
     return this.part.id
+  }
+
+  // Whether the format's documents are parsed, so that a program over
+  // parser events can read them (`passes`); a format read as the tree its
+  // package's API makes of a document has no parser here.
+  parses(): boolean {
+    const reading = this.reading
+    return 'function' === typeof reading || !('tree' in reading)
+  }
+
+  // The parser's rule passes over `text`: transduce's source of
+  // `ParserEvents/1` with a fresh parser of the format's grammar, for a
+  // program over parser events, a transducer part's or `run --grammar`'s.
+  // The check the package's parse makes first, where it makes one, runs
+  // first, and its refusal is thrown as the source reports an engine
+  // error; a format read as a tree has no parser, and refuses.
+  passes(text: string): ParserEventSource {
+    const reading = this.reading
+    if ('function' === typeof reading) return new ParserEventSource(reading(), text)
+    if ('tree' in reading) {
+      throw Fail.input(`${this.id} is read as a tree, not parsed: it has no rule passes for a program to read`)
+    }
+    try {
+      reading.check(text)
+    } catch (err) {
+      throw engineFailure(err, new AbortFlag())
+    }
+    return new ParserEventSource(reading.parser(), text)
   }
 
   // A source over `text`, read as this format reads a document.
@@ -236,10 +288,14 @@ export class Format {
 
 // A package's parts as alchemy's descriptor, named by the package as the
 // Rust crate names it (`tabnas-yaml`), which is the name its parts carry
-// in diagnostics.
-function descriptor(pkg: string, parts: Parts | undefined): translate.Descriptor | undefined {
+// in diagnostics, with the transducer part the package hands over beside
+// it.
+function descriptor(pkg: string, parts: Parts | undefined): Described | undefined {
   if (undefined === parts) return undefined
-  return { package: pkg, manifest: parts.manifest, lift: parts.lift, embed: parts.embed, render: parts.render }
+  return {
+    descriptor: { package: pkg, manifest: parts.manifest, lift: parts.lift, embed: parts.embed, render: parts.render },
+    transduce: parts.transduce,
+  }
 }
 
 // Every grammar package this command carries, with how its documents are
@@ -247,7 +303,7 @@ function descriptor(pkg: string, parts: Parts | undefined): translate.Descriptor
 // (the relaxed grammars on jsonic's base) and as transduce's differential
 // suite reads it, or, where its parser's value is not yet the tree its
 // parts declare, the tree its own API reads a document as.
-function packages(): Array<[translate.Descriptor | undefined, Reading]> {
+function packages(): Array<[Described | undefined, Reading]> {
   return [
     [descriptor('tabnas-abnf', abnfParts()), { tree: abnfTree }],
     [descriptor('tabnas-c', cParts()), () => new Tabnas().use(jsonic).use(C)],
@@ -390,8 +446,12 @@ export function formats(): ReadonlyArray<Format> {
   if (undefined === registry) {
     const found: Format[] = []
     for (const [d, reading] of packages()) {
-      const part = undefined === d ? undefined : translate.Part.fromDescriptor(d)
-      if (undefined !== part) found.push(new Format(part, reading))
+      const part = undefined === d ? undefined : translate.Part.fromDescriptor(d.descriptor)
+      if (undefined === d || undefined === part) continue
+      // A transducer the manifest and the package disagree on is none
+      // here; the translation-parts test holds the two together.
+      const transducer = translate.Part.transducer(d.descriptor, d.transduce)?.alc
+      found.push(new Format(part, reading, transducer))
     }
     found.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
     registry = Object.freeze(found)
@@ -406,7 +466,16 @@ export function format(id: string): Format | undefined {
 
 // The formats' ids for a message: `csv, ini, ... or zon`.
 export function names(): string {
-  const ids = formats().map((f) => f.id)
+  return namesOf(formats().map((f) => f.id))
+}
+
+// The ids of the formats whose documents are parsed, for a message, as
+// `names` lists every format: what `run --grammar` takes.
+export function parserNames(): string {
+  return namesOf(formats().filter((f) => f.parses()).map((f) => f.id))
+}
+
+function namesOf(ids: ReadonlyArray<string>): string {
   if (ids.length < 2) return ids.join('')
   return `${ids.slice(0, -1).join(', ')} or ${ids[ids.length - 1]}`
 }
@@ -428,14 +497,23 @@ export type Request = {
   readonly limits: Limits
 }
 
-// A request's composition, and the program it compiles to.
+// A request's composition, and the program it compiles to: the
+// composition over the source's events, the route every format has, and,
+// where the source ships a transducer part and the whole document is
+// asked, the composition over its parser's rule passes, which
+// `runCompiled` runs first.
 export type Compiled = {
   readonly composition: translate.Composition
   readonly program: Program
+  readonly parsed?: { readonly composition: translate.Composition; readonly program: Program }
 }
 
 // The composition a request makes, and the program it compiles to.
 export function compile(request: Request): Compiled {
+  // The transducer the route reads the document through, where the source
+  // ships one and the whole document is asked: a path selects a value
+  // below the root, which only the document's value has.
+  const transducer = undefined === request.path ? request.from.transducer : undefined
   const given = request.program
   if (undefined !== given) {
     const { file, text } = given
@@ -448,11 +526,17 @@ export function compile(request: Request): Compiled {
       )
     }
     const composition = translate.composeProgram(output, request.to.part, request.options, 'translate')
-    return { composition, program: composition.compile({ file, text }, OPTIONS) }
+    const program = composition.compile({ file, text }, OPTIONS)
+    if (undefined === transducer) return { composition, program }
+    const over = translate.composeProgramParsed(output, transducer, request.to.part, request.options, 'translate')
+    return { composition, program, parsed: { composition: over, program: over.compile({ file, text }, OPTIONS) } }
   }
   const source = undefined === request.path ? request.from.part : undefined
   const composition = translate.compose(source, request.to.part, request.options, 'translate')
-  return { composition, program: composition.compile(undefined, OPTIONS) }
+  const program = composition.compile(undefined, OPTIONS)
+  if (undefined === transducer) return { composition, program }
+  const over = translate.composeParsed(request.from.part, transducer, request.to.part, request.options, 'translate')
+  return { composition, program, parsed: { composition: over, program: over.compile(undefined, OPTIONS) } }
 }
 
 // Whether the incremental source refused a document because the grammar's
@@ -462,6 +546,16 @@ export function compile(request: Request): Compiled {
 // whole.
 function unfollowed(err: unknown): boolean {
   return isFail(err) && ('STREAMABILITY_UNKNOWN' === err.code || 'DUPLICATE_MEMBER' === err.code)
+}
+
+// One run of a request over its source's parser's rule passes, through
+// the composition over the source's transducer part: what it wrote, held
+// until the run has succeeded, as `runCompiled`'s other attempts hold it.
+function attemptParsed(request: Request, program: Program, input: string, metrics: Metrics): Buffer {
+  const held = new BytesWriter()
+  const sink = program.parserSink(held, undefined, request.limits, metrics)
+  request.from.passes(input).limits(request.limits).metrics(metrics).run(sink)
+  return held.bytes()
 }
 
 // Run a request over `input`, writing the document to `out` (render's
@@ -481,7 +575,7 @@ export function runCompiled(
   out: Writer,
   metrics: Metrics,
 ): void {
-  const { composition, program } = compiled
+  const { composition, program, parsed } = compiled
   // What a run writes is held until the run has succeeded, so that a run
   // the incremental source gives up part way is run again from the start
   // rather than written twice.
@@ -511,9 +605,28 @@ export function runCompiled(
     }
     return held.bytes()
   }
+  // The transducer's route first, where the source ships a part and the
+  // whole document is asked: its rule passes through the part into the
+  // program, streamed whatever the grammar. A document whose events are
+  // not what the grammar's value holds (a repeated member, streamed twice,
+  // which the composition's tree-contract refuses) is read again whole
+  // below, as the incremental source's is: the grammar's own value is the
+  // document.
+  let transduced: Buffer | undefined
+  if (undefined !== parsed) {
+    const own = new Metrics()
+    try {
+      transduced = attemptParsed(request, parsed.program, input, own)
+      absorb(metrics, own)
+    } catch (err) {
+      if (!unfollowed(err)) throw err
+    }
+  }
   const incremental = undefined === request.path && capability.incremental(request.from.id)
   let bytes: Buffer
-  if (incremental) {
+  if (undefined !== transduced) {
+    bytes = transduced
+  } else if (incremental) {
     const selector = program.rowSelector()
     const mode = SourceMode.incremental(undefined === selector ? Prune.never() : Prune.under(selector))
     // The incremental attempt counts into metrics of its own, which the
@@ -644,6 +757,7 @@ export function formatsJson(): string {
       ['lift', orNull(p.lift?.entry)],
       ['embed', orNull(p.embed?.entry)],
       ['render', text('alc' === render.kind ? render.alc.entry : render.kind)],
+      ['transduce', orNull(f.transducer?.entry)],
       ['loss', Datum.array(p.loss.map(text))],
     ])
   })

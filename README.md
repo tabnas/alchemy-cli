@@ -25,8 +25,9 @@ alchemy canon FILE       print the program in canonical form
 alchemy format FILE      print the program in layout form
 alchemy check FILE       parse, desugar, resolve, check and build the plan; print nothing and exit 0
 alchemy explain FILE     print the plan report
-alchemy run [--render csv|json] [--no-native] [--max-output-bytes N] PROGRAM INPUT
-                         run the program over the JSON document INPUT
+alchemy run [--grammar FORMAT] [--render csv|json] [--no-native] [--max-output-bytes N] PROGRAM INPUT
+                         run the program over the JSON document INPUT; with --grammar, over
+                         the rule passes of INPUT parsed as FORMAT (a transducer part's input)
 alchemy translate --from FORMAT --to FORMAT [--path PATH] [--key KEY]
                   [--with PROGRAM] [--max-output-bytes N] INPUT
                          write INPUT, read as FORMAT, in another format
@@ -65,8 +66,10 @@ export's events or table. `alchemy formats` lists each format, as JSON:
 its `id`, the shapes it `reads` and `writes`, the `root` its render
 needs, its `schema`, `whole` (why its documents are read whole, never
 streamed, where the format says so, and null where it does not), its
-parts' entries (`lift`, `embed`, `render`), and its `loss` sentences:
-what a document written in it does not keep.
+parts' entries (`lift`, `embed`, `render`, and `transduce`, the
+transducer part its documents are read through, null where it ships
+none), and its `loss` sentences: what a document written in it does not
+keep.
 
 ## Install
 

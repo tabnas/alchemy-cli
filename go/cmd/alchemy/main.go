@@ -7,8 +7,9 @@
 //	alchemy format FILE      print the program in layout form
 //	alchemy check FILE       parse, desugar, resolve, check and build the plan; print nothing and exit 0
 //	alchemy explain FILE     print the plan report
-//	alchemy run [--render csv|json] [--no-native] [--max-output-bytes N] PROGRAM INPUT
-//	                         run the program over the JSON document INPUT
+//	alchemy run [--grammar FORMAT] [--render csv|json] [--no-native] [--max-output-bytes N] PROGRAM INPUT
+//	                         run the program over the JSON document INPUT; with --grammar, over
+//	                         the rule passes of INPUT parsed as FORMAT (a transducer part's input)
 //	alchemy translate --from FORMAT --to FORMAT [--path PATH] [--key KEY]
 //	                  [--with PROGRAM] [--max-output-bytes N] INPUT
 //	                         write INPUT, read as FORMAT, in another format
@@ -44,6 +45,11 @@
 // lexemes (1.50 written 1.5), keep one of a repeated member where the
 // stream reports both, and hold the whole document, which is not the run
 // the plan report promises. Build the command with -tags tabnas_nodecell.
+// With --grammar FORMAT, run parses INPUT with that format's grammar
+// through transduce's ParserEventSource and compiles the program over the
+// parser's rule passes, as a transducer part is compiled; the source of
+// rule passes needs no adapter, so such a run reads its document in every
+// build.
 //
 // translate reads INPUT with the grammar of --from and writes it in --to,
 // through the translation parts each format's module exports, as the
@@ -87,7 +93,7 @@ import (
 // finds it.
 const VERSION = "0.1.13"
 
-const usage = "usage: alchemy canon|format|check|explain FILE\n       alchemy run [--render csv|json] [--no-native] [--max-output-bytes N] PROGRAM INPUT\n       alchemy translate --from FORMAT --to FORMAT [--path PATH] [--key KEY] [--with PROGRAM] [--max-output-bytes N] INPUT\n       alchemy formats\n       (a FILE may be - for standard input)"
+const usage = "usage: alchemy canon|format|check|explain FILE\n       alchemy run [--grammar FORMAT] [--render csv|json] [--no-native] [--max-output-bytes N] PROGRAM INPUT\n       alchemy translate --from FORMAT --to FORMAT [--path PATH] [--key KEY] [--with PROGRAM] [--max-output-bytes N] INPUT\n       alchemy formats\n       (a FILE may be - for standard input)"
 
 func main() {
 	// A write to a closed standard output or standard error fails with an
@@ -245,7 +251,16 @@ func run(args []string, stdin io.Reader, stdout io.Writer) (string, *exit) {
 		if e != nil {
 			return "", e
 		}
-		program, f := alchemy.Compile(src, options.program, tt.Routers(), tr.Renderers())
+		// With --grammar the program reads the rule passes of INPUT parsed
+		// as that format, and is compiled over them, as a transducer part
+		// is; without it, the JSON document's events.
+		var program *alchemy.Program
+		var f *alchemy.Fail
+		if options.grammar != nil {
+			program, f = alchemy.CompileWith(src, options.program, alchemy.InputParserEvents, tt.Routers(), tr.Renderers())
+		} else {
+			program, f = alchemy.Compile(src, options.program, tt.Routers(), tr.Renderers())
+		}
 		if f == nil && !options.native {
 			program, f = program.WithNative(false)
 		}
@@ -259,6 +274,20 @@ func run(args []string, stdin io.Reader, stdout io.Writer) (string, *exit) {
 		// say so: the renderer the program cannot take, and in a build
 		// without the incremental adapter the source's own refusal.
 		metrics := tt.NewMetrics()
+		if options.grammar != nil {
+			sink, f := program.ParserSink(stdout, options.render, limits, metrics)
+			if f != nil {
+				return "", fromFail(f)
+			}
+			input, e := read(options.input, stdin)
+			if e != nil {
+				return "", e
+			}
+			if f := executePasses(options.grammar, sink, metrics, input, limits); f != nil {
+				return "", fromFail(f)
+			}
+			return "", nil
+		}
 		sink, f := program.Sink(stdout, options.render, limits, metrics)
 		if f != nil {
 			return "", fromFail(f)
@@ -451,6 +480,9 @@ func parseTranslateOptions(args []string) (*translateOptions, *exit) {
 }
 
 type runOptions struct {
+	// grammar is the format whose parser reads INPUT, its rule passes the
+	// program's input (--grammar); nil for the JSON document's events.
+	grammar        *translate.Format
 	render         alchemy.Renderer
 	native         bool
 	maxOutputBytes *uint64
@@ -474,6 +506,17 @@ func parseRunOptions(args []string) (*runOptions, *exit) {
 	var files []string
 	for i := 0; i < len(args); {
 		switch arg := args[i]; {
+		case arg == "--grammar":
+			if i+1 >= len(args) {
+				return nil, usageError()
+			}
+			name := args[i+1]
+			grammar := translate.Named(name)
+			if grammar == nil || !grammar.Parses() {
+				return nil, &exit{fail: tt.InputFail("--grammar takes a format whose documents are parsed (" + translate.ParserNames() + "), not " + strconv.Quote(name)), status: 2}
+			}
+			options.grammar = grammar
+			i += 2
 		case arg == "--render":
 			if i+1 >= len(args) {
 				return nil, usageError()
@@ -544,9 +587,24 @@ func execute(program *alchemy.Program, sink tt.Sink, metrics *tt.Metrics, input 
 		Limits(limits).
 		Metrics(metrics).
 		Run(sink)
-	// A failure the source found (bad JSON after the rows) knows nothing
-	// of the output; the writer's count says whether bytes had reached
-	// standard output.
+	return committed(f, metrics)
+}
+
+// executePasses runs the program over the rule passes of one document,
+// parsed with grammar, into the sink that writes its output.
+func executePasses(grammar *translate.Format, sink tt.ParserSink, metrics *tt.Metrics, input string, limits tt.Limits) *tt.Fail {
+	source, f := grammar.Passes(input)
+	if f != nil {
+		return committed(f, metrics)
+	}
+	_, f = source.Limits(limits).Metrics(metrics).Run(sink)
+	return committed(f, metrics)
+}
+
+// committed is a run's failure, marked as after output where bytes had
+// reached standard output: a failure the source found (bad JSON after the
+// rows) knows nothing of the output, and the writer's count says.
+func committed(f *tt.Fail, metrics *tt.Metrics) *tt.Fail {
 	if f != nil && metrics.OutputBytes.Load() > 0 && !f.CommittedOutput {
 		f.Committed()
 	}

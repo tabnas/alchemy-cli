@@ -79,7 +79,7 @@ func TestFormatsPrintsTheRegistryAsJSON(t *testing.T) {
 	// Each format's fields in their order, abnf's whole up to its loss.
 	// Its whole is its manifest's sentence, null where it gives none.
 	if !strings.HasPrefix(o.stdout, `[{"id":"abnf","reads":["tree"],"writes":"tree","root":"object","schema":"grammar-spec","whole":`+
-		wholeJSON(t, tabnasabnf.Translate().Manifest)+`,"lift":null,"embed":null,"render":"abnf-render","loss":["`) {
+		wholeJSON(t, tabnasabnf.Translate().Manifest)+`,"lift":null,"embed":null,"render":"abnf-render","transduce":null,"loss":["`) {
 		t.Errorf("%s", o.stdout)
 	}
 	var formats []map[string]any
@@ -89,7 +89,7 @@ func TestFormatsPrintsTheRegistryAsJSON(t *testing.T) {
 	var ids []string
 	for _, f := range formats {
 		ids = append(ids, f["id"].(string))
-		if len(f) != 10 {
+		if len(f) != 11 {
 			t.Errorf("%s: %v", f["id"], f)
 		}
 		loss, _ := f["loss"].([]any)

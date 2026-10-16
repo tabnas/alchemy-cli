@@ -3,8 +3,9 @@
 // alchemy's shared fixtures (its test/spec, read from the checkout beside
 // this one) that need the stages, run through @tabnas/support's runner as
 // alchemy runs the rest (rs/tests/spec_test.rs is the Rust half): the bytes
-// a run writes (run.tsv), and the catalogue's drift test over the error
-// rows of all four files.
+// a run writes (run.tsv), the bytes a run over a grammar's rule passes
+// writes (transduce.tsv), and the catalogue's drift test over the error
+// rows of all five files.
 //
 // run.tsv runs each row twice, with the standard compositions native and
 // through the library's text (`withNative(false)`), and a row whose two
@@ -24,7 +25,10 @@ import { join } from 'node:path'
 import { SpecRow, isErrorExpect, loadSpecDir, makeRunner } from '@tabnas/support'
 import { make as makeJson } from '@tabnas/json'
 import { BytesWriter } from '@tabnas/render'
-import { ParserSource, Prune, SourceMode } from '@tabnas/transduce'
+import { DatumBuilder, EventRecorder, ParserSource, Prune, SourceMode, walkDatum } from '@tabnas/transduce'
+import type { Datum, Flow, JsonEvent, Sink } from '@tabnas/transduce'
+
+import { Format, format as formatNamed, parserNames } from '../dist/translate'
 
 import {
   Program,
@@ -76,6 +80,16 @@ function drive(program: Program, doc: string, render: Renderer | undefined): str
 
 type Outcome = { ok: true; text: string } | { ok: false; fail: unknown }
 
+// A row's `render` column: how a table or JSON-events result is rendered,
+// or the host's default.
+function rowRender(row: SpecRow): Renderer | undefined {
+  const name = row.named('render')
+  if ('' === name) return undefined
+  const render = rendererNamed(name)
+  if (undefined === render) throw new Error(`${row.where()}: render is csv, json or empty`)
+  return render
+}
+
 function outcome(work: () => string): Outcome {
   try {
     return { ok: true, text: work() }
@@ -96,12 +110,7 @@ makeRunner({
   parse: (program: string, row: SpecRow) => {
     const cell = row.unescNamed('doc')
     const doc = '' === cell ? 'null' : cell
-    const name = row.named('render')
-    let render: Renderer | undefined
-    if ('' !== name) {
-      render = rendererNamed(name)
-      if (undefined === render) throw new Error(`${row.where()}: render is csv, json or empty`)
-    }
+    const render = rowRender(row)
     const native = outcome(() => runBoth(program, doc, render, true))
     const interpreted = outcome(() => runBoth(program, doc, render, false))
     let agree: boolean
@@ -157,11 +166,16 @@ function rowFailures(file: string, input: string, row: SpecRow): unknown[] {
       }
       return met(() => compileWith(input, 'check', 'parser' === protocol ? 'ParserEvents/1' : 'JsonEvents/1'))
     }
+    case 'transduce.tsv': {
+      const grammar = transduceGrammar(row)
+      const doc = row.unescNamed('doc')
+      const render = rowRender(row)
+      return [true, false].flatMap((native) => met(() => runPasses(input, grammar, doc, render, native).text))
+    }
     default: {
       const cell = row.unescNamed('doc')
       const doc = '' === cell ? 'null' : cell
-      const name = row.named('render')
-      const render = '' === name ? undefined : rendererNamed(name)
+      const render = rowRender(row)
       return [true, false].flatMap((native) => met(() => runBoth(input, doc, render, native)))
     }
   }
@@ -270,3 +284,136 @@ describe('the catalogue', () => {
     assert.deepStrictEqual(problems, [])
   })
 })
+
+// The format a transduce row's `grammar` names, whose parser reads its
+// document: one of the command's own, with a parser.
+function transduceGrammar(row: SpecRow): Format {
+  const name = row.named('grammar')
+  const grammar = formatNamed(name)
+  if (undefined === grammar || !grammar.parses()) {
+    throw new Error(
+      `${row.where()}: grammar names a format whose documents are parsed (${parserNames()}), not ${JSON.stringify(name)}`,
+    )
+  }
+  return grammar
+}
+
+// Compile `program` over the parser's rule passes and run it over `doc`,
+// parsed with `grammar`, as `alchemy run --grammar` does, with the default
+// limits. The program's output kind rides along, for the differential.
+function runPasses(
+  program: string,
+  grammar: Format,
+  doc: string,
+  render: Renderer | undefined,
+  native: boolean,
+): { output: string; text: string } {
+  let compiled = compileWith(program, 'transduce', 'ParserEvents/1')
+  if (!native) compiled = compiled.withNative(false)
+  const writer = new BytesWriter()
+  const limits = Limits.default()
+  const metrics = new Metrics()
+  const sink = compiled.parserSink(writer, render, limits, metrics)
+  grammar.passes(doc).limits(limits).metrics(metrics).run(sink)
+  return { output: compiled.output, text: writer.text() }
+}
+
+type Passed = { ok: true; output: string; text: string } | { ok: false; fail: unknown }
+
+function passed(work: () => { output: string; text: string }): Passed {
+  try {
+    return { ok: true, ...work() }
+  } catch (fail) {
+    return { ok: false, fail }
+  }
+}
+
+function shownPassed(o: Passed): string {
+  return o.ok ? JSON.stringify(o.text) : String(o.fail)
+}
+
+// The events of a document, collected into a value under a duplicate
+// policy.
+class Collect implements Sink {
+  constructor(readonly builder: DatumBuilder) {}
+
+  event(ev: JsonEvent): Flow {
+    if ('end' !== ev.type) this.builder.event(ev)
+    return 'continue'
+  }
+}
+
+// A value's events, a number's lexeme dropped.
+function plainEvents(value: Datum): JsonEvent[] {
+  const recorder = new EventRecorder()
+  walkDatum(value, recorder)
+  return recorder.events.map((ev) => ('number' === ev.type ? { ...ev, lexeme: null } : ev))
+}
+
+// The differential rule of transduce.tsv: the events a row's program
+// wrote, read back from its JSON, are the walk of the grammar's own value
+// of the document, a number's lexeme aside. A document the grammar refuses
+// has no value to walk, and a member the program streamed twice is kept
+// once by the value: neither row has an oracle, and both pass here, held
+// by their expected column alone.
+function differential(grammar: Format, doc: string, written: string): void {
+  let value: Datum
+  try {
+    value = grammar.read(doc, Limits.default())
+  } catch {
+    return
+  }
+  const collect = new Collect(new DatumBuilder(Number.POSITIVE_INFINITY, 'max_capture_bytes', 'reject'))
+  try {
+    new ParserSource(makeJson(), written).grammar('json').mode(SourceMode.incremental(Prune.never())).run(collect)
+  } catch (err) {
+    if (isFail(err) && 'DUPLICATE_MEMBER' === err.code) return
+    throw new Error(`the output ${JSON.stringify(written)} does not read back as JSON: ${String(err)}`)
+  }
+  const read = collect.builder.take()
+  if (undefined === read) throw new Error(`the output ${JSON.stringify(written)} holds no value`)
+  assert.deepStrictEqual(
+    plainEvents(read),
+    plainEvents(value),
+    "the transducer's events are not the walk of the grammar's value",
+  )
+}
+
+// A program over a grammar's rule passes, run over a document in that
+// grammar: the bytes it writes, or the failure (alchemy's test/AGENTS.md
+// has the columns). Both paths, compared before the expected cell is; and
+// a row's program is a transducer, its events the document's, which the
+// differential holds it to where it answers JSON events.
+makeRunner({
+  ...runnerOptions,
+  parse: (program: string, row: SpecRow) => {
+    const grammar = transduceGrammar(row)
+    const doc = row.unescNamed('doc')
+    const render = rowRender(row)
+    const native = passed(() => runPasses(program, grammar, doc, render, true))
+    const interpreted = passed(() => runPasses(program, grammar, doc, render, false))
+    let agree: boolean
+    if (native.ok && interpreted.ok) {
+      agree = native.text === interpreted.text
+    } else if (!native.ok && !interpreted.ok) {
+      const a: any = native.fail
+      const b: any = interpreted.fail
+      agree =
+        isFail(a) &&
+        isFail(b) &&
+        failCode(a) === failCode(b) &&
+        a.row === b.row &&
+        a.col === b.col
+    } else {
+      agree = false
+    }
+    if (!agree) {
+      throw new Error(
+        `native and interpreted runs disagree:\n  native:      ${shownPassed(native)}\n  interpreted: ${shownPassed(interpreted)}`,
+      )
+    }
+    if (!native.ok) throw native.fail
+    if ('JsonEvents/1' === native.output) differential(grammar, doc, native.text)
+    return native.text
+  },
+}).file(join(SPEC_DIR, 'transduce.tsv'))

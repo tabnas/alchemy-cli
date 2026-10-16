@@ -6,8 +6,10 @@ package e2e
 // programs, through tabnas/support's runner as every grammar repository
 // runs its own: run.tsv, a program run over a JSON document, the bytes it
 // writes or the failure, on transduce's routers and render's renderers;
-// and the catalogue drift test over the failures of all four fixtures,
-// which needs run.tsv's rows. From alchemy's go/spec_test.go: reader.tsv,
+// transduce.tsv, a program run over a grammar's rule passes, the bytes it
+// writes or the failure, held to the walk of the grammar's value where it
+// answers JSON events; and the catalogue drift test over the failures of
+// all five fixtures, which needs their rows. From alchemy's go/spec_test.go: reader.tsv,
 // pipe.tsv and check.tsv run there, with the drift test's checks of the
 // rows they meet.
 
@@ -17,13 +19,16 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
 	"testing"
 
+	translate "github.com/tabnas/alchemy-cli/go/translate"
 	. "github.com/tabnas/alchemy/go"
 	tabnasjson "github.com/tabnas/json/go"
 	tabnas "github.com/tabnas/parser/go"
@@ -322,6 +327,14 @@ func rowFailures(t *testing.T, file string, row *support.Row) (fails []*Fail, ra
 			t.Fatalf("%s: the protocol is empty or parser, not %q", row.Where(), protocol)
 		}
 		_, f = checkRow(input, declared)
+	case "transduce.tsv":
+		grammar, render := transduceGrammar(t, row), runRender(t, row)
+		for _, native := range []bool{true, false} {
+			if _, o := runTransduce(input, grammar, row.UnescNamed("doc"), render, native); o.fail != nil {
+				fails = append(fails, o.fail)
+			}
+		}
+		return fails, true
 	default:
 		render := runRender(t, row)
 		if !tt.AdapterBuilt() && !beforeTheSource(input, render) {
@@ -530,4 +543,166 @@ func documentValue() (map[string]any, error) {
 	var out map[string]any
 	err = json.Unmarshal(data, &out)
 	return out, err
+}
+
+// transduceGrammar is the format a transduce row's grammar names, whose
+// parser reads its document: one of the command's own, with a parser.
+func transduceGrammar(t testing.TB, row *support.Row) *translate.Format {
+	t.Helper()
+	name := row.Named("grammar")
+	grammar := translate.Named(name)
+	if grammar == nil || !grammar.Parses() {
+		t.Fatalf("%s: grammar names a format whose documents are parsed (%s), not %q", row.Where(), translate.ParserNames(), name)
+	}
+	return grammar
+}
+
+// runTransduce compiles program over the parser's rule passes and runs it
+// over doc, parsed with grammar, as `alchemy run --grammar` does, with the
+// default limits; the program's output kind rides along, for the
+// differential.
+func runTransduce(program string, grammar *translate.Format, doc string, render Renderer, native bool) (Output, runOutcome) {
+	var output Output
+	compiled, f := CompileWith(program, "transduce", InputParserEvents, routers, renderers)
+	if f == nil && !native {
+		compiled, f = compiled.WithNative(false)
+	}
+	if f != nil {
+		return output, runOutcome{fail: f}
+	}
+	var buffer bytes.Buffer
+	sink, f := compiled.ParserSink(&buffer, render, tt.DefaultLimits(), tt.NewMetrics())
+	if f != nil {
+		return compiled.Output(), runOutcome{fail: f}
+	}
+	source, f := grammar.Passes(doc)
+	if f != nil {
+		return compiled.Output(), runOutcome{fail: f}
+	}
+	_, f = source.Limits(tt.DefaultLimits()).Metrics(tt.NewMetrics()).Run(sink)
+	return compiled.Output(), runOutcome{out: buffer.String(), fail: f}
+}
+
+// collect collects a document's events into a value under a duplicate
+// policy.
+type collect struct{ builder *tt.DatumBuilder }
+
+func (c *collect) Event(ev tt.Event) (tt.Flow, *tt.Fail) {
+	if ev.Kind == tt.End {
+		return tt.Continue, nil
+	}
+	if f := c.builder.Event(ev); f != nil {
+		return tt.Continue, f
+	}
+	return tt.Continue, nil
+}
+
+// plainEvents is a value's events, a number's lexeme dropped.
+func plainEvents(t testing.TB, value *tt.Datum) []tt.Event {
+	t.Helper()
+	recorder := &tt.Recorder{}
+	if _, f := tt.WalkDatum(value, recorder); f != nil {
+		t.Fatalf("a value walks: %v", f)
+	}
+	events := make([]tt.Event, len(recorder.Events))
+	for i, ev := range recorder.Events {
+		events[i] = ev.WithoutLexeme()
+	}
+	return events
+}
+
+// transduceDifferential is the differential rule of transduce.tsv: the events a
+// row's program wrote, read back from its JSON, are the walk of the
+// grammar's own value of the document, a number's lexeme aside. A
+// document the grammar refuses has no value to walk, and a member the
+// program streamed twice is kept once by the value: neither row has an
+// oracle, and both pass here, held by their expected column alone.
+func transduceDifferential(t testing.TB, grammar *translate.Format, doc, written string) error {
+	t.Helper()
+	value, f := grammar.Read(doc, tt.DefaultLimits())
+	if f != nil {
+		return nil
+	}
+	// The output read back incrementally streams a repeated member twice;
+	// a build without the incremental adapter reads it whole, so a
+	// repeated member is kept once on both sides and compared so.
+	mode := tt.MaterializeMode()
+	if tt.Incremental("json") {
+		mode = tt.IncrementalMode(tt.Prune{})
+	}
+	c := &collect{builder: tt.NewDatumBuilder(math.MaxInt, "max_capture_bytes", tt.Reject)}
+	if _, f := tt.NewParserSource(tabnasjson.Make(), written).Grammar("json").Mode(mode).Run(c); f != nil {
+		if f.Code == tt.CodeDuplicateMember {
+			return nil
+		}
+		return fmt.Errorf("the output %q does not read back as JSON: %v", written, f)
+	}
+	read, ok := c.builder.Take()
+	if !ok {
+		return fmt.Errorf("the output %q holds no value", written)
+	}
+	a, b := plainEvents(t, &read), plainEvents(t, &value)
+	if !reflect.DeepEqual(a, b) {
+		return fmt.Errorf("the transducer's events are not the walk of the grammar's value\n  written: %v\n  walked:  %v", a, b)
+	}
+	return nil
+}
+
+// TestSpecTransduce runs transduce.tsv: a program over a grammar's rule
+// passes, run over a document in that grammar, the bytes it writes or the
+// failure. Every row runs twice, natively and through the library's text,
+// held to each other as run.tsv's are; and a row's program is a
+// transducer, its events the document's, which the differential holds it
+// to where it answers JSON events. The source of rule passes needs no
+// adapter, so every row runs in every build.
+func TestSpecTransduce(t *testing.T) {
+	spec, err := support.LoadSpec(filepath.Join(specDir(t), "transduce.tsv"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(spec.Rows) == 0 {
+		t.Fatal("transduce.tsv holds no rows")
+	}
+	if got := strings.Join(spec.Rows[0].Header, " "); got != "input expected grammar doc render" {
+		t.Fatalf("transduce.tsv's columns are %s", got)
+	}
+	r := support.Runner{
+		ParseRow: func(input string, row *support.Row) (any, error) {
+			grammar, doc, render := transduceGrammar(t, row), row.UnescNamed("doc"), runRender(t, row)
+			output, native := runTransduce(input, grammar, doc, render, true)
+			_, interpreted := runTransduce(input, grammar, doc, render, false)
+			if !native.agrees(interpreted) {
+				return nil, fmt.Errorf("native and interpreted runs disagree:\n  native:      %s\n  interpreted: %s", native, interpreted)
+			}
+			if native.fail != nil {
+				return nil, asErr(native.fail)
+			}
+			if output == OutputJsonEvents {
+				if err := transduceDifferential(t, grammar, doc, native.out); err != nil {
+					return nil, err
+				}
+			}
+			return native.out, nil
+		},
+		ErrorCode: func(err error) string {
+			if f, ok := failOf(err); ok {
+				return runCode(f)
+			}
+			return err.Error()
+		},
+		ErrorPos: func(err error) (int, int, bool) {
+			if f, ok := failOf(err); ok && f.Row > 0 {
+				return int(f.Row), int(f.Column), true
+			}
+			return 0, 0, false
+		},
+	}
+	for _, row := range spec.Rows {
+		input := row.Unesc(0)
+		t.Run(fmt.Sprintf("row %d", row.Line), func(t *testing.T) {
+			if err := r.CheckRow(row, input, row.Col(1)); err != nil {
+				t.Error(err)
+			}
+		})
+	}
 }

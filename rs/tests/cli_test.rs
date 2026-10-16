@@ -725,7 +725,19 @@ fn formats_lists_the_formats_translate_reads_and_writes() {
         .collect();
     assert_eq!(
         keys,
-        ["id", "reads", "writes", "root", "schema", "whole", "lift", "embed", "render", "loss"]
+        [
+            "id",
+            "reads",
+            "writes",
+            "root",
+            "schema",
+            "whole",
+            "lift",
+            "embed",
+            "render",
+            "transduce",
+            "loss"
+        ]
     );
 }
 
@@ -989,4 +1001,69 @@ fn translate_checks_what_a_packages_parse_checks_first() {
             "output": "none"
         })
     );
+}
+
+/// The json transducer: the library's `transduce-tree` over the json
+/// grammar's rules, as its package's part spells it.
+const TRANSDUCER: &str = "def export [input]
+  transduce-tree
+    record
+      entry :map (record (entry :container :object))
+      entry :list (record (entry :container :array))
+      entry :pair (record (entry :key 0))
+      entry :val (record (entry :scalar 0))
+    input
+";
+
+/// `run --grammar FORMAT` parses INPUT with that format's grammar and runs
+/// the program over its rule passes, natively and interpreted: a
+/// transducer over json's writes the document, a number's lexeme kept; a
+/// document the grammar refuses is INPUT_INVALID; a format that is not
+/// parsed, or is unknown, is refused with status 2, naming the formats
+/// that are; a program over JSON events, compiled over parser events, is a
+/// protocol mismatch; and the option takes a value.
+#[test]
+fn run_takes_a_grammar_whose_rule_passes_the_program_reads() {
+    let program = temp_file("transducer.alc", TRANSDUCER);
+    let program = program.to_str().expect("a utf-8 path");
+    let doc = r#"{"a":[1,2.50,"x",{"b":null}],"c":{},"d":[],"e":1e21,"f":true}"#;
+    for args in [
+        &["run", "--grammar", "json", program, "-"][..],
+        &["run", "--grammar", "json", "--no-native", program, "-"][..],
+    ] {
+        let out = run(args, Some(doc));
+        assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+        assert_eq!(stdout(&out), format!("{doc}\n"));
+    }
+    let out = run(&["run", "--grammar", "json", program, "-"], Some("[1,"));
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "");
+    assert_eq!(fail_json(&out)["code"], "INPUT_INVALID");
+    for name in ["abnf", "nope"] {
+        let out = run(&["run", "--grammar", name, program, "-"], Some(doc));
+        assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
+        let fail = fail_json(&out);
+        assert_eq!(fail["code"], "INPUT_INVALID");
+        assert_eq!(
+            fail["message"],
+            format!(
+                "--grammar takes a format whose documents are parsed (css, csv, feed, ini, json, \
+                 json5, jsonc, jsonic, jsonl, markdown, pgn, semver, toml, xml, yaml or zon), \
+                 not {name:?}"
+            )
+        );
+    }
+    let events = temp_file("events.alc", "def export [input] (json input)\n");
+    let out = run(
+        &["run", "--grammar", "json", events.to_str().unwrap(), "-"],
+        Some(doc),
+    );
+    assert_ne!(out.status.code(), Some(0));
+    let fail = fail_json(&out);
+    assert_eq!(fail["code"], "DSL_TYPE_ERROR");
+    assert!(fail["message"]
+        .as_str()
+        .is_some_and(|m| m.starts_with("protocol_mismatch")));
+    let out = run(&["run", program, "-", "--grammar"], Some(doc));
+    assert_eq!(out.status.code(), Some(2));
 }
