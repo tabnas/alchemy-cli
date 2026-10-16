@@ -29,7 +29,7 @@ import { ParserEventSource, routers } from '@tabnas/transduce'
 
 import * as alchemy from '@tabnas/alchemy'
 import { Program } from '@tabnas/alchemy'
-import { Code, Ev, Limits, Metrics, replay } from '@tabnas/alchemy/shared'
+import { Code, Ev, Fail, Limits, Metrics, replay } from '@tabnas/alchemy/shared'
 
 import { EXPECTED_CSV, PROGRAM, RECORDS } from './common'
 import { compile, events, replayed } from './host'
@@ -570,8 +570,9 @@ describe('differential: transduce-tree', () => {
     const counting: any = {
       ...routers,
       transduceTree(spec: any, downstream: any) {
-        made++
-        return routers.transduceTree!(spec, downstream)
+        const sink = routers.transduceTree!(spec, downstream)
+        if (undefined !== sink) made++
+        return sink
       },
     }
     const run = (program: Program, text: string) =>
@@ -597,7 +598,8 @@ describe('differential: transduce-tree', () => {
         if (a.ok && b.ok) {
           if (a.text !== b.text) failures.push(`${label}\n  native:      ${a.text}\n  interpreted: ${b.text}`)
         } else if (!a.ok && !b.ok) {
-          if (a.fail?.code !== b.fail?.code) failures.push(`${label}\n  native:      ${a.fail}\n  interpreted: ${b.fail}`)
+          const same = a.fail instanceof Fail && b.fail instanceof Fail && a.fail.code === b.fail.code
+          if (!same) failures.push(`${label}\n  native:      ${a.fail}\n  interpreted: ${b.fail}`)
         } else {
           failures.push(`${label}\n  native:      ${a.ok ? a.text : a.fail}\n  interpreted: ${b.ok ? b.text : b.fail}`)
         }

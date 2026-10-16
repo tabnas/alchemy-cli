@@ -1056,8 +1056,9 @@ fn numbers_are_read_and_written_as_the_renderers_do() {
     }
 }
 
-/// transduce's routers, counting the native transduce-trees they make, so
-/// a test can tell the native path from the library's scan.
+/// transduce's routers, counting the native transduce-trees they make (a
+/// spec they refuse makes none), so a test can tell the native path from
+/// the library's scan.
 struct CountingRouters(Arc<std::sync::atomic::AtomicUsize>);
 
 impl tabnas_alchemy::shared::Routers<tabnas_alchemy::value::Val> for CountingRouters {
@@ -1128,12 +1129,15 @@ impl tabnas_alchemy::shared::Routers<tabnas_alchemy::value::Val> for CountingRou
         spec: tabnas_alchemy::shared::TreeSpec,
         downstream: Box<dyn Sink + Send>,
     ) -> Result<Box<dyn tabnas_alchemy::shared::ParserSink + Send>, Box<dyn Sink + Send>> {
-        self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        tabnas_alchemy::shared::Routers::<tabnas_alchemy::value::Val>::transduce_tree(
+        let made = tabnas_alchemy::shared::Routers::<tabnas_alchemy::value::Val>::transduce_tree(
             &tabnas_transduce::routers(),
             spec,
             downstream,
-        )
+        );
+        if made.is_ok() {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        made
     }
 }
 
@@ -1187,7 +1191,12 @@ fn transduce_tree_native_and_interpreted_agree() {
     let mut documents: Vec<(String, String)> = Vec::new();
     let dir = fixtures_dir();
     let mut entries: Vec<PathBuf> = std::fs::read_dir(&dir)
-        .expect("transduce's fixtures are beside this checkout")
+        .unwrap_or_else(|e| {
+            panic!(
+                "transduce's fixtures are beside this checkout, at {}: {e}",
+                dir.display()
+            )
+        })
         .map(|e| e.expect("a directory entry").path())
         .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("json"))
         .collect();

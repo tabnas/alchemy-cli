@@ -23,16 +23,19 @@ import (
 )
 
 // countingRouters is transduce's routers, counting the native
-// transduce-trees they make, so a test can tell the native path from the
-// library's scan.
+// transduce-trees they make (a spec they refuse makes none), so a test can
+// tell the native path from the library's scan.
 type countingRouters struct {
 	shared.Routers
 	made *int
 }
 
 func (r countingRouters) TransduceTree(spec shared.TreeSpec, downstream shared.Sink) shared.ParserSink {
-	*r.made++
-	return r.Routers.(shared.TreeRouters).TransduceTree(spec, downstream)
+	sink := r.Routers.(shared.TreeRouters).TransduceTree(spec, downstream)
+	if sink != nil {
+		*r.made++
+	}
+	return sink
 }
 
 // treeSpecs are the specs the comparison runs: the json part's, and specs
