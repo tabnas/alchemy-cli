@@ -25,7 +25,7 @@ require (
 	github.com/tabnas/jsonc/go v0.5.15
 	github.com/tabnas/jsonic/go v0.7.10
 	github.com/tabnas/jsonl/go v0.1.18
-	github.com/tabnas/markdown/go v0.7.12
+	github.com/tabnas/markdown/go v0.7.13
 	github.com/tabnas/proto/go v0.6.11
 	github.com/tabnas/render/go v0.2.5
 	github.com/tabnas/semver/go v0.0.11

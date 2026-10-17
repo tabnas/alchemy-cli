@@ -36,8 +36,8 @@ github.com/tabnas/jsonic/go v0.7.10 h1:GV5d7+SIKvdf+TTd7ryQYanesbXnBAMt1rI1YmNVb
 github.com/tabnas/jsonic/go v0.7.10/go.mod h1:n6g6vJ8BAuXyMh1SJGF9iXtQrgYXT1u7i5vcyHvvrrQ=
 github.com/tabnas/jsonl/go v0.1.18 h1:MMKgyiCtDkVqj082a2cvvX7T50OTW6h4ifc4Ghirj4U=
 github.com/tabnas/jsonl/go v0.1.18/go.mod h1:ZHkvSw+xw50tJeJX0yGd8lYqlCJGRDG1jXHljUsUoRU=
-github.com/tabnas/markdown/go v0.7.12 h1:Qp9eubeipzVOifOfoxsEGFlhvZB6ATqZHofoTVu4bUk=
-github.com/tabnas/markdown/go v0.7.12/go.mod h1:5yYSem8hetMWJLGXMGg/zStYpW9kMs080dw0JtQ+rk0=
+github.com/tabnas/markdown/go v0.7.13 h1:MbjpysPwt++8A8ibYZYyVCSYWAZPc5yiTk5d4KQG1sU=
+github.com/tabnas/markdown/go v0.7.13/go.mod h1:K07KNEuR2Mc4UxPrMMvfj3p0PX8o2TwPk/pH7DVbHbo=
 github.com/tabnas/parser/go v0.12.12 h1:LtbRsDKSzoju6zyaeJpx9c9RT+jAbPQ0SzQMEizL3jg=
 github.com/tabnas/parser/go v0.12.12/go.mod h1:WrlfEVyZ1QjEIowWiyEu3K1iHj7wxuPut5zoH9Trehk=
 github.com/tabnas/proto/go v0.6.11 h1:zzUJVCoZnRRE4izag93K2GrcLXJ9cIStSRq6XmjlIO0=

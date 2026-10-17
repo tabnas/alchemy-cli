@@ -693,7 +693,8 @@ fn formats_lists_the_formats_translate_reads_and_writes() {
     }
     assert_eq!(schema("c"), "c");
     // Why a format's documents are read whole, where its manifest says:
-    // every format transduce does not stream, each in the sentence its
+    // every format transduce does not stream, and Markdown, which it
+    // streams only once the last line is in, each in the sentence its
     // manifest gives; JSON's none, nor PGN's, which streams a game at a
     // time.
     let by_id = |id: &str| formats.iter().find(|f| f["id"] == id).expect("a format");
@@ -706,6 +707,7 @@ fn formats_lists_the_formats_translate_reads_and_writes() {
         ("feed", tabnas_feed::translate().unwrap().manifest),
         ("gbnf", tabnas_gbnf::translate().unwrap().manifest),
         ("ini", tabnas_ini::translate().unwrap().manifest),
+        ("markdown", tabnas_markdown::translate().unwrap().manifest),
         ("proto", tabnas_proto::translate().unwrap().manifest),
         ("semver", tabnas_semver::translate().unwrap().manifest),
         ("toml", tabnas_toml::translate().unwrap().manifest),

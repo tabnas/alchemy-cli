@@ -31,6 +31,7 @@ import (
 	tabnasfeed "github.com/tabnas/feed/go"
 	tabnasgbnf "github.com/tabnas/gbnf/go"
 	tabnasini "github.com/tabnas/ini/go"
+	tabnasmarkdown "github.com/tabnas/markdown/go"
 	tabnasproto "github.com/tabnas/proto/go"
 	tabnassemver "github.com/tabnas/semver/go"
 	tabnastoml "github.com/tabnas/toml/go"
@@ -130,22 +131,24 @@ func TestFormatsPrintsTheRegistryAsJSON(t *testing.T) {
 		t.Errorf("%v", byID["c"])
 	}
 	// Why a format's documents are read whole, where its manifest says:
-	// every format transduce's Rust and TypeScript lists leave out, each
-	// in the sentence its manifest gives. PGN's says nothing: it streams a
+	// every format transduce's Rust and TypeScript lists leave out, and
+	// Markdown, which they stream only once its last line is in, each in
+	// the sentence its manifest gives. PGN's says nothing: it streams a
 	// game at a time there, though Go reads it whole (transduce's
 	// DIVERGENCE.md 5).
 	for id, manifest := range map[string]string{
-		"abnf":   tabnasabnf.Translate().Manifest,
-		"c":      tabnasc.Translate().Manifest,
-		"css":    tabnascss.Translate().Manifest,
-		"ebnf":   tabnasebnf.Translate().Manifest,
-		"expr":   tabnasexpr.Translate().Manifest,
-		"feed":   tabnasfeed.Translate().Manifest,
-		"gbnf":   tabnasgbnf.Translate().Manifest,
-		"ini":    tabnasini.Translate().Manifest,
-		"proto":  tabnasproto.Translate().Manifest,
-		"semver": tabnassemver.Translate().Manifest,
-		"toml":   tabnastoml.Translate().Manifest,
+		"abnf":     tabnasabnf.Translate().Manifest,
+		"c":        tabnasc.Translate().Manifest,
+		"css":      tabnascss.Translate().Manifest,
+		"ebnf":     tabnasebnf.Translate().Manifest,
+		"expr":     tabnasexpr.Translate().Manifest,
+		"feed":     tabnasfeed.Translate().Manifest,
+		"gbnf":     tabnasgbnf.Translate().Manifest,
+		"ini":      tabnasini.Translate().Manifest,
+		"markdown": tabnasmarkdown.Translate().Manifest,
+		"proto":    tabnasproto.Translate().Manifest,
+		"semver":   tabnassemver.Translate().Manifest,
+		"toml":     tabnastoml.Translate().Manifest,
 	} {
 		var m struct {
 			Translate struct {
