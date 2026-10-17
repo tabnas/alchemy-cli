@@ -470,7 +470,7 @@ fn packages() -> Vec<(Option<Described>, Reader)> {
             reader!(tabnas_toml),
         ),
         (
-            descriptor!("tabnas-xml", tabnas_xml, embed),
+            descriptor!("tabnas-xml", tabnas_xml, embed, transduce),
             reader!(tabnas_xml),
         ),
         (
@@ -1134,6 +1134,7 @@ mod tests {
                 ("jsonc", "jsonc-transduce"),
                 ("jsonic", "jsonic-transduce"),
                 ("jsonl", "jsonl-transduce"),
+                ("xml", "xml-transduce"),
                 ("yaml", "yaml-transduce"),
                 ("zon", "zon-transduce"),
             ]

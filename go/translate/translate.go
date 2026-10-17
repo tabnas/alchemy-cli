@@ -352,6 +352,8 @@ func modules() []module {
 		{descriptor: func() at.Descriptor {
 			p := tabnasxml.Translate()
 			return descriptor("tabnas-xml", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
+		}, transduce: func() *at.PartText {
+			return partText((*modulePart)(tabnasxml.Translate().Transduce))
 		}, parser: func() *tabnas.Tabnas {
 			// XML's plugin, outside its embed mode, reconfigures the jsonic
 			// host it is installed on as a pure XML parser, jsonic's own
