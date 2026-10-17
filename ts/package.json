@@ -44,7 +44,7 @@
     "@tabnas/c": ">=0.5.15",
     "@tabnas/chess": ">=0.1.17",
     "@tabnas/css": ">=0.5.16",
-    "@tabnas/csv": ">=0",
+    "@tabnas/csv": ">=0.6.7",
     "@tabnas/ebnf": ">=0.1.19",
     "@tabnas/expr": ">=0.5.19",
     "@tabnas/feed": ">=0.6.18",
