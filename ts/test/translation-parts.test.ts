@@ -28,9 +28,10 @@ import { Xml, translate as xml } from '@tabnas/xml'
 import { Yaml, translate as yaml } from '@tabnas/yaml'
 import { Zon, translate as zon } from '@tabnas/zon'
 
-import { Program, Source } from '@tabnas/alchemy'
+import { Program, Source, translate as alchemyTranslate } from '@tabnas/alchemy'
 
-import { compileSources, events, replayed } from './host'
+import { format as formatNamed } from '../dist/translate'
+import { OPTIONS, compileSources, events, replayed } from './host'
 
 type TranslationPart = {
   readonly entry: string
@@ -41,6 +42,7 @@ type TranslationParts = {
   readonly manifest: string
   readonly lift?: TranslationPart
   readonly render?: TranslationPart
+  readonly transduce?: TranslationPart
 }
 
 type Descriptor = {
@@ -50,6 +52,7 @@ type Descriptor = {
     readonly writes: string
     readonly lift?: string
     readonly render: string
+    readonly transduce?: string
   }
 }
 
@@ -87,7 +90,7 @@ function descriptor(parts: TranslationParts): Descriptor {
 
 function assertPart(
   format: string,
-  kind: 'lift' | 'render',
+  kind: 'lift' | 'render' | 'transduce',
   declared: string | undefined,
   part: TranslationPart | undefined,
 ): void {
@@ -185,6 +188,29 @@ describe('structural translation parts', () => {
       assert.ok(shapes.has(manifest.translate.writes), `${name} writes unknown shape`)
       assertPart(name, 'lift', manifest.translate.lift, parts.lift)
       assertPart(name, 'render', manifest.translate.render, parts.render)
+      // The transducer part, where the manifest names one: the package
+      // exposes it under its entry, the command reads it from the package
+      // (`Format.transducer`), and it composes over the format's parser's
+      // rule passes into a tree target. Where the manifest names none,
+      // neither has one.
+      assertPart(name, 'transduce', manifest.translate.transduce, parts.transduce)
+      const registered = formatNamed(name)
+      assert.ok(registered, `${name} is one of the command's formats`)
+      assert.equal(registered.transducer?.entry, parts.transduce?.entry, `${name}: the command's transducer is the package's`)
+      const transduce = manifest.translate.transduce
+      if (undefined !== registered.transducer && undefined !== transduce) {
+        assert.ok(registered.transducer.file.endsWith(transduce), `${name}: the transducer is ${registered.transducer.file}, not ${transduce}`)
+        const json = formatNamed('json')
+        assert.ok(json)
+        const composition = alchemyTranslate.composeParsed(
+          registered.part,
+          registered.transducer,
+          json.part,
+          alchemyTranslate.Options.default(),
+          'parts',
+        )
+        composition.compile(undefined, OPTIONS)
+      }
       const programs = reads.map((shape, index) =>
         compileParts(name, manifest, parts, shape, 0 === index && undefined !== parts.lift))
       const program = programs[0]

@@ -606,11 +606,15 @@ func parseF64(text string) (float64, bool) {
 // cell is the text a cell is written as in CSV and Markdown: a string as
 // it is, a number by its value (compared as one), a non-finite one by its
 // word, a boolean by its name, null and an absent member as the empty
-// field, a container as its compact JSON text.
+// field, a container as its compact JSON text, compared as the value that
+// text reads back as: a route over the parser's rule passes writes a
+// number inside it by its lexeme (55.0) where the materialized value the
+// expectation is made of spells it by its value (55), one number either way.
 type cell struct {
 	text     string
 	number   float64
 	isNumber bool
+	nested   bool
 }
 
 func cellOf(d *tt.Datum) cell {
@@ -630,15 +634,65 @@ func cellOf(d *tt.Datum) cell {
 	case d.Kind == tt.DatumString:
 		return cell{text: d.Text}
 	}
-	return cell{text: d.String()}
+	return cell{text: d.String(), nested: true}
 }
 
 func (c cell) is(got string) bool {
-	if !c.isNumber {
-		return c.text == got
+	if c.isNumber {
+		g, ok := parseF64(got)
+		return ok && g == c.number
 	}
-	g, ok := parseF64(got)
-	return ok && g == c.number
+	if c.text == got {
+		return true
+	}
+	if !c.nested {
+		return false
+	}
+	want, ok := readJSON(c.text)
+	if !ok {
+		return false
+	}
+	have, ok := readJSON(got)
+	return ok && sameJSON(want, have)
+}
+
+// sameJSON is whether two values readJSON read are the same: numbers by
+// value, objects by their members whatever their order, arrays in order.
+func sameJSON(a, b any) bool {
+	switch a := a.(type) {
+	case json.Number:
+		bn, ok := b.(json.Number)
+		if !ok {
+			return false
+		}
+		x, errA := a.Float64()
+		y, errB := bn.Float64()
+		return errA == nil && errB == nil && x == y
+	case []any:
+		bs, ok := b.([]any)
+		if !ok || len(a) != len(bs) {
+			return false
+		}
+		for i := range a {
+			if !sameJSON(a[i], bs[i]) {
+				return false
+			}
+		}
+		return true
+	case map[string]any:
+		bm, ok := b.(map[string]any)
+		if !ok || len(a) != len(bm) {
+			return false
+		}
+		for k, v := range a {
+			w, ok := bm[k]
+			if !ok || !sameJSON(v, w) {
+				return false
+			}
+		}
+		return true
+	}
+	return a == b
 }
 
 func (c cell) String() string {

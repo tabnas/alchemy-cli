@@ -10,8 +10,9 @@
 //   alchemy format FILE      print the program in layout form
 //   alchemy check FILE       parse, desugar, resolve, check and build the plan; print nothing and exit 0
 //   alchemy explain FILE     print the plan report
-//   alchemy run [--render csv|json] [--no-native] [--max-output-bytes N] PROGRAM INPUT
-//                            run the program over the JSON document INPUT
+//   alchemy run [--grammar FORMAT] [--render csv|json] [--no-native] [--max-output-bytes N] PROGRAM INPUT
+//                            run the program over the JSON document INPUT; with --grammar, over
+//                            the rule passes of INPUT parsed as FORMAT (a transducer part's input)
 //   alchemy translate --from FORMAT --to FORMAT [--path PATH] [--key KEY]
 //                     [--with PROGRAM] [--max-output-bytes N] INPUT
 //                            write INPUT, read as FORMAT, in another format
@@ -39,10 +40,13 @@
 //
 // `run` parses `INPUT` with the tabnas JSON grammar through transduce's
 // `ParserSource`, incrementally, pruning the parsed tree under the
-// program's row selector when the plan knows one; other input formats are
-// aless's business. The output goes through a coalescing writer to
-// standard output and is flushed once, at the end; a failure found after
-// bytes were written says so.
+// program's row selector when the plan knows one; with `--grammar FORMAT`
+// it parses `INPUT` with that format's grammar through transduce's
+// `ParserEventSource` and compiles the program over the parser's rule
+// passes, as a transducer part is compiled. Other input formats as
+// documents are aless's business. The output goes through a coalescing
+// writer to standard output and is flushed once, at the end; a failure
+// found after bytes were written says so.
 //
 // `translate` reads `INPUT` with the grammar of `--from` and writes it in
 // `--to`, through the translation parts each format's package exports, as
@@ -71,7 +75,7 @@ import {
 import { make as makeJson } from '@tabnas/json'
 import { FdWriter, renderers } from '@tabnas/render'
 import { Fail, Limits, Metrics, ParserSource, Prune, SourceMode, routers } from '@tabnas/transduce'
-import type { Segment, Sink } from '@tabnas/transduce'
+import type { ParserSink, Segment, Sink } from '@tabnas/transduce'
 
 import * as translate from './translate'
 
@@ -87,7 +91,7 @@ const OPTIONS: CompileOptions = { routers, renderers }
 
 const USAGE =
   'usage: alchemy canon|format|check|explain FILE\n' +
-  '       alchemy run [--render csv|json] [--no-native] [--max-output-bytes N] PROGRAM INPUT\n' +
+  '       alchemy run [--grammar FORMAT] [--render csv|json] [--no-native] [--max-output-bytes N] PROGRAM INPUT\n' +
   '       alchemy translate --from FORMAT --to FORMAT [--path PATH] [--key KEY] [--with PROGRAM] [--max-output-bytes N] INPUT\n' +
   '       alchemy formats\n' +
   '       (a FILE may be - for standard input)'
@@ -193,6 +197,10 @@ function read(file: string): string {
 }
 
 type RunOptions = {
+  // The format whose parser reads INPUT, its rule passes the program's
+  // input (`--grammar`); without one the program reads INPUT as a JSON
+  // document's events.
+  grammar?: translate.Format
   render?: Renderer
   native: boolean
   maxOutputBytes: number | null
@@ -212,6 +220,7 @@ function outputLimit(n: string): number {
 }
 
 function parseRunOptions(args: ReadonlyArray<string>): RunOptions {
+  let grammar: translate.Format | undefined
   let render: Renderer | undefined
   let native = true
   let maxOutputBytes: number | null = null
@@ -219,7 +228,21 @@ function parseRunOptions(args: ReadonlyArray<string>): RunOptions {
   let i = 0
   while (i < args.length) {
     const arg = args[i]
-    if ('--render' === arg) {
+    if ('--grammar' === arg) {
+      const name = args[i + 1]
+      if (undefined === name) throw usage()
+      grammar = translate.format(name)
+      if (undefined === grammar || !grammar.parses()) {
+        throw new Exit(
+          Fail.input(
+            `--grammar takes a format whose documents are parsed (${translate.parserNames()}), ` +
+              `not ${JSON.stringify(name)}`,
+          ),
+          2,
+        )
+      }
+      i += 2
+    } else if ('--render' === arg) {
       const name = args[i + 1]
       if (undefined === name) throw usage()
       render = rendererNamed(name)
@@ -247,7 +270,7 @@ function parseRunOptions(args: ReadonlyArray<string>): RunOptions {
   if ('-' === program && '-' === input) {
     throw new Exit(Fail.input('only one of PROGRAM and INPUT may be - (standard input)'), 2)
   }
-  return { render, native, maxOutputBytes, program, input }
+  return { grammar, render, native, maxOutputBytes, program, input }
 }
 
 type TranslateOptions = {
@@ -318,12 +341,32 @@ function execute(program: Program, sink: Sink, metrics: Metrics, input: string, 
       .metrics(metrics)
       .run(sink)
   } catch (err) {
-    // A failure the source found (bad JSON after the rows) knows nothing of
-    // the output; the writer's count says whether bytes had reached
-    // standard output.
-    if (isFail(err) && metrics.output_bytes > 0 && !err.committedOutput) err.committed()
-    throw err
+    throw committed(err, metrics)
   }
+}
+
+// Run the program over the rule passes of one document, parsed with
+// `grammar`, into the sink that writes its output.
+function executePasses(
+  grammar: translate.Format,
+  sink: ParserSink,
+  metrics: Metrics,
+  input: string,
+  limits: Limits,
+): void {
+  try {
+    grammar.passes(input).limits(limits).metrics(metrics).run(sink)
+  } catch (err) {
+    throw committed(err, metrics)
+  }
+}
+
+// A run's failure, marked as after output where bytes had reached standard
+// output: a failure the source found (bad JSON after the rows) knows
+// nothing of the output, and the writer's count says.
+function committed(err: unknown, metrics: Metrics): unknown {
+  if (isFail(err) && metrics.output_bytes > 0 && !err.committedOutput) err.committed()
+  return err
 }
 
 // The text to print for the command line. `run` writes its answer itself
@@ -358,16 +401,26 @@ function command(args: ReadonlyArray<string>): string {
     case 'run': {
       const options = parseRunOptions(rest)
       const src = read(options.program)
-      let program = compile(src, options.program, OPTIONS)
+      // With --grammar the program reads the rule passes of INPUT parsed
+      // as that format, and is compiled over them, as a transducer part
+      // is; without it, the JSON document's events.
+      const grammar = options.grammar
+      let program = compile(src, options.program, undefined === grammar ? OPTIONS : { ...OPTIONS, input: 'ParserEvents/1' })
       if (!options.native) program = program.withNative(false)
       const limits: Limits = { ...Limits.default(), max_output_bytes: options.maxOutputBytes }
       // A renderer the program cannot take is refused before the input is
       // read, so the refusal never waits on standard input or drains a
       // large file to say so.
       const metrics = new Metrics()
-      const sink = program.sink(new FdWriter(1), options.render, limits, metrics)
-      const input = read(options.input)
-      execute(program, sink, metrics, input, limits)
+      if (undefined === grammar) {
+        const sink = program.sink(new FdWriter(1), options.render, limits, metrics)
+        const input = read(options.input)
+        execute(program, sink, metrics, input, limits)
+      } else {
+        const sink = program.parserSink(new FdWriter(1), options.render, limits, metrics)
+        const input = read(options.input)
+        executePasses(grammar, sink, metrics, input, limits)
+      }
       return ''
     }
     case 'translate': {

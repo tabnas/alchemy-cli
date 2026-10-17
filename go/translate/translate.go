@@ -28,6 +28,16 @@
 // is what its manifest says, and a module whose manifest names no parts
 // this host can take is not a format here.
 //
+// A module that ships a transducer part (its manifest's translate.transduce,
+// the alchemy file whose entry makes the format's JSON events of the
+// parser's rule passes) is read through it instead: the route is composed
+// over the transducer (at.ComposeParsed), and the input's rule passes
+// stream through transduce's ParserEventSource into the program, whatever
+// the grammar, with nothing held but what the part keeps; where the part's
+// events are not what the grammar's value holds (a repeated member, which
+// it streams twice and tree-contract refuses), the document is read again
+// whole, as above.
+//
 // The incremental source needs the engine's node-cell identity, which
 // transduce builds only with the tabnas_nodecell tag. Without it no grammar
 // is verified, so every document is read whole, and a number is written by
@@ -86,6 +96,11 @@ type Format struct {
 	// grammar under its own options: a ParserSource takes its parser over,
 	// so each read has one. It is nil where tree is not.
 	reader func(text string) *tt.ParserSource
+	// passes is a source of the parser's rule passes over a text, with a
+	// fresh parser as reader has one: what a program over parser events
+	// reads (a transducer part, run --grammar). It is nil where tree is
+	// not.
+	passes func(text string) *tt.ParserEventSource
 	// tree is a document as the tree the format's module reads it as with
 	// its own API, where its parser's value is not yet the tree its parts
 	// declare (an expression's operators, or a typed value). It is nil
@@ -95,10 +110,39 @@ type Format struct {
 	// which the parser does not check itself: a document it refuses is not
 	// parsed. Nil where the module checks nothing first.
 	check func(text string) *tt.Fail
+	// Transducer is the transducer part the format's module ships, its
+	// manifest's translate.transduce: the alchemy file whose entry makes
+	// the format's JSON events of its parser's rule passes, through which
+	// translate reads the format's documents. Nil where the module ships
+	// none, and the documents are read as Read reads them.
+	Transducer *at.Alc
 }
 
 // ID is the manifest's languageId.
 func (f *Format) ID() string { return f.Part.ID }
+
+// Parses is whether the format's documents are parsed, so that a program
+// over parser events can read them (Passes); a format read as the tree
+// its module's API makes of a document has no parser here.
+func (f *Format) Parses() bool { return f.tree == nil }
+
+// Passes is the parser's rule passes over text: transduce's source of
+// ParserEvents/1 with a fresh parser of the format's grammar, for a
+// program over parser events, a transducer part's or run --grammar's. The
+// check the module's parse makes first, where it makes one, runs first,
+// and its refusal is the failure; a format read as a tree has no parser,
+// and refuses.
+func (f *Format) Passes(text string) (*tt.ParserEventSource, *tt.Fail) {
+	if f.tree != nil {
+		return nil, tt.InputFail(f.ID() + " is read as a tree, not parsed: it has no rule passes for a program to read")
+	}
+	if f.check != nil {
+		if fail := f.check(text); fail != nil {
+			return nil, fail
+		}
+	}
+	return f.passes(text), nil
+}
 
 // run drives sink with a document's events as the format reads it, after
 // the check its module's own parse makes first, where it makes one: its
@@ -185,11 +229,14 @@ func installed(name string, err error) {
 	}
 }
 
-// module is a grammar module this command carries: its parts, its reader
-// or its tree, and its check (Format's).
+// module is a grammar module this command carries: its parts, the
+// transducer part it hands over beside them where its interface carries
+// one (nil otherwise; PartTransducer reads the two together), its parser,
+// a fresh one each time, or its tree, and its check (Format's).
 type module struct {
 	descriptor func() at.Descriptor
-	reader     func(text string) *tt.ParserSource
+	transduce  func() *at.PartText
+	parser     func() *tabnas.Tabnas
 	tree       func(text string) (any, *tt.Fail)
 	check      func(text string) *tt.Fail
 }
@@ -207,10 +254,10 @@ func modules() []module {
 		{descriptor: func() at.Descriptor {
 			p := tabnasc.Translate()
 			return descriptor("tabnas-c", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
-		}, reader: func(text string) *tt.ParserSource {
+		}, parser: func() *tabnas.Tabnas {
 			parser, err := tabnasc.MakeC()
 			installed("tabnas-c", err)
-			return tt.NewParserSource(parser, text)
+			return parser
 		}},
 		{descriptor: func() at.Descriptor {
 			p := tabnaschess.Translate()
@@ -219,14 +266,14 @@ func modules() []module {
 		{descriptor: func() at.Descriptor {
 			p := tabnascss.Translate()
 			return descriptor("tabnas-css", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
-		}, reader: func(text string) *tt.ParserSource { return tt.NewParserSource(tabnascss.MakeJsonic(), text) }},
+		}, parser: func() *tabnas.Tabnas { return tabnascss.MakeJsonic() }},
 		{descriptor: func() at.Descriptor {
 			p := tabnascsv.Translate()
 			return descriptor("tabnas-csv", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
-		}, reader: func(text string) *tt.ParserSource {
+		}, parser: func() *tabnas.Tabnas {
 			parser, err := tabnascsv.Make()
 			installed("tabnas-csv", err)
-			return tt.NewParserSource(parser, text)
+			return parser
 		}},
 		{descriptor: func() at.Descriptor {
 			p := tabnasebnf.Translate()
@@ -247,37 +294,39 @@ func modules() []module {
 		{descriptor: func() at.Descriptor {
 			p := tabnasini.Translate()
 			return descriptor("tabnas-ini", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
-		}, reader: func(text string) *tt.ParserSource { return tt.NewParserSource(tabnasini.MakeJsonic(), text) }},
+		}, parser: func() *tabnas.Tabnas { return tabnasini.MakeJsonic() }},
 		{descriptor: func() at.Descriptor {
 			p := tabnasjson.Translate()
 			return descriptor("tabnas-json", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
-		}, reader: func(text string) *tt.ParserSource { return tt.NewParserSource(tabnasjson.Make(), text) }},
+		}, transduce: func() *at.PartText {
+			return partText((*modulePart)(tabnasjson.Translate().Transduce))
+		}, parser: func() *tabnas.Tabnas { return tabnasjson.Make() }},
 		{descriptor: func() at.Descriptor {
 			p := tabnasjson5.Translate()
 			return descriptor("tabnas-json5", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
-		}, reader: func(text string) *tt.ParserSource {
-			return tt.NewParserSource(json5Parser(), text)
+		}, parser: func() *tabnas.Tabnas {
+			return json5Parser()
 		}, check: json5Check},
 		{descriptor: func() at.Descriptor {
 			p := tabnasjsonc.Translate()
 			return descriptor("tabnas-jsonc", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
-		}, reader: func(text string) *tt.ParserSource {
+		}, parser: func() *tabnas.Tabnas {
 			parser := tabnasjsonic.Make()
 			installed("tabnas-jsonc", parser.Use(tabnasjsonc.Jsonc))
-			return tt.NewParserSource(parser, text)
+			return parser
 		}},
 		{descriptor: func() at.Descriptor {
 			p := tabnasjsonic.Translate()
 			return descriptor("tabnas-jsonic", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
-		}, reader: func(text string) *tt.ParserSource { return tt.NewParserSource(tabnasjsonic.Make(), text) }},
+		}, parser: func() *tabnas.Tabnas { return tabnasjsonic.Make() }},
 		{descriptor: func() at.Descriptor {
 			p := tabnasjsonl.Translate()
 			return descriptor("tabnas-jsonl", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
-		}, reader: func(text string) *tt.ParserSource { return tt.NewParserSource(tabnasjsonl.Make(), text) }},
+		}, parser: func() *tabnas.Tabnas { return tabnasjsonl.Make() }},
 		{descriptor: func() at.Descriptor {
 			p := tabnasmarkdown.Translate()
 			return descriptor("tabnas-markdown", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
-		}, reader: func(text string) *tt.ParserSource { return tt.NewParserSource(tabnasmarkdown.Make(), text) }},
+		}, parser: func() *tabnas.Tabnas { return tabnasmarkdown.Make() }},
 		{descriptor: func() at.Descriptor {
 			p := tabnasproto.Translate()
 			return descriptor("tabnas-proto", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
@@ -285,30 +334,30 @@ func modules() []module {
 		{descriptor: func() at.Descriptor {
 			p := tabnassemver.Translate()
 			return descriptor("tabnas-semver", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
-		}, reader: func(text string) *tt.ParserSource { return tt.NewParserSource(tabnassemver.Make(), text) }},
+		}, parser: func() *tabnas.Tabnas { return tabnassemver.Make() }},
 		{descriptor: func() at.Descriptor {
 			p := tabnastoml.Translate()
 			return descriptor("tabnas-toml", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
-		}, reader: func(text string) *tt.ParserSource { return tt.NewParserSource(tabnastoml.MakeJsonic(), text) }},
+		}, parser: func() *tabnas.Tabnas { return tabnastoml.MakeJsonic() }},
 		{descriptor: func() at.Descriptor {
 			p := tabnasxml.Translate()
 			return descriptor("tabnas-xml", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
-		}, reader: func(text string) *tt.ParserSource {
+		}, parser: func() *tabnas.Tabnas {
 			// XML's plugin, outside its embed mode, reconfigures the jsonic
 			// host it is installed on as a pure XML parser, jsonic's own
 			// grammar and lexers unreachable.
 			parser := tabnasjsonic.Make()
 			installed("tabnas-xml", parser.UseDefaults(tabnasxml.Xml, tabnasxml.Defaults))
-			return tt.NewParserSource(parser, text)
+			return parser
 		}},
 		{descriptor: func() at.Descriptor {
 			p := tabnasyaml.Translate()
 			return descriptor("tabnas-yaml", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
-		}, reader: func(text string) *tt.ParserSource { return tt.NewParserSource(tabnasyaml.MakeJsonic(), text) }},
+		}, parser: func() *tabnas.Tabnas { return tabnasyaml.MakeJsonic() }},
 		{descriptor: func() at.Descriptor {
 			p := tabnaszon.Translate()
 			return descriptor("tabnas-zon", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
-		}, reader: func(text string) *tt.ParserSource { return tt.NewParserSource(zonParser(), text) }},
+		}, parser: func() *tabnas.Tabnas { return zonParser() }},
 	}
 }
 
@@ -510,11 +559,27 @@ var (
 func Formats() []*Format {
 	registryOnce.Do(func() {
 		for _, m := range modules() {
-			part := at.PartFromDescriptor(m.descriptor())
+			d := m.descriptor()
+			part := at.PartFromDescriptor(d)
 			if part == nil {
 				continue
 			}
-			registry = append(registry, &Format{Part: part, reader: m.reader, tree: m.tree, check: m.check})
+			f := &Format{Part: part, tree: m.tree, check: m.check}
+			if m.parser != nil {
+				parser := m.parser
+				f.reader = func(text string) *tt.ParserSource { return tt.NewParserSource(parser(), text) }
+				f.passes = func(text string) *tt.ParserEventSource { return tt.NewParserEventSource(parser(), text) }
+			}
+			// A transducer the manifest and the module disagree on is none
+			// here; the translation-parts test holds the two together.
+			var transduce *at.PartText
+			if m.transduce != nil {
+				transduce = m.transduce()
+			}
+			if alc, ok := at.PartTransducer(d, transduce); ok {
+				f.Transducer = alc
+			}
+			registry = append(registry, f)
 		}
 		sort.SliceStable(registry, func(i, j int) bool { return registry[i].Part.ID < registry[j].Part.ID })
 	})
@@ -532,8 +597,21 @@ func Named(id string) *Format {
 }
 
 // Names is the formats' ids for a message: `csv, ini, ... or zon`.
-func Names() string {
-	formats := Formats()
+func Names() string { return namesOf(Formats()) }
+
+// ParserNames is the ids of the formats whose documents are parsed, for a
+// message, as Names lists every format: what run --grammar takes.
+func ParserNames() string {
+	var parsed []*Format
+	for _, f := range Formats() {
+		if f.Parses() {
+			parsed = append(parsed, f)
+		}
+	}
+	return namesOf(parsed)
+}
+
+func namesOf(formats []*Format) string {
 	ids := make([]string, len(formats))
 	for i, f := range formats {
 		ids[i] = f.ID()
@@ -615,16 +693,34 @@ type Request struct {
 }
 
 // Compiled is the composition a request makes, and the program it compiles
-// to: one compiled composition serves many inputs.
+// to: one compiled composition serves many inputs. It is the composition
+// over the source's events, the route every format has, and, where the
+// source ships a transducer part and the whole document is asked, the
+// composition over its parser's rule passes, which RunCompiled runs first.
 type Compiled struct {
 	Composition *at.Composition
 	Program     *alchemy.Program
+	parsed      *parsedRoute
+}
+
+// parsedRoute is the composition over the source's parser's rule passes,
+// through its transducer part, and its program.
+type parsedRoute struct {
+	composition *at.Composition
+	program     *alchemy.Program
 }
 
 // Compile is the composition a request makes, and the program it compiles
 // to.
 func Compile(r *Request) (*Compiled, *tt.Fail) {
 	routers, renderers := tt.Routers(), tr.Renderers()
+	// The transducer the route reads the document through, where the
+	// source ships one and the whole document is asked: a path selects a
+	// value below the root, which only the document's value has.
+	transducer := r.From.Transducer
+	if r.Path != nil {
+		transducer = nil
+	}
 	if r.Program != nil {
 		file, text := r.Program.File, r.Program.Text
 		program, f := alchemy.Compile(text, file, routers, renderers)
@@ -645,7 +741,19 @@ func Compile(r *Request) (*Compiled, *tt.Fail) {
 		if f != nil {
 			return nil, f
 		}
-		return &Compiled{Composition: composition, Program: compiled}, nil
+		result := &Compiled{Composition: composition, Program: compiled}
+		if transducer != nil {
+			over, f := at.ComposeProgramParsed(output, transducer, r.To.Part, r.Options, "translate")
+			if f != nil {
+				return nil, f
+			}
+			program, f := over.Compile(&alchemy.Source{File: file, Text: text}, routers, renderers)
+			if f != nil {
+				return nil, f
+			}
+			result.parsed = &parsedRoute{composition: over, program: program}
+		}
+		return result, nil
 	}
 	source := r.From.Part
 	if r.Path != nil {
@@ -659,7 +767,39 @@ func Compile(r *Request) (*Compiled, *tt.Fail) {
 	if f != nil {
 		return nil, f
 	}
-	return &Compiled{Composition: composition, Program: compiled}, nil
+	result := &Compiled{Composition: composition, Program: compiled}
+	if transducer != nil {
+		over, f := at.ComposeParsed(r.From.Part, transducer, r.To.Part, r.Options, "translate")
+		if f != nil {
+			return nil, f
+		}
+		program, f := over.Compile(nil, routers, renderers)
+		if f != nil {
+			return nil, f
+		}
+		result.parsed = &parsedRoute{composition: over, program: program}
+	}
+	return result, nil
+}
+
+// attemptParsed is one run of a request over its source's parser's rule
+// passes, through the composition over the source's transducer part: what
+// it wrote, held until the run has succeeded, as RunCompiled's other
+// attempts hold it.
+func attemptParsed(r *Request, program *alchemy.Program, input string, metrics *tt.Metrics) ([]byte, *tt.Fail) {
+	var held bytes.Buffer
+	sink, f := program.ParserSink(&held, alchemy.RenderDefault, r.Limits, metrics)
+	if f != nil {
+		return nil, f
+	}
+	source, f := r.From.Passes(input)
+	if f != nil {
+		return nil, f
+	}
+	if _, f := source.Limits(r.Limits).Metrics(metrics).Run(sink); f != nil {
+		return nil, f
+	}
+	return held.Bytes(), nil
 }
 
 // unfollowed is whether the incremental source refused a document because
@@ -732,7 +872,28 @@ func RunCompiled(r *Request, compiled *Compiled, input string, out io.Writer, me
 	}
 	var written []byte
 	var f *tt.Fail
-	if r.Path == nil && tt.Incremental(r.From.ID()) {
+	// The transducer's route first, where the source ships a part and the
+	// whole document is asked: its rule passes through the part into the
+	// program, streamed whatever the grammar. A document whose events are
+	// not what the grammar's value holds (a repeated member, streamed
+	// twice, which the composition's tree-contract refuses) is read again
+	// whole below, as the incremental source's is: the grammar's own value
+	// is the document.
+	transduced := false
+	if compiled.parsed != nil {
+		own := tt.NewMetrics()
+		written, f = attemptParsed(r, compiled.parsed.program, input, own)
+		switch {
+		case f == nil:
+			absorb(metrics, own)
+			transduced = true
+		case !unfollowed(f):
+			return f
+		}
+	}
+	switch {
+	case transduced:
+	case r.Path == nil && tt.Incremental(r.From.ID()):
 		prune := tt.Prune{}
 		if selector, ok := compiled.Program.RowSelector(); ok {
 			prune = tt.PruneUnderSelector(selector)
@@ -747,7 +908,7 @@ func RunCompiled(r *Request, compiled *Compiled, input string, out io.Writer, me
 		} else if f == nil {
 			absorb(metrics, own)
 		}
-	} else {
+	default:
 		written, f = attempt(tt.MaterializeMode(), metrics)
 	}
 	if f != nil {
@@ -912,6 +1073,7 @@ func FormatsJSON() string {
 			tt.Member{Key: "lift", Value: entry(p.Lift)},
 			tt.Member{Key: "embed", Value: entry(p.Embed)},
 			tt.Member{Key: "render", Value: text(render)},
+			tt.Member{Key: "transduce", Value: entry(f.Transducer)},
 			tt.Member{Key: "loss", Value: tt.ArrayDatum(loss...)},
 		)
 	}

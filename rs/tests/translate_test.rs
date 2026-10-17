@@ -35,8 +35,7 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use tabnas_alchemy::translate::{Composition, Options};
-use tabnas_alchemy::Program;
+use tabnas_alchemy::translate::Options;
 use tabnas_alchemy_cli::translate::{self, Format, Request};
 use tabnas_transduce::{Code, Datum, Fail, Limits, Metrics};
 
@@ -533,7 +532,7 @@ fn semver_version(d: &Datum) -> bool {
 type PairKey = (String, String, Option<String>);
 
 /// A pair's composition, compiled.
-type Compiled = Rc<(Composition, Program)>;
+type Compiled = Rc<translate::Compiled>;
 
 thread_local! {
     /// The compositions compiled so far, by source, target and program:

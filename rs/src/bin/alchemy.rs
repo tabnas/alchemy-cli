@@ -5,7 +5,7 @@
 //! alchemy format FILE      print the program in layout form
 //! alchemy check FILE       parse, desugar, resolve, check and build the plan; print nothing and exit 0
 //! alchemy explain FILE     print the plan report
-//! alchemy run [--render csv|json] [--no-native] [--max-output-bytes N] PROGRAM INPUT
+//! alchemy run [--grammar FORMAT] [--render csv|json] [--no-native] [--max-output-bytes N] PROGRAM INPUT
 //!                          run the program over the JSON document INPUT
 //! alchemy translate --from FORMAT --to FORMAT [--path PATH] [--key KEY]
 //!                   [--with PROGRAM] [--max-output-bytes N] INPUT
@@ -57,16 +57,18 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use tabnas_alchemy::translate::Options;
-use tabnas_alchemy::{canonical, format, parse_file, Program, Renderer};
-use tabnas_alchemy_cli::translate;
-use tabnas_transduce::{Code, Fail, Limits, Metrics, ParserSource, Prune, Sink, SourceMode};
+use tabnas_alchemy::{canonical, format, parse_file, Input, Program, Renderer};
+use tabnas_alchemy_cli::translate::{self, Format};
+use tabnas_transduce::{
+    Code, Fail, Limits, Metrics, ParserSink, ParserSource, Prune, Sink, SourceMode,
+};
 
 /// This crate's version, read from `rs/Cargo.toml`. It MUST equal
 /// `ts/package.json` "version": admin/publish.sh rewrites both, and
 /// `rs/tests/version_test.rs` fails the build if they drift.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-const USAGE: &str = "usage: alchemy canon|format|check|explain FILE\n       alchemy run [--render csv|json] [--no-native] [--max-output-bytes N] PROGRAM INPUT\n       alchemy translate --from FORMAT --to FORMAT [--path PATH] [--key KEY] [--with PROGRAM] [--max-output-bytes N] INPUT\n       alchemy formats\n       (a FILE may be - for standard input)";
+const USAGE: &str = "usage: alchemy canon|format|check|explain FILE\n       alchemy run [--grammar FORMAT] [--render csv|json] [--no-native] [--max-output-bytes N] PROGRAM INPUT\n       alchemy translate --from FORMAT --to FORMAT [--path PATH] [--key KEY] [--with PROGRAM] [--max-output-bytes N] INPUT\n       alchemy formats\n       (a FILE may be - for standard input)";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -157,6 +159,18 @@ fn compile(src: &str, file: &str) -> Result<Program, Fail> {
     )
 }
 
+/// [`compile`] over the input the host declares: the parser's rule passes,
+/// for `run --grammar`.
+fn compile_with(src: &str, file: &str, input: Input) -> Result<Program, Fail> {
+    tabnas_alchemy::compile_with(
+        src,
+        file,
+        input,
+        Arc::new(tabnas_transduce::routers()),
+        Arc::new(tabnas_render::renderers()),
+    )
+}
+
 fn usage() -> Exit {
     Exit {
         fail: Fail::input(USAGE),
@@ -204,7 +218,13 @@ fn run(args: &[String]) -> Result<String, Exit> {
         "run" => {
             let options = RunOptions::parse(rest)?;
             let src = read(&options.program)?;
-            let mut program = compile(&src, &options.program)?;
+            // With --grammar the program reads the rule passes of INPUT
+            // parsed as that format, and is compiled over them, as a
+            // transducer part is; without it, the JSON document's events.
+            let mut program = match options.grammar {
+                Some(_) => compile_with(&src, &options.program, Input::ParserEvents)?,
+                None => compile(&src, &options.program)?,
+            };
             if !options.native {
                 program = program.with_native(false)?;
             }
@@ -216,14 +236,28 @@ fn run(args: &[String]) -> Result<String, Exit> {
             // input is read, so the refusal never waits on standard input
             // or drains a large file to say so.
             let metrics = Metrics::new();
-            let sink = program.sink(
-                Box::new(io::stdout()),
-                options.render,
-                &limits,
-                metrics.clone(),
-            )?;
-            let input = read(&options.input)?;
-            execute(&program, sink, metrics, &input, limits)?;
+            match options.grammar {
+                None => {
+                    let sink = program.sink(
+                        Box::new(io::stdout()),
+                        options.render,
+                        &limits,
+                        metrics.clone(),
+                    )?;
+                    let input = read(&options.input)?;
+                    execute(&program, sink, metrics, &input, limits)?;
+                }
+                Some(grammar) => {
+                    let sink = program.parser_sink(
+                        Box::new(io::stdout()),
+                        options.render,
+                        &limits,
+                        metrics.clone(),
+                    )?;
+                    let input = read(&options.input)?;
+                    execute_passes(grammar, sink, metrics, &input, limits)?;
+                }
+            }
             Ok(String::new())
         }
         "translate" => {
@@ -347,6 +381,10 @@ impl TranslateOptions {
 }
 
 struct RunOptions {
+    /// The format whose parser reads INPUT, its rule passes the program's
+    /// input (`--grammar`); without one the program reads INPUT as a JSON
+    /// document's events.
+    grammar: Option<&'static Format>,
     render: Option<Renderer>,
     native: bool,
     max_output_bytes: Option<u64>,
@@ -356,6 +394,7 @@ struct RunOptions {
 
 impl RunOptions {
     fn parse(args: &[String]) -> Result<RunOptions, Exit> {
+        let mut grammar = None;
         let mut render = None;
         let mut native = true;
         let mut max_output_bytes = None;
@@ -363,6 +402,20 @@ impl RunOptions {
         let mut i = 0;
         while i < args.len() {
             match args[i].as_str() {
+                "--grammar" => {
+                    let name = args.get(i + 1).ok_or_else(usage)?;
+                    grammar = Some(translate::format(name).filter(|f| f.parses()).ok_or_else(
+                        || Exit {
+                            fail: Fail::input(format!(
+                                "--grammar takes a format whose documents are parsed \
+                                     ({}), not {name:?}",
+                                translate::parser_names()
+                            )),
+                            status: 2,
+                        },
+                    )?);
+                    i += 2;
+                }
                 "--render" => {
                     let name = args.get(i + 1).ok_or_else(usage)?;
                     render = Some(Renderer::named(name).ok_or_else(|| Exit {
@@ -402,6 +455,7 @@ impl RunOptions {
             });
         }
         Ok(RunOptions {
+            grammar,
             render,
             native,
             max_output_bytes,
@@ -430,14 +484,40 @@ fn execute(
         .limits(limits)
         .metrics(metrics.clone())
         .run_owned(sink);
-    outcome.map(|_| ()).map_err(|fail| {
-        // A failure the source found (bad JSON after the rows) knows
-        // nothing of the output; the writer's count says whether bytes
-        // had reached standard output.
-        if Metrics::get(&metrics.output_bytes) > 0 && !fail.committed_output {
-            fail.committed()
-        } else {
-            fail
-        }
-    })
+    outcome
+        .map(|_| ())
+        .map_err(|fail| committed(fail, &metrics))
+}
+
+/// Run the program over the rule passes of one document, parsed with
+/// `grammar`, into the sink that writes its output.
+fn execute_passes(
+    grammar: &Format,
+    sink: Box<dyn ParserSink + Send>,
+    metrics: Arc<Metrics>,
+    input: &str,
+    limits: Limits,
+) -> Result<(), Fail> {
+    grammar
+        .passes(input)
+        .and_then(|source| {
+            source
+                .limits(limits)
+                .metrics(metrics.clone())
+                .run_boxed(sink)
+                .0
+        })
+        .map(|_| ())
+        .map_err(|fail| committed(fail, &metrics))
+}
+
+/// A run's failure, marked as after output where bytes had reached
+/// standard output: a failure the source found (bad JSON after the rows)
+/// knows nothing of the output, and the writer's count says.
+fn committed(fail: Fail, metrics: &Metrics) -> Fail {
+    if Metrics::get(&metrics.output_bytes) > 0 && !fail.committed_output {
+        fail.committed()
+    } else {
+        fail
+    }
 }

@@ -18,9 +18,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
 use tabnas_alchemy::shared::{Code, Fail, Limits, Metrics};
-use tabnas_alchemy::{desugar, parse, Input, Program, Renderer};
+use tabnas_alchemy::{desugar, parse, Input, Output, Program, Renderer};
+use tabnas_alchemy_cli::translate::{self, Format};
 use tabnas_support::{is_error_expect, load_spec_dir, Failure, Row, Runner, SpecOptions};
-use tabnas_transduce::{ParserSource, Prune, SourceMode};
+use tabnas_transduce::{
+    walk_datum, Datum, DatumBuilder, Duplicates, Flow, JsonEvent, OwnedJsonEvent, ParserSource,
+    Prune, Sink, SourceMode,
+};
 
 use common::{compile, compile_with, spec_dir, text_value};
 
@@ -38,13 +42,7 @@ fn run() {
             doc if doc.is_empty() => "null".to_string(),
             doc => doc,
         };
-        let render = match row.named("render") {
-            "" => None,
-            name => Some(
-                Renderer::named(name)
-                    .unwrap_or_else(|| panic!("{}: render is csv, json or empty", row.location())),
-            ),
-        };
+        let render = row_render(row);
         let native = run_both(program, &doc, render, true);
         let interpreted = run_both(program, &doc, render, false);
         match (&native, &interpreted) {
@@ -61,6 +59,18 @@ fn run() {
             .map_err(|fail| run_failure(&fail))
     })
     .file(spec_dir().join("run.tsv"));
+}
+
+/// A row's `render` column: how a table or JSON-events result is rendered,
+/// or the host's default.
+fn row_render(row: &Row) -> Option<Renderer> {
+    match row.named("render") {
+        "" => None,
+        name => Some(
+            Renderer::named(name)
+                .unwrap_or_else(|| panic!("{}: render is csv, json or empty", row.location())),
+        ),
+    }
 }
 
 /// Compile `program` and run it over `doc`, as `alchemy run` does: on a
@@ -174,15 +184,24 @@ fn row_failures(file: &str, row: &Row) -> Vec<Fail> {
                 .into_iter()
                 .collect()
         }
+        "transduce.tsv" => {
+            let grammar = transduce_grammar(row);
+            let doc = row.unesc_named("doc");
+            let render = row_render(row);
+            let duplicates = row_duplicates(row);
+            [true, false]
+                .into_iter()
+                .filter_map(|native| {
+                    transduce_both(&input, grammar, &doc, render, duplicates, native).err()
+                })
+                .collect()
+        }
         _ => {
             let doc = match row.unesc_named("doc") {
                 doc if doc.is_empty() => "null".to_string(),
                 doc => doc,
             };
-            let render = match row.named("render") {
-                "" => None,
-                name => Renderer::named(name),
-            };
+            let render = row_render(row);
             [true, false]
                 .into_iter()
                 .filter_map(|native| run_both(&input, &doc, render, native).err())
@@ -365,4 +384,190 @@ fn the_raised_messages_match_the_document() {
         problems.len(),
         problems.join("\n")
     );
+}
+
+/// A program over a grammar's rule passes, run over a document in that
+/// grammar: the bytes it writes, or the failure. See alchemy's
+/// `test/AGENTS.md` for the columns. Every row runs natively and
+/// interpreted, held to each other as [`run`]'s are. A row's program is a
+/// transducer, its events the document's, and the runner holds it to
+/// that: where the program answers JSON events, the grammar accepts the
+/// document and no member repeats, the events it writes are the walk of
+/// the grammar's own value, a number's lexeme aside ([`differential`]).
+#[test]
+fn transduce() {
+    Runner::new_with_row(|program, row| {
+        let grammar = transduce_grammar(row);
+        let doc = row.unesc_named("doc");
+        let render = row_render(row);
+        let duplicates = row_duplicates(row);
+        let native = transduce_both(program, grammar, &doc, render, duplicates, true);
+        let interpreted = transduce_both(program, grammar, &doc, render, duplicates, false);
+        match (&native, &interpreted) {
+            (Ok(a), Ok(b)) if a == b => {}
+            (Err(a), Err(b)) if run_code(a) == run_code(b) && (a.row, a.column) == (b.row, b.column) => {}
+            _ => {
+                return Err(Failure::message(format!(
+                    "native and interpreted runs disagree:\n  native:      {native:?}\n  interpreted: {interpreted:?}"
+                )))
+            }
+        }
+        if let Ok((Output::JsonEvents, written)) = &native {
+            differential(grammar, &doc, written).map_err(Failure::message)?;
+        }
+        native
+            .map(|(_, text)| text_value(text))
+            .map_err(|fail| run_failure(&fail))
+    })
+    .file(spec_dir().join("transduce.tsv"));
+}
+
+/// The policy a transduce row's `duplicates` names for a member name an
+/// object repeats within a captured value: empty is the default, `first`
+/// keeps the earlier value, `last` the later.
+fn row_duplicates(row: &Row) -> Duplicates {
+    match row.named("duplicates") {
+        "" => Duplicates::Reject,
+        "first" => Duplicates::FirstWins,
+        "last" => Duplicates::LastWins,
+        other => panic!(
+            "{}: duplicates is empty, first or last, not {other:?}",
+            row.location()
+        ),
+    }
+}
+
+/// The format a transduce row's `grammar` names, whose parser reads its
+/// document: one of the command's own, with a parser.
+fn transduce_grammar(row: &Row) -> &'static Format {
+    let name = row.named("grammar");
+    translate::format(name)
+        .filter(|format| format.parses())
+        .unwrap_or_else(|| {
+            panic!(
+                "{}: grammar names a format whose documents are parsed ({}), not {name:?}",
+                row.location(),
+                translate::parser_names()
+            )
+        })
+}
+
+/// Compile `program` over the parser's rule passes and run it over `doc`,
+/// parsed with `grammar`, as `alchemy run --grammar` does: on a thread of
+/// `STACK_BYTES`, with the default limits. The program's output kind rides
+/// along, for the differential.
+fn transduce_both(
+    program: &str,
+    grammar: &'static Format,
+    doc: &str,
+    render: Option<Renderer>,
+    duplicates: Duplicates,
+    native: bool,
+) -> Result<(Output, String), Fail> {
+    std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .stack_size(tabnas_alchemy::STACK_BYTES)
+            .spawn_scoped(scope, || {
+                let mut compiled = compile_with(program, "transduce", Input::ParserEvents)?;
+                if !native {
+                    compiled = compiled.with_native(false)?;
+                }
+                if duplicates != Duplicates::Reject {
+                    compiled = compiled.with_duplicates(duplicates)?;
+                }
+                let output = compiled.output();
+                drive_passes(&compiled, grammar, doc, render).map(|text| (output, text))
+            })
+            .expect("the run thread starts")
+            .join()
+            .expect("the run thread finishes")
+    })
+}
+
+fn drive_passes(
+    program: &Program,
+    grammar: &Format,
+    doc: &str,
+    render: Option<Renderer>,
+) -> Result<String, Fail> {
+    let limits = Limits::default();
+    let metrics = Metrics::new();
+    let buffer = Shared::default();
+    let sink = program.parser_sink(Box::new(buffer.clone()), render, &limits, metrics.clone())?;
+    grammar
+        .passes(doc)?
+        .limits(limits)
+        .metrics(metrics)
+        .run_boxed(sink)
+        .0?;
+    let bytes = buffer.0.lock().unwrap().clone();
+    Ok(String::from_utf8(bytes).expect("the output is UTF-8"))
+}
+
+/// The events of a document, collected into a value under a duplicate
+/// policy.
+struct Collect(DatumBuilder);
+
+impl Sink for Collect {
+    fn event(&mut self, ev: JsonEvent<'_>) -> Result<Flow, Fail> {
+        if !matches!(ev, JsonEvent::End) {
+            self.0.event(ev)?;
+        }
+        Ok(Flow::Continue)
+    }
+}
+
+/// The differential rule of `transduce.tsv`: the events a row's program
+/// wrote, read back from its JSON, are the walk of the grammar's own value
+/// of the document, a number's lexeme aside. A document the grammar
+/// refuses has no value to walk, and a member the program streamed twice
+/// is kept once by the value: neither row has an oracle, and both pass
+/// here, held by their expected column alone.
+fn differential(grammar: &Format, doc: &str, written: &str) -> Result<(), String> {
+    let Ok(value) = grammar.read(doc, &Limits::default()) else {
+        return Ok(());
+    };
+    let collect = Collect(DatumBuilder::new(
+        usize::MAX,
+        "max_capture_bytes",
+        Duplicates::Reject,
+    ));
+    let (outcome, mut collect) = ParserSource::new(tabnas_json::make(), written)
+        .grammar("json")
+        .mode(SourceMode::Incremental {
+            prune: Prune::Never,
+        })
+        .run_owned(collect);
+    let read = match outcome {
+        Err(fail) if fail.code == Code::DuplicateMember => return Ok(()),
+        Err(fail) => {
+            return Err(format!(
+                "the output {written:?} does not read back as JSON: {fail}"
+            ))
+        }
+        Ok(_) => collect
+            .0
+            .take()
+            .ok_or_else(|| format!("the output {written:?} holds no value"))?,
+    };
+    let (written, walked) = (plain_events(&read), plain_events(&value));
+    if written == walked {
+        Ok(())
+    } else {
+        Err(format!(
+            "the transducer's events are not the walk of the grammar's value\n  written: {written:?}\n  walked:  {walked:?}"
+        ))
+    }
+}
+
+/// A value's events, a number's lexeme dropped.
+fn plain_events(value: &Datum) -> Vec<OwnedJsonEvent> {
+    let mut events: Vec<OwnedJsonEvent> = Vec::new();
+    walk_datum(value, &mut events).expect("a value walks");
+    for event in &mut events {
+        if let OwnedJsonEvent::Number { lexeme, .. } = event {
+            *lexeme = None;
+        }
+    }
+    events
 }

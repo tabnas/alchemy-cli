@@ -5,7 +5,11 @@
 // is the compile-time contract without introducing a shared package type.
 // Each format's parts run round trip on transduce's routers and render's
 // renderers. From alchemy's go/translation_parts_test.go, whose text-shape
-// composition, which only compiles, stays there.
+// composition, which only compiles, stays there. The transducer part a
+// module may ship (its manifest's translate.transduce) is held here too:
+// present when declared and absent when not, under the entry the module
+// names, read by the command, and composing over the format's parser's
+// rule passes.
 
 package e2e
 
@@ -15,7 +19,9 @@ import (
 	"strings"
 	"testing"
 
+	translate "github.com/tabnas/alchemy-cli/go/translate"
 	. "github.com/tabnas/alchemy/go"
+	altranslate "github.com/tabnas/alchemy/go/translate"
 	tabnascsv "github.com/tabnas/csv/go"
 	tabnasini "github.com/tabnas/ini/go"
 	tabnasjson "github.com/tabnas/json/go"
@@ -46,11 +52,22 @@ type structuralParts struct {
 type translationDescriptor struct {
 	LanguageID string `json:"languageId"`
 	Translate  struct {
-		Reads  any     `json:"reads"`
-		Writes string  `json:"writes"`
-		Lift   *string `json:"lift"`
-		Render string  `json:"render"`
+		Reads     any     `json:"reads"`
+		Writes    string  `json:"writes"`
+		Lift      *string `json:"lift"`
+		Render    string  `json:"render"`
+		Transduce *string `json:"transduce"`
 	} `json:"translate"`
+}
+
+// grammarTransducers is the transducer part of every module whose
+// interface carries one, read by direct field access as grammarParts reads
+// the rest; a module whose interface carries none is absent.
+func grammarTransducers() map[string]*structuralPart {
+	json := tabnasjson.Translate()
+	return map[string]*structuralPart{
+		"json": packagePart(json.Transduce != nil, func() (string, string) { return json.Transduce.Entry, json.Transduce.Source }),
+	}
 }
 
 func localPart(entry, source string) *structuralPart {
@@ -322,6 +339,40 @@ func TestStructuralTranslationParts(t *testing.T) {
 			assertStructuralPart(t, format, "lift", descriptor.Translate.Lift, parts.lift)
 			render := descriptor.Translate.Render
 			assertStructuralPart(t, format, "render", &render, parts.render)
+
+			// The transducer part, where the manifest names one: the module
+			// exposes it under its entry, the command reads it from the
+			// module (Format.Transducer), and it composes over the format's
+			// parser's rule passes into a tree target. Where the manifest
+			// names none, neither has one.
+			transduce := grammarTransducers()[format]
+			assertStructuralPart(t, format, "transduce", descriptor.Translate.Transduce, transduce)
+			registered := translate.Named(format)
+			if registered == nil {
+				t.Fatalf("%s is one of the command's formats", format)
+			}
+			var exposed, read string
+			if transduce != nil {
+				exposed = transduce.entry
+			}
+			if registered.Transducer != nil {
+				read = registered.Transducer.Entry
+			}
+			if read != exposed {
+				t.Fatalf("the command's transducer is %q, the module's %q", read, exposed)
+			}
+			if registered.Transducer != nil && descriptor.Translate.Transduce != nil {
+				if !strings.HasSuffix(registered.Transducer.File, *descriptor.Translate.Transduce) {
+					t.Fatalf("the transducer is %s, not %s", registered.Transducer.File, *descriptor.Translate.Transduce)
+				}
+				composition, f := altranslate.ComposeParsed(registered.Part, registered.Transducer, translate.Named("json").Part, altranslate.DefaultOptions(), "parts")
+				if f != nil {
+					t.Fatalf("the transducer does not compose: %v", f)
+				}
+				if _, f := composition.Compile(nil, routers, renderers); f != nil {
+					t.Fatalf("the transducer's composition does not compile: %v", f)
+				}
+			}
 
 			var program *Program
 			for index, readShape := range reads {

@@ -8,10 +8,10 @@ package main
 // carries nothing on success. The bytes expected are the Rust binary's,
 // which writes the same for the same arguments.
 //
-// translate reads a document incrementally only where transduce has
-// verified the grammar, which a build without the tabnas_nodecell tag has
-// done for none, so there a document is read whole and a number written by
-// its value: the cases that show a lexeme say both.
+// translate reads a JSON document through json's transducer part, over the
+// parser's rule passes, in every build, so a number is written as the
+// document spelled it (30.50); a path keeps the document's value, read
+// whole, which spells a number by its value (30.5).
 
 import (
 	"encoding/json"
@@ -34,18 +34,7 @@ import (
 	tabnasproto "github.com/tabnas/proto/go"
 	tabnassemver "github.com/tabnas/semver/go"
 	tabnastoml "github.com/tabnas/toml/go"
-	tt "github.com/tabnas/transduce/go"
 )
-
-// lexemes is the text a build writes for a number: as the document spelled
-// it where the source is read incrementally, by its value where it is read
-// whole.
-func lexemes(spelled, valued string) string {
-	if tt.AdapterBuilt() {
-		return spelled
-	}
-	return valued
-}
 
 // people is a document with a nested table and numbers whose lexeme is not
 // their shortest text.
@@ -79,7 +68,7 @@ func TestFormatsPrintsTheRegistryAsJSON(t *testing.T) {
 	// Each format's fields in their order, abnf's whole up to its loss.
 	// Its whole is its manifest's sentence, null where it gives none.
 	if !strings.HasPrefix(o.stdout, `[{"id":"abnf","reads":["tree"],"writes":"tree","root":"object","schema":"grammar-spec","whole":`+
-		wholeJSON(t, tabnasabnf.Translate().Manifest)+`,"lift":null,"embed":null,"render":"abnf-render","loss":["`) {
+		wholeJSON(t, tabnasabnf.Translate().Manifest)+`,"lift":null,"embed":null,"render":"abnf-render","transduce":null,"loss":["`) {
 		t.Errorf("%s", o.stdout)
 	}
 	var formats []map[string]any
@@ -89,7 +78,7 @@ func TestFormatsPrintsTheRegistryAsJSON(t *testing.T) {
 	var ids []string
 	for _, f := range formats {
 		ids = append(ids, f["id"].(string))
-		if len(f) != 10 {
+		if len(f) != 11 {
 			t.Errorf("%s: %v", f["id"], f)
 		}
 		loss, _ := f["loss"].([]any)
@@ -212,12 +201,12 @@ func wholeJSON(t *testing.T, manifest string) string {
 func TestTranslateWritesADocumentInAnotherFormat(t *testing.T) {
 	input := tempFile(t, "people.json", people)
 	wantSuccess(t, invoke(t, []string{"translate", "--from", "json", "--to", "yaml", input}, nil),
-		"\"people\":\n  - \"name\": \"Ann\"\n    \"age\": "+lexemes("30.50", "30.5")+"\n  - \"name\": \"Bo\"\n    \"age\": 7\n\"n\": "+lexemes("1.50", "1.5")+"\n")
+		"\"people\":\n  - \"name\": \"Ann\"\n    \"age\": 30.50\n  - \"name\": \"Bo\"\n    \"age\": 7\n\"n\": 1.50\n")
 	// A later flag replaces an earlier one.
 	wantSuccess(t, invoke(t, []string{"translate", "--from", "json", "--to", "yaml", "--to", "json", input}, nil),
-		lexemes(people, `{"people":[{"name":"Ann","age":30.5},{"name":"Bo","age":7}],"n":1.5}`)+"\n")
+		people+"\n")
 	for _, c := range []struct{ from, to, stdin, want string }{
-		{"json", "json", `[1.50,1e2,-0.0]`, lexemes("[1.50,1e2,-0.0]", "[1.5,100,-0]") + "\n"},
+		{"json", "json", `[1.50,1e2,-0.0]`, "[1.50,1e2,-0.0]" + "\n"},
 		{"csv", "json", "a,b\n1,x\n2,y\n", `[{"a":"1","b":"x"},{"a":"2","b":"y"}]` + "\n"},
 		// Markdown read as records through its lift, into a records render.
 		{"markdown", "csv", "| a | b |\n| - | - |\n| 1 | x |\n", "\"a\",\"b\"\r\n\"1\",\"x\"\r\n"},
@@ -251,7 +240,7 @@ func TestTranslateTakesAKeyAndAPath(t *testing.T) {
 	wantSuccess(t, translateTo("yaml", "--path", `["people",0]`), "\"name\": \"Ann\"\n\"age\": 30.5\n")
 	wantSuccess(t, translateTo("ini", "--path", `["n"]`), "\"items\" = 1.5\n")
 	wantSuccess(t, invoke(t, []string{"translate", "--from", "json", "--to", "toml", "--key", "", "-"}, text("1.50")),
-		`"" = `+lexemes("1.50", "1.5")+"\n")
+		`"" = 1.50`+"\n")
 	// A path that names nothing is the document's failure, status 1.
 	f := wantFailure(t, translateTo("yaml", "--path", `["people",5]`), 1, "INPUT_INVALID", "")
 	if f["message"] != `the path ["people",5] names nothing in the document` {
@@ -278,13 +267,13 @@ func TestTranslateRunsAProgramFirst(t *testing.T) {
 		"def export [input] (table-from-json binding input)\n")
 	ownText := tempFile(t, "text.alc", "def export [input] (csv csv-options (table-from-json (record (entry :columns :infer) (entry :rows (path each-index))) input))\n")
 	broken := tempFile(t, "broken.alc", "def export [input] (nope input)\n")
-	age := lexemes("30.50", "30.5")
+	age := "30.50"
 	wantSuccess(t, invoke(t, []string{"translate", "--from", "json", "--to", "csv", "--with", table, input}, nil),
 		"\"name\",\"age\"\r\n\"Ann\",\""+age+"\"\r\n\"Bo\",\"7\"\r\n")
 	wantSuccess(t, invoke(t, []string{"translate", "--from", "json", "--to", "json", "--with", table, input}, nil),
 		`[{"name":"Ann","age":`+age+`},{"name":"Bo","age":7}]`+"\n")
 	wantSuccess(t, invoke(t, []string{"translate", "--from", "json", "--to", "yaml", "--with", "-", input}, text("def export [input] input\n")),
-		"\"people\":\n  - \"name\": \"Ann\"\n    \"age\": "+age+"\n  - \"name\": \"Bo\"\n    \"age\": 7\n\"n\": "+lexemes("1.50", "1.5")+"\n")
+		"\"people\":\n  - \"name\": \"Ann\"\n    \"age\": "+age+"\n  - \"name\": \"Bo\"\n    \"age\": 7\n\"n\": 1.50\n")
 	wantSuccess(t, invoke(t, []string{"translate", "--from", "json", "--to", "yaml", "--with", echo, "-"}, text("[1]")), "- 1\n")
 	// Refused before the input is read: an input that cannot be read is
 	// never reached.

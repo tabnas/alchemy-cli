@@ -22,7 +22,15 @@
 //! reads a document as that tree (expr's simplified form, proto's
 //! descriptor, C's realized syntax tree, and the grammar spec a grammar
 //! notation's document compiles to), that tree is the document, read
-//! whole. Nothing here knows a
+//! whole. A package that ships a transducer part (its manifest's
+//! `translate.transduce`, the alchemy file whose entry makes the format's
+//! JSON events of the parser's rule passes) is read through it instead:
+//! the route is composed over the transducer (`compose_parsed`), and the
+//! input's rule passes stream through transduce's `ParserEventSource` into
+//! the program, whatever the grammar, with nothing held but what the part
+//! keeps; where the part's events are not what the grammar's value holds
+//! (a repeated member, which it streams twice and `tree-contract` refuses),
+//! the document is read again whole, as above. Nothing here knows a
 //! format by its name: a format is what its manifest says, and a package
 //! whose manifest names no parts this host can take is not a format here.
 
@@ -30,27 +38,37 @@ use std::io::Write;
 use std::sync::{Arc, OnceLock};
 
 use tabnas_alchemy::translate::{
-    compose, compose_program, Composition, Descriptor, Front, Options, Part, PartText, Render,
-    Root, Shape,
+    compose, compose_parsed, compose_program, compose_program_parsed, Alc, Composition, Descriptor,
+    Front, Options, Part, PartText, Render, Root, Shape,
 };
 use tabnas_alchemy::{Output, Program, Source};
 use tabnas_transduce::{
     capability, walk_datum, AbortFlag, Code, Datum, DatumBuilder, Duplicates, Fail, Flow, Guarded,
-    JsonEvent, Limits, Metrics, ParserSource, Prune, Segment, Sink, SourceMode, TreeContract,
+    JsonEvent, Limits, Metrics, ParserEventSource, ParserSource, Prune, Segment, Sink, SourceMode,
+    TreeContract,
 };
+
+/// A format's grammar applied to a text, two ways, each over a fresh parser
+/// of the grammar under the format's own options, since a source owns its
+/// parser: as transduce's source of the document's events
+/// ([`ParserSource`]), and as its source of the parser's rule passes
+/// ([`ParserEventSource`]), which a program over parser events reads (a
+/// transducer part, `run --grammar`).
+#[derive(Clone, Copy)]
+struct Parsing {
+    events: for<'s> fn(&'s str) -> ParserSource<'s>,
+    passes: for<'s> fn(&'s str) -> ParserEventSource<'s>,
+}
 
 /// How a format's documents are read.
 #[derive(Clone, Copy)]
 enum Reader {
-    /// With the grammar's parser, as a source over a text.
-    Parser(for<'s> fn(&'s str) -> ParserSource<'s>),
+    /// With the grammar's parser.
+    Parser(Parsing),
     /// With the grammar's parser, after a check the package's own parse
     /// makes before the parser runs, which the parser does not make
     /// itself: a document the check refuses is not parsed.
-    Checked(
-        fn(&str) -> Result<(), Fail>,
-        for<'s> fn(&'s str) -> ParserSource<'s>,
-    ),
+    Checked(fn(&str) -> Result<(), Fail>, Parsing),
     /// As the tree the package's own API reads a document as, where its
     /// parser's value is not yet the tree its parts declare: read whole,
     /// and walked as a parser's value is.
@@ -58,16 +76,52 @@ enum Reader {
 }
 
 /// One format this command reads and writes: its parts, as its package's
-/// manifest names them, and the grammar its documents are read with.
+/// manifest names them, the grammar its documents are read with, and the
+/// transducer part its package ships, where it ships one.
 pub struct Format {
     pub part: Part,
     reader: Reader,
+    transducer: Option<Alc>,
 }
 
 impl Format {
     /// The manifest's `languageId`.
     pub fn id(&self) -> &str {
         &self.part.id
+    }
+
+    /// The transducer part the format's package ships, its manifest's
+    /// `translate.transduce`: the alchemy file whose entry makes the
+    /// format's JSON events of its parser's rule passes, through which
+    /// `translate` reads the format's documents. `None` where the package
+    /// ships none, and the documents are read as [`Format::read`] reads
+    /// them.
+    pub fn transducer(&self) -> Option<&Alc> {
+        self.transducer.as_ref()
+    }
+
+    /// Whether the format's documents are parsed, so that a program over
+    /// parser events can read them ([`Format::passes`]); a format read as
+    /// the tree its package's API makes of a document has no parser here.
+    pub fn parses(&self) -> bool {
+        !matches!(self.reader, Reader::Tree(_))
+    }
+
+    /// The parser's rule passes over `text`: transduce's source of
+    /// `ParserEvents/1` with a fresh parser of the format's grammar, for a
+    /// program over parser events, a transducer part's or `run --grammar`'s.
+    /// The check the package's parse makes first, where it makes one, runs
+    /// first, and its refusal is the `Err`; a format read as a tree has no
+    /// parser, and refuses.
+    pub fn passes<'s>(&self, text: &'s str) -> Result<ParserEventSource<'s>, Fail> {
+        match self.reader {
+            Reader::Parser(parsing) => Ok((parsing.passes)(text)),
+            Reader::Checked(check, parsing) => check(text).map(|()| (parsing.passes)(text)),
+            Reader::Tree(_) => Err(Fail::input(format!(
+                "{} is read as a tree, not parsed: it has no rule passes for a program to read",
+                self.id()
+            ))),
+        }
     }
 
     /// A document read whole with this format's grammar, as a value: its
@@ -93,47 +147,100 @@ impl Format {
     }
 }
 
+/// A package's parts as alchemy's descriptor, with the transducer part its
+/// manifest may name beside it: the descriptor carries none, and
+/// [`Part::transducer`] reads the two together.
+struct Described {
+    descriptor: Descriptor,
+    transduce: Option<PartText>,
+}
+
 /// A package's parts as alchemy's descriptor. Every grammar package owns
 /// its interface types, so this reads the same fields from each one's and
 /// turns them into alchemy's at once; a package whose parts carry an
-/// embedding says so with `embed`.
+/// embedding says so with `embed`, and one whose parts carry a transducer
+/// with `transduce`.
 macro_rules! descriptor {
     ($package:literal, $module:ident) => {
-        $module::translate().map(|parts| Descriptor {
-            package: $package.to_string(),
-            manifest: parts.manifest.to_string(),
-            lift: parts.lift.map(|p| PartText::new(p.entry, p.source)),
-            embed: None,
-            render: parts.render.map(|p| PartText::new(p.entry, p.source)),
+        $module::translate().map(|parts| Described {
+            descriptor: Descriptor {
+                package: $package.to_string(),
+                manifest: parts.manifest.to_string(),
+                lift: parts.lift.map(|p| PartText::new(p.entry, p.source)),
+                embed: None,
+                render: parts.render.map(|p| PartText::new(p.entry, p.source)),
+            },
+            transduce: None,
         })
     };
     ($package:literal, $module:ident, embed) => {
-        $module::translate().map(|parts| Descriptor {
-            package: $package.to_string(),
-            manifest: parts.manifest.to_string(),
-            lift: parts.lift.map(|p| PartText::new(p.entry, p.source)),
-            embed: parts.embed.map(|p| PartText::new(p.entry, p.source)),
-            render: parts.render.map(|p| PartText::new(p.entry, p.source)),
+        $module::translate().map(|parts| Described {
+            descriptor: Descriptor {
+                package: $package.to_string(),
+                manifest: parts.manifest.to_string(),
+                lift: parts.lift.map(|p| PartText::new(p.entry, p.source)),
+                embed: parts.embed.map(|p| PartText::new(p.entry, p.source)),
+                render: parts.render.map(|p| PartText::new(p.entry, p.source)),
+            },
+            transduce: None,
         })
     };
+    ($package:literal, $module:ident, transduce) => {
+        $module::translate().map(|parts| Described {
+            descriptor: Descriptor {
+                package: $package.to_string(),
+                manifest: parts.manifest.to_string(),
+                lift: parts.lift.map(|p| PartText::new(p.entry, p.source)),
+                embed: None,
+                render: parts.render.map(|p| PartText::new(p.entry, p.source)),
+            },
+            transduce: parts.transduce.map(|p| PartText::new(p.entry, p.source)),
+        })
+    };
+    ($package:literal, $module:ident, embed, transduce) => {
+        $module::translate().map(|parts| Described {
+            descriptor: Descriptor {
+                package: $package.to_string(),
+                manifest: parts.manifest.to_string(),
+                lift: parts.lift.map(|p| PartText::new(p.entry, p.source)),
+                embed: parts.embed.map(|p| PartText::new(p.entry, p.source)),
+                render: parts.render.map(|p| PartText::new(p.entry, p.source)),
+            },
+            transduce: parts.transduce.map(|p| PartText::new(p.entry, p.source)),
+        })
+    };
+}
+
+/// The two sources of a grammar's parser, each over a fresh parser `$make`
+/// makes: the document's events and the parser's rule passes.
+macro_rules! parsing {
+    ($make:expr) => {{
+        fn events(text: &str) -> ParserSource<'_> {
+            ParserSource::new($make, text)
+        }
+        fn passes(text: &str) -> ParserEventSource<'_> {
+            ParserEventSource::new($make, text)
+        }
+        Parsing { events, passes }
+    }};
 }
 
 /// The reader of a package's grammar with its own options.
 macro_rules! reader {
-    ($module:ident) => {{
-        fn read(text: &str) -> ParserSource<'_> {
-            ParserSource::new($module::make(), text)
-        }
-        Reader::Parser(read)
-    }};
+    ($module:ident) => {
+        Reader::Parser(parsing!($module::make()))
+    };
 }
 
 /// The reader of chess's grammar with its default options, which its
 /// `make` takes: they always install, so a failure is the package's defect.
-fn read_pgn(text: &str) -> ParserSource<'_> {
-    let parser = tabnas_chess::make(&tabnas_chess::ChessOptions::default())
-        .unwrap_or_else(|e| panic!("tabnas-chess: the grammar does not install: {e}"));
-    ParserSource::new(parser, text)
+fn read_pgn() -> Reader {
+    Reader::Parser(parsing!(tabnas_chess::make(
+        &tabnas_chess::ChessOptions::default()
+    )
+    .unwrap_or_else(|e| panic!(
+        "tabnas-chess: the grammar does not install: {e}"
+    ))))
 }
 
 /// json5's check before its parser runs, which its `parse_with` makes and
@@ -155,8 +262,8 @@ fn json5_value_check(text: &str) -> Result<(), Fail> {
 }
 
 /// The reader of json5's grammar, run after [`json5_value_check`].
-fn read_json5(text: &str) -> ParserSource<'_> {
-    ParserSource::new(tabnas_json5::make(), text)
+fn read_json5() -> Reader {
+    Reader::Checked(json5_value_check, parsing!(tabnas_json5::make()))
 }
 
 /// An engine error as transduce's parser source reports one: the input's,
@@ -287,7 +394,7 @@ fn read_gbnf(text: &str) -> Result<Datum, Fail> {
 }
 
 /// Every grammar package this command carries, with its reader.
-fn packages() -> Vec<(Option<Descriptor>, Reader)> {
+fn packages() -> Vec<(Option<Described>, Reader)> {
     vec![
         (
             descriptor!("tabnas-abnf", tabnas_abnf, embed),
@@ -297,10 +404,7 @@ fn packages() -> Vec<(Option<Descriptor>, Reader)> {
             descriptor!("tabnas-c", tabnas_c, embed),
             Reader::Tree(read_c),
         ),
-        (
-            descriptor!("tabnas-chess", tabnas_chess, embed),
-            Reader::Parser(read_pgn),
-        ),
+        (descriptor!("tabnas-chess", tabnas_chess, embed), read_pgn()),
         (
             descriptor!("tabnas-css", tabnas_css, embed),
             reader!(tabnas_css),
@@ -330,12 +434,12 @@ fn packages() -> Vec<(Option<Descriptor>, Reader)> {
             reader!(tabnas_ini),
         ),
         (
-            descriptor!("tabnas-json", tabnas_json, embed),
+            descriptor!("tabnas-json", tabnas_json, embed, transduce),
             reader!(tabnas_json),
         ),
         (
             descriptor!("tabnas-json5", tabnas_json5, embed),
-            Reader::Checked(json5_value_check, read_json5),
+            read_json5(),
         ),
         (
             descriptor!("tabnas-jsonc", tabnas_jsonc, embed),
@@ -383,10 +487,20 @@ pub fn formats() -> &'static [Format] {
     FORMATS.get_or_init(|| {
         let mut formats: Vec<Format> = packages()
             .into_iter()
-            .filter_map(|(descriptor, reader)| {
+            .filter_map(|(described, reader)| {
+                let Described {
+                    descriptor,
+                    transduce,
+                } = described?;
+                let part = Part::from_descriptor(&descriptor)?;
+                // A transducer the manifest and the package disagree on is
+                // none here; the translation-parts test holds the two
+                // together.
+                let transducer = Part::transducer(&descriptor, transduce.as_ref()).flatten();
                 Some(Format {
-                    part: Part::from_descriptor(&descriptor?)?,
+                    part,
                     reader,
+                    transducer,
                 })
             })
             .collect();
@@ -402,7 +516,17 @@ pub fn format(id: &str) -> Option<&'static Format> {
 
 /// The formats' ids for a message: `csv, ini, ... or zon`.
 pub fn names() -> String {
-    let ids: Vec<&str> = formats().iter().map(Format::id).collect();
+    names_of(formats().iter().map(Format::id))
+}
+
+/// The ids of the formats whose documents are parsed, for a message, as
+/// [`names`] lists every format: what `run --grammar` takes.
+pub fn parser_names() -> String {
+    names_of(formats().iter().filter(|f| f.parses()).map(Format::id))
+}
+
+fn names_of<'a>(ids: impl Iterator<Item = &'a str>) -> String {
+    let ids: Vec<&str> = ids.collect();
     match ids.split_last() {
         Some((last, [])) => last.to_string(),
         Some((last, rest)) => format!("{} or {last}", rest.join(", ")),
@@ -427,11 +551,28 @@ pub struct Request<'a> {
     pub limits: Limits,
 }
 
+/// What a request compiles to: the composition over the source's events,
+/// the route every format has, and, where the source ships a transducer
+/// part and the whole document is asked, the composition over its parser's
+/// rule passes, which [`run_compiled`] runs first.
+pub struct Compiled {
+    pub composition: Composition,
+    pub program: Program,
+    parsed: Option<(Composition, Program)>,
+}
+
 /// The composition a request makes, and the program it compiles to.
-pub fn compile(request: &Request<'_>) -> Result<(Composition, Program), Fail> {
+pub fn compile(request: &Request<'_>) -> Result<Compiled, Fail> {
     let routers = Arc::new(tabnas_transduce::routers());
     let renderers = Arc::new(tabnas_render::renderers());
-    match request.program {
+    // The transducer the route reads the document through, where the
+    // source ships one and the whole document is asked: a path selects a
+    // value below the root, which only the document's value has.
+    let transducer = match request.path {
+        None => request.from.transducer(),
+        Some(_) => None,
+    };
+    let (composition, program, parsed) = match request.program {
         Some((file, text)) => {
             let output =
                 tabnas_alchemy::compile(text, file, routers.clone(), renderers.clone())?.output();
@@ -447,8 +588,27 @@ pub fn compile(request: &Request<'_>) -> Result<(Composition, Program), Fail> {
             }
             let composition =
                 compose_program(output, &request.to.part, &request.options, "translate")?;
-            let program = composition.compile(Some(Source::new(file, text)), routers, renderers)?;
-            Ok((composition, program))
+            let program = composition.compile(
+                Some(Source::new(file, text)),
+                routers.clone(),
+                renderers.clone(),
+            )?;
+            let parsed = match transducer {
+                Some(alc) => {
+                    let composition = compose_program_parsed(
+                        output,
+                        alc,
+                        &request.to.part,
+                        &request.options,
+                        "translate",
+                    )?;
+                    let program =
+                        composition.compile(Some(Source::new(file, text)), routers, renderers)?;
+                    Some((composition, program))
+                }
+                None => None,
+            };
+            (composition, program, parsed)
         }
         None => {
             let source = match request.path {
@@ -456,10 +616,29 @@ pub fn compile(request: &Request<'_>) -> Result<(Composition, Program), Fail> {
                 None => Some(&request.from.part),
             };
             let composition = compose(source, &request.to.part, &request.options, "translate")?;
-            let program = composition.compile(None, routers, renderers)?;
-            Ok((composition, program))
+            let program = composition.compile(None, routers.clone(), renderers.clone())?;
+            let parsed = match transducer {
+                Some(alc) => {
+                    let composition = compose_parsed(
+                        &request.from.part,
+                        alc,
+                        &request.to.part,
+                        &request.options,
+                        "translate",
+                    )?;
+                    let program = composition.compile(None, routers, renderers)?;
+                    Some((composition, program))
+                }
+                None => None,
+            };
+            (composition, program, parsed)
         }
-    }
+    };
+    Ok(Compiled {
+        composition,
+        program,
+        parsed,
+    })
 }
 
 /// Whether the incremental source refused a document because the
@@ -509,12 +688,16 @@ pub fn run(
 /// ([`compile`]), so that one compiled composition serves many inputs.
 pub fn run_compiled(
     request: &Request<'_>,
-    compiled: &(Composition, Program),
+    compiled: &Compiled,
     input: &str,
     mut out: Box<dyn Write + Send>,
     metrics: Arc<Metrics>,
 ) -> Result<(), Fail> {
-    let (composition, program) = compiled;
+    let Compiled {
+        composition,
+        program,
+        parsed,
+    } = compiled;
     let attempt = |mode: SourceMode, metrics: Arc<Metrics>| -> Result<Vec<u8>, Fail> {
         let held = Held::default();
         let sink = program.sink(
@@ -558,8 +741,31 @@ pub fn run_compiled(
             })?);
         Ok(bytes)
     };
+    // The transducer's route first, where the source ships a part and the
+    // whole document is asked: its rule passes through the part into the
+    // program, streamed whatever the grammar. A document whose events are
+    // not what the grammar's value holds (a repeated member, streamed
+    // twice, which the composition's tree-contract refuses) is read again
+    // whole below, as the incremental source's is: the grammar's own value
+    // is the document.
+    let transduced = match parsed {
+        Some((_, program)) => {
+            let own = Metrics::new();
+            match attempt_parsed(request, program, input, own.clone()) {
+                Err(fail) if unfollowed(&fail) => None,
+                outcome => {
+                    let bytes = outcome?;
+                    absorb(&metrics, &own);
+                    Some(bytes)
+                }
+            }
+        }
+        None => None,
+    };
     let incremental = request.path.is_none() && capability::incremental(request.from.id());
-    let bytes = if incremental {
+    let bytes = if let Some(bytes) = transduced {
+        bytes
+    } else if incremental {
         let mode = SourceMode::Incremental {
             prune: program
                 .row_selector()
@@ -593,6 +799,39 @@ pub fn run_compiled(
             fail
         }
     })
+}
+
+/// One run of a request over its source's parser's rule passes, through
+/// the composition over the source's transducer part: what it wrote, held
+/// until the run has succeeded, as [`run_compiled`]'s other attempts hold
+/// it.
+fn attempt_parsed(
+    request: &Request<'_>,
+    program: &Program,
+    input: &str,
+    metrics: Arc<Metrics>,
+) -> Result<Vec<u8>, Fail> {
+    let held = Held::default();
+    let sink = program.parser_sink(
+        Box::new(held.clone()),
+        None,
+        &request.limits,
+        metrics.clone(),
+    )?;
+    request
+        .from
+        .passes(input)?
+        .limits(request.limits.clone())
+        .metrics(metrics)
+        .run_boxed(sink)
+        .0?;
+    let bytes = std::mem::take(
+        &mut *held
+            .0
+            .lock()
+            .map_err(|_| Fail::new(Code::OutputFailed, "the held output's lock was poisoned"))?,
+    );
+    Ok(bytes)
 }
 
 /// Write `bytes` to `out` and flush it, counting in `written` the bytes
@@ -664,15 +903,15 @@ fn source<S: Sink + Send + 'static>(
     sink: S,
 ) -> (Result<Flow, Fail>, S) {
     match format.reader {
-        Reader::Parser(read) => read(input)
+        Reader::Parser(parsing) => (parsing.events)(input)
             .grammar(format.id())
             .mode(mode)
             .limits(limits.clone())
             .metrics(metrics)
             .run_owned(sink),
-        Reader::Checked(check, read) => match check(input) {
+        Reader::Checked(check, parsing) => match check(input) {
             Err(refused) => (Err(refused), sink),
-            Ok(()) => read(input)
+            Ok(()) => (parsing.events)(input)
                 .grammar(format.id())
                 .mode(mode)
                 .limits(limits.clone())
@@ -768,7 +1007,7 @@ pub fn formats_json() -> String {
         .iter()
         .map(|f| {
             let p = &f.part;
-            let fields: [(&str, Datum); 10] = [
+            let fields: [(&str, Datum); 11] = [
                 ("id", text(&p.id)),
                 ("reads", Datum::Array(p.reads.iter().map(shape).collect())),
                 ("writes", shape(&p.writes)),
@@ -799,6 +1038,12 @@ pub fn formats_json() -> String {
                     }),
                 ),
                 (
+                    "transduce",
+                    f.transducer
+                        .as_ref()
+                        .map_or(Datum::Null, |a| text(&a.entry)),
+                ),
+                (
                     "loss",
                     Datum::Array(p.loss.iter().map(|l| text(l)).collect()),
                 ),
@@ -807,4 +1052,177 @@ pub fn formats_json() -> String {
         })
         .collect();
     Datum::Array(items).to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A transducer that writes `{\"ran\":true}` whatever the document:
+    /// what it writes says which route ran.
+    const MARKING_TRANSDUCE: &str = "def json-transduce [input]\n  as-events\n    scan-emit\n      []\n      fn [s pass] (transition s [])\n      fn [s] [object-start (key \"ran\") (scalar true) object-end]\n      parser-events input\n";
+
+    /// json without its transducer: read as a format whose package ships
+    /// none is read.
+    fn plain_json() -> Format {
+        let json = format("json").expect("json is a format");
+        Format {
+            part: json.part.clone(),
+            reader: json.reader,
+            transducer: None,
+        }
+    }
+
+    /// json, read through a transducer part given beside its package's
+    /// parts in place of the one it ships.
+    fn transduced_json(text: &str) -> Format {
+        let json = format("json").expect("json is a format");
+        Format {
+            part: json.part.clone(),
+            reader: json.reader,
+            transducer: Some(Alc {
+                file: "tabnas-json/alchemy/transduce.alc".to_string(),
+                entry: "json-transduce".to_string(),
+                text: text.to_string(),
+            }),
+        }
+    }
+
+    fn translated(
+        from: &Format,
+        to: &str,
+        path: Option<&str>,
+        program: Option<(&str, &str)>,
+        input: &str,
+    ) -> Result<String, Fail> {
+        let limits = Limits::default();
+        let request = Request {
+            from,
+            to: format(to).expect("a format"),
+            path: path.map(|p| parse_path(p, &limits).expect("a path")),
+            options: Options::default(),
+            program,
+            limits,
+        };
+        let held = Held::default();
+        run(&request, input, Box::new(held.clone()), Metrics::new())?;
+        let bytes = held.0.lock().unwrap().clone();
+        Ok(String::from_utf8(bytes).expect("the output is UTF-8"))
+    }
+
+    /// A format whose package ships a transducer part is read through it
+    /// (json, through tabnas-json's), its rule passes streamed into the
+    /// composition over the part, and one without is read as before: the
+    /// two routes write the same bytes for the same document, a number's
+    /// lexeme kept, into a tree target, a records target, and with a
+    /// program over the input; a marking part given in the package's
+    /// place shows the route ran. A path keeps the document's value, the
+    /// one route a path has. A repeated member, which the part streams
+    /// twice and the composition's tree-contract refuses, is read again
+    /// whole, as the incremental source's is.
+    #[test]
+    fn a_transducer_part_reads_the_format_and_the_walk_stands_in_where_it_refuses() {
+        let plain = plain_json();
+        let through = format("json").expect("json is a format");
+        let marking = transduced_json(MARKING_TRANSDUCE);
+        assert!(plain.transducer().is_none());
+        assert_eq!(
+            through.transducer().map(|alc| alc.entry.as_str()),
+            Some("json-transduce"),
+            "the registry's json is read through its package's part"
+        );
+        assert!(through
+            .transducer()
+            .is_some_and(|alc| alc.text.contains("transduce-tree")));
+        let tree = r#"{"a":[1,2.50,"x",{"b":null}],"c":{},"d":[],"e":1e21,"f":true}"#;
+        let records = r#"[{"a":1,"b":"x"},{"a":2,"b":"y"}]"#;
+        let echo = Some(("echo.alc", "def export [input] (events input)\n"));
+        for (to, doc, program) in [
+            ("json", tree, None),
+            ("yaml", tree, None),
+            ("csv", records, None),
+            ("json", tree, echo),
+            ("csv", records, echo),
+        ] {
+            let expected =
+                translated(&plain, to, None, program, doc).expect("the plain route writes");
+            let got =
+                translated(through, to, None, program, doc).expect("the transducer's route writes");
+            assert_eq!(got, expected, "{to} from {doc} with {program:?}");
+            let marked = translated(&marking, to, None, program, doc);
+            assert_ne!(
+                marked.as_deref().ok(),
+                Some(expected.as_str()),
+                "{to} from {doc} with {program:?}: the part's route ran"
+            );
+        }
+        assert_eq!(
+            translated(&marking, "json", None, None, tree).unwrap(),
+            "{\"ran\":true}\n"
+        );
+        // A path selects in the document's value, read whole, as it did:
+        // the materialized value spells a number as the engine does.
+        assert_eq!(
+            translated(&marking, "json", Some("[\"a\",1]"), None, tree).unwrap(),
+            "2.5\n",
+            "a path keeps the document's value"
+        );
+        let repeated = r#"{"a":1,"a":2}"#;
+        assert_eq!(
+            translated(through, "json", None, None, repeated).unwrap(),
+            translated(&plain, "json", None, None, repeated).unwrap()
+        );
+        assert_eq!(
+            translated(through, "json", None, None, repeated).unwrap(),
+            "{\"a\":2}\n"
+        );
+        let refused = translated(through, "json", None, None, "[1,").unwrap_err();
+        assert_eq!(refused.code, Code::InputInvalid);
+    }
+
+    /// Every format with a parser answers its rule passes; one read as a
+    /// tree has none and refuses; json5's check runs first.
+    #[test]
+    fn a_format_with_a_parser_gives_its_rule_passes() {
+        let parsed: Vec<&str> = formats()
+            .iter()
+            .filter(|f| f.parses())
+            .map(Format::id)
+            .collect();
+        assert_eq!(
+            parsed,
+            [
+                "css", "csv", "feed", "ini", "json", "json5", "jsonc", "jsonic", "jsonl",
+                "markdown", "pgn", "semver", "toml", "xml", "yaml", "zon"
+            ]
+        );
+        assert_eq!(
+            parser_names(),
+            "css, csv, feed, ini, json, json5, jsonc, jsonic, jsonl, markdown, pgn, semver, toml, \
+             xml, yaml or zon"
+        );
+        let abnf = format("abnf").expect("abnf is a format");
+        assert!(!abnf.parses());
+        let refused = abnf
+            .passes("x = \"y\"")
+            .err()
+            .expect("a tree has no passes");
+        assert_eq!(refused.code, Code::InputInvalid);
+        assert!(
+            refused.message.starts_with("abnf is read as a tree"),
+            "{refused}"
+        );
+        let json5 = format("json5").expect("json5 is a format");
+        let empty = json5
+            .passes("// only a comment")
+            .err()
+            .expect("the check refuses");
+        assert_eq!(empty.code, Code::InputInvalid);
+        let (outcome, passes) = json5
+            .passes("{a: 1}")
+            .expect("the check passes")
+            .run_owned(Vec::new());
+        outcome.expect("the passes stream");
+        assert!(!passes.is_empty());
+    }
 }

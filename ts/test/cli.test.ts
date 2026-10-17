@@ -445,7 +445,62 @@ describe('cli', () => {
     assert.equal(out.status, 2)
     assert.equal(failJson(out).code, 'INPUT_INVALID')
   })
+
+  // `run --grammar FORMAT` parses INPUT with that format's grammar and runs
+  // the program over its rule passes, natively and interpreted: a
+  // transducer over json's writes the document, a number's lexeme kept; a
+  // document the grammar refuses is INPUT_INVALID; a format that is not
+  // parsed, or is unknown, is refused with status 2, naming the formats
+  // that are; a program over JSON events, compiled over parser events, is
+  // a protocol mismatch; and the option takes a value.
+  it('run takes a grammar whose rule passes the program reads', () => {
+    const program = tempFile('transducer.alc', TRANSDUCER)
+    const doc = '{"a":[1,2.50,"x",{"b":null}],"c":{},"d":[],"e":1e21,"f":true}'
+    for (const args of [
+      ['run', '--grammar', 'json', program, '-'],
+      ['run', '--grammar', 'json', '--no-native', program, '-'],
+    ]) {
+      const out = alchemy(args, doc)
+      assert.equal(out.status, 0, out.stderr)
+      assert.equal(out.stdout, `${doc}\n`)
+    }
+    let out = alchemy(['run', '--grammar', 'json', program, '-'], '[1,')
+    assert.equal(out.status, 1, out.stderr)
+    assert.equal(out.stdout, '')
+    assert.equal(failJson(out).code, 'INPUT_INVALID')
+    for (const name of ['abnf', 'nope']) {
+      out = alchemy(['run', '--grammar', name, program, '-'], doc)
+      assert.equal(out.status, 2, out.stderr)
+      const fail = failJson(out)
+      assert.equal(fail.code, 'INPUT_INVALID')
+      assert.equal(
+        fail.message,
+        '--grammar takes a format whose documents are parsed (c, css, csv, feed, ini, json, json5, jsonc, ' +
+          `jsonic, jsonl, markdown, pgn, semver, toml, xml, yaml or zon), not ${JSON.stringify(name)}`,
+      )
+    }
+    const events = tempFile('events.alc', 'def export [input] (json input)\n')
+    out = alchemy(['run', '--grammar', 'json', events, '-'], doc)
+    assert.notEqual(out.status, 0)
+    const fail = failJson(out)
+    assert.equal(fail.code, 'DSL_TYPE_ERROR')
+    assert.ok(fail.message.startsWith('protocol_mismatch'), fail.message)
+    out = alchemy(['run', program, '-', '--grammar'], doc)
+    assert.equal(out.status, 2)
+  })
 })
+
+// The json transducer: the library's `transduce-tree` over the json
+// grammar's rules, as its package's part spells it.
+const TRANSDUCER =
+  'def export [input]\n' +
+  '  transduce-tree\n' +
+  '    record\n' +
+  '      entry :map (record (entry :container :object))\n' +
+  '      entry :list (record (entry :container :array))\n' +
+  '      entry :pair (record (entry :key 0))\n' +
+  '      entry :val (record (entry :scalar 0))\n' +
+  '    input\n'
 
 // `translate` and `formats`, as the Rust binary has them: a document read
 // with one format's grammar and written in another, the flags, and the
@@ -503,6 +558,7 @@ describe('cli translate', () => {
         'lift',
         'embed',
         'render',
+        'transduce',
         'loss',
       ])
       assert.ok(0 < f.loss.length, `${f.id} declares what it does not keep`)
@@ -518,6 +574,7 @@ describe('cli translate', () => {
       lift: null,
       embed: null,
       render: 'json',
+      transduce: 'json-transduce',
       loss: ['JSON has no spelling for Infinity or NaN, so a number that is not finite is written as null.'],
     })
     const markdown = byId('markdown')
