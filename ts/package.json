@@ -40,7 +40,7 @@
   },
   "peerDependencies": {
     "@tabnas/abnf": ">=0.4.24",
-    "@tabnas/alchemy": ">=0.2.10",
+    "@tabnas/alchemy": ">=0.2.12",
     "@tabnas/c": ">=0.5.15",
     "@tabnas/chess": ">=0.1.17",
     "@tabnas/css": ">=0.5.16",
@@ -61,7 +61,7 @@
     "@tabnas/render": ">=0.2.5",
     "@tabnas/semver": ">=0.0.11",
     "@tabnas/toml": ">=0.5.18",
-    "@tabnas/transduce": ">=0.2.9",
+    "@tabnas/transduce": ">=0.2.10",
     "@tabnas/xml": ">=0.7.19",
     "@tabnas/yaml": ">=0.5.25",
     "@tabnas/zon": ">=0.5.18"
