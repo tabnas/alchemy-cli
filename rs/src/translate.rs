@@ -404,7 +404,10 @@ fn packages() -> Vec<(Option<Described>, Reader)> {
             descriptor!("tabnas-c", tabnas_c, embed),
             Reader::Tree(read_c),
         ),
-        (descriptor!("tabnas-chess", tabnas_chess, embed), read_pgn()),
+        (
+            descriptor!("tabnas-chess", tabnas_chess, embed, transduce),
+            read_pgn(),
+        ),
         (
             descriptor!("tabnas-css", tabnas_css, embed),
             reader!(tabnas_css),
@@ -1134,6 +1137,7 @@ mod tests {
                 ("jsonc", "jsonc-transduce"),
                 ("jsonic", "jsonic-transduce"),
                 ("jsonl", "jsonl-transduce"),
+                ("pgn", "pgn-transduce"),
                 ("xml", "xml-transduce"),
                 ("yaml", "yaml-transduce"),
                 ("zon", "zon-transduce"),
