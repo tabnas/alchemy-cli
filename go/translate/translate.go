@@ -324,6 +324,8 @@ func modules() []module {
 		{descriptor: func() at.Descriptor {
 			p := tabnasjsonic.Translate()
 			return descriptor("tabnas-jsonic", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
+		}, transduce: func() *at.PartText {
+			return partText((*modulePart)(tabnasjsonic.Translate().Transduce))
 		}, parser: func() *tabnas.Tabnas { return tabnasjsonic.Make() }},
 		{descriptor: func() at.Descriptor {
 			p := tabnasjsonl.Translate()

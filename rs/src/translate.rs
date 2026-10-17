@@ -446,7 +446,7 @@ fn packages() -> Vec<(Option<Described>, Reader)> {
             reader!(tabnas_jsonc),
         ),
         (
-            descriptor!("tabnas-jsonic", tabnas_jsonic, embed),
+            descriptor!("tabnas-jsonic", tabnas_jsonic, embed, transduce),
             reader!(tabnas_jsonic),
         ),
         (
@@ -1132,6 +1132,7 @@ mod tests {
                 ("json", "json-transduce"),
                 ("json5", "json5-transduce"),
                 ("jsonc", "jsonc-transduce"),
+                ("jsonic", "jsonic-transduce"),
                 ("jsonl", "jsonl-transduce"),
                 ("zon", "zon-transduce"),
             ]
