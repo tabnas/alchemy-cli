@@ -586,6 +586,7 @@ describe('cli translate', () => {
         ['json5', 'json5-transduce'],
         ['jsonc', 'jsonc-transduce'],
         ['jsonl', 'jsonl-transduce'],
+        ['zon', 'zon-transduce'],
       ],
     )
     const markdown = byId('markdown')

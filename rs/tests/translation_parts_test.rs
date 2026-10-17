@@ -238,7 +238,7 @@ fn structural_translation_parts_agree_with_their_descriptors_and_compile() {
         ("toml", structural_parts!(tabnas_toml::translate())),
         ("xml", structural_parts!(tabnas_xml::translate())),
         ("yaml", structural_parts!(tabnas_yaml::translate())),
-        ("zon", structural_parts!(tabnas_zon::translate())),
+        ("zon", structural_parts!(tabnas_zon::translate(), transduce)),
     ];
 
     for (format, parts) in formats {
