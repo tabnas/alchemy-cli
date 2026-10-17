@@ -64,7 +64,7 @@
     "@tabnas/transduce": ">=0.2.9",
     "@tabnas/xml": ">=0.7.18",
     "@tabnas/yaml": ">=0.5.24",
-    "@tabnas/zon": ">=0.5.17"
+    "@tabnas/zon": ">=0.5.18"
   },
   "devDependencies": {
     "@tabnas/alchemy": "*",

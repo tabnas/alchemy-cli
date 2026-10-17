@@ -56,5 +56,5 @@ github.com/tabnas/xml/go v0.7.18 h1:Q5c9e2ec8HRcLN7ZQn8n6vXv4skgBgUoZ57UCmCGlSo=
 github.com/tabnas/xml/go v0.7.18/go.mod h1:NKRX7iq9bdvlhRbnmzktSCnyefuvHjnYhs5n6WbKFSs=
 github.com/tabnas/yaml/go v0.5.24 h1:sNzxGRCgt+e/SGYuyG6nR1dAHD2Za4Jn9Ys0TxNN1Z8=
 github.com/tabnas/yaml/go v0.5.24/go.mod h1:zMnVwfHLqPjbNg/qv8+iLkDOJ7iAuz0C1hGDjD1WLHM=
-github.com/tabnas/zon/go v0.5.17 h1:70NDobVstef9sq7+dFFZcaeriRgW4rrs+1QEGRWXcgw=
-github.com/tabnas/zon/go v0.5.17/go.mod h1:jVsAPF4k0yjPpbeJqJvM2qDAGZDXbMP/SHL4e6nuZJg=
+github.com/tabnas/zon/go v0.5.18 h1:3v29aJpJdm1osBMK8R+DCcOsO0XSoRCC/Q1r0RHkMFg=
+github.com/tabnas/zon/go v0.5.18/go.mod h1:Cme1rKZD4UyzThYu6PjKu/BeU4YWFGi6olJ1y01ORio=
