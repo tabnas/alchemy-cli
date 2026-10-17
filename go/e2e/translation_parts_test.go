@@ -70,6 +70,7 @@ func grammarTransducers() map[string]*structuralPart {
 	jsonc := tabnasjsonc.Translate()
 	jsonic := tabnasjsonic.Translate()
 	jsonl := tabnasjsonl.Translate()
+	yaml := tabnasyaml.Translate()
 	zon := tabnaszon.Translate()
 	return map[string]*structuralPart{
 		"csv":    packagePart(csv.Transduce != nil, func() (string, string) { return csv.Transduce.Entry, csv.Transduce.Source }),
@@ -78,6 +79,7 @@ func grammarTransducers() map[string]*structuralPart {
 		"jsonc":  packagePart(jsonc.Transduce != nil, func() (string, string) { return jsonc.Transduce.Entry, jsonc.Transduce.Source }),
 		"jsonic": packagePart(jsonic.Transduce != nil, func() (string, string) { return jsonic.Transduce.Entry, jsonic.Transduce.Source }),
 		"jsonl":  packagePart(jsonl.Transduce != nil, func() (string, string) { return jsonl.Transduce.Entry, jsonl.Transduce.Source }),
+		"yaml":   packagePart(yaml.Transduce != nil, func() (string, string) { return yaml.Transduce.Entry, yaml.Transduce.Source }),
 		"zon":    packagePart(zon.Transduce != nil, func() (string, string) { return zon.Transduce.Entry, zon.Transduce.Source }),
 	}
 }

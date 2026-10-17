@@ -163,7 +163,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-alchemy"
-version = "0.2.9"
+version = "0.2.10"
 dependencies = [
  "indexmap",
  "serde_json",
@@ -452,7 +452,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-yaml"
-version = "0.5.24"
+version = "0.5.25"
 dependencies = [
  "indexmap",
  "regex",

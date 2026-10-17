@@ -40,7 +40,7 @@
   },
   "peerDependencies": {
     "@tabnas/abnf": ">=0.4.24",
-    "@tabnas/alchemy": ">=0.2.9",
+    "@tabnas/alchemy": ">=0.2.10",
     "@tabnas/c": ">=0.5.15",
     "@tabnas/chess": ">=0.1.17",
     "@tabnas/css": ">=0.5.16",
@@ -63,7 +63,7 @@
     "@tabnas/toml": ">=0.5.18",
     "@tabnas/transduce": ">=0.2.9",
     "@tabnas/xml": ">=0.7.18",
-    "@tabnas/yaml": ">=0.5.24",
+    "@tabnas/yaml": ">=0.5.25",
     "@tabnas/zon": ">=0.5.18"
   },
   "devDependencies": {
