@@ -438,11 +438,11 @@ fn packages() -> Vec<(Option<Described>, Reader)> {
             reader!(tabnas_json),
         ),
         (
-            descriptor!("tabnas-json5", tabnas_json5, embed),
+            descriptor!("tabnas-json5", tabnas_json5, embed, transduce),
             read_json5(),
         ),
         (
-            descriptor!("tabnas-jsonc", tabnas_jsonc, embed),
+            descriptor!("tabnas-jsonc", tabnas_jsonc, embed, transduce),
             reader!(tabnas_jsonc),
         ),
         (
@@ -450,7 +450,7 @@ fn packages() -> Vec<(Option<Described>, Reader)> {
             reader!(tabnas_jsonic),
         ),
         (
-            descriptor!("tabnas-jsonl", tabnas_jsonl, embed),
+            descriptor!("tabnas-jsonl", tabnas_jsonl, embed, transduce),
             reader!(tabnas_jsonl),
         ),
         (
@@ -644,8 +644,10 @@ pub fn compile(request: &Request<'_>) -> Result<Compiled, Fail> {
 /// Whether the incremental source refused a document because the
 /// grammar's value is not what its events showed (a root wrapped or
 /// replaced after it streamed, a map rewritten, a repeated member that the
-/// grammar keeps once): the grammar's own value is the document, so it is
-/// read again whole.
+/// grammar keeps once), or a transducer part's route refused a repeated
+/// member, which the part streams twice and the composition's policy
+/// refuses, since the grammar's value may keep the last or merge the two:
+/// the grammar's own value is the document, so it is read again whole.
 fn unfollowed(fail: &Fail) -> bool {
     matches!(
         fail.code,
@@ -1108,6 +1110,27 @@ mod tests {
         run(&request, input, Box::new(held.clone()), Metrics::new())?;
         let bytes = held.0.lock().unwrap().clone();
         Ok(String::from_utf8(bytes).expect("the output is UTF-8"))
+    }
+
+    /// The formats read through a transducer part are those whose packages
+    /// ship one and the registry reads (the `transduce` field of the
+    /// package's descriptor): each under the entry its manifest names, and
+    /// no other.
+    #[test]
+    fn the_formats_read_through_a_transducer_part() {
+        let through: Vec<(&str, &str)> = formats()
+            .iter()
+            .filter_map(|f| f.transducer().map(|alc| (f.id(), alc.entry.as_str())))
+            .collect();
+        assert_eq!(
+            through,
+            [
+                ("json", "json-transduce"),
+                ("json5", "json5-transduce"),
+                ("jsonc", "jsonc-transduce"),
+                ("jsonl", "jsonl-transduce"),
+            ]
+        );
     }
 
     /// A format whose package ships a transducer part is read through it

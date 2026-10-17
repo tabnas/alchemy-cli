@@ -577,6 +577,17 @@ describe('cli translate', () => {
       transduce: 'json-transduce',
       loss: ['JSON has no spelling for Infinity or NaN, so a number that is not finite is written as null.'],
     })
+    // The formats read through a transducer part are those whose packages
+    // ship one, each under the entry its manifest names, and no other.
+    assert.deepStrictEqual(
+      formats.filter((f: any) => null !== f.transduce).map((f: any) => [f.id, f.transduce]),
+      [
+        ['json', 'json-transduce'],
+        ['json5', 'json5-transduce'],
+        ['jsonc', 'jsonc-transduce'],
+        ['jsonl', 'jsonl-transduce'],
+      ],
+    )
     const markdown = byId('markdown')
     assert.deepStrictEqual(
       [markdown.reads, markdown.writes, markdown.root, markdown.schema, markdown.lift, markdown.embed, markdown.render],

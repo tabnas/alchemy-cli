@@ -21,10 +21,10 @@ require (
 	github.com/tabnas/gbnf/go v0.1.20
 	github.com/tabnas/ini/go v0.5.20
 	github.com/tabnas/json/go v0.5.18
-	github.com/tabnas/json5/go v0.5.16
-	github.com/tabnas/jsonc/go v0.5.14
+	github.com/tabnas/json5/go v0.5.17
+	github.com/tabnas/jsonc/go v0.5.15
 	github.com/tabnas/jsonic/go v0.7.9
-	github.com/tabnas/jsonl/go v0.1.17
+	github.com/tabnas/jsonl/go v0.1.18
 	github.com/tabnas/markdown/go v0.7.12
 	github.com/tabnas/proto/go v0.6.11
 	github.com/tabnas/render/go v0.2.5
