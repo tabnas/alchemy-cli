@@ -304,12 +304,16 @@ func modules() []module {
 		{descriptor: func() at.Descriptor {
 			p := tabnasjson5.Translate()
 			return descriptor("tabnas-json5", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
+		}, transduce: func() *at.PartText {
+			return partText((*modulePart)(tabnasjson5.Translate().Transduce))
 		}, parser: func() *tabnas.Tabnas {
 			return json5Parser()
 		}, check: json5Check},
 		{descriptor: func() at.Descriptor {
 			p := tabnasjsonc.Translate()
 			return descriptor("tabnas-jsonc", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
+		}, transduce: func() *at.PartText {
+			return partText((*modulePart)(tabnasjsonc.Translate().Transduce))
 		}, parser: func() *tabnas.Tabnas {
 			parser := tabnasjsonic.Make()
 			installed("tabnas-jsonc", parser.Use(tabnasjsonc.Jsonc))
@@ -322,6 +326,8 @@ func modules() []module {
 		{descriptor: func() at.Descriptor {
 			p := tabnasjsonl.Translate()
 			return descriptor("tabnas-jsonl", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
+		}, transduce: func() *at.PartText {
+			return partText((*modulePart)(tabnasjsonl.Translate().Transduce))
 		}, parser: func() *tabnas.Tabnas { return tabnasjsonl.Make() }},
 		{descriptor: func() at.Descriptor {
 			p := tabnasmarkdown.Translate()
@@ -805,8 +811,10 @@ func attemptParsed(r *Request, program *alchemy.Program, input string, metrics *
 // unfollowed is whether the incremental source refused a document because
 // the grammar's value is not what its events showed (a root wrapped or
 // replaced after it streamed, a map rewritten, a repeated member that the
-// grammar keeps once): the grammar's own value is the document, so it is
-// read again whole.
+// grammar keeps once), or a transducer part's route refused a repeated
+// member, which the part streams twice and the composition's policy
+// refuses, since the grammar's value may keep the last or merge the two:
+// the grammar's own value is the document, so it is read again whole.
 func unfollowed(f *tt.Fail) bool {
 	return f.Code == tt.CodeStreamabilityUnknown || f.Code == tt.CodeDuplicateMember
 }

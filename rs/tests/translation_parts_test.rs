@@ -221,10 +221,19 @@ fn structural_translation_parts_agree_with_their_descriptors_and_compile() {
             "json",
             structural_parts!(tabnas_json::translate(), transduce),
         ),
-        ("json5", structural_parts!(tabnas_json5::translate())),
-        ("jsonc", structural_parts!(tabnas_jsonc::translate())),
+        (
+            "json5",
+            structural_parts!(tabnas_json5::translate(), transduce),
+        ),
+        (
+            "jsonc",
+            structural_parts!(tabnas_jsonc::translate(), transduce),
+        ),
         ("jsonic", structural_parts!(tabnas_jsonic::translate())),
-        ("jsonl", structural_parts!(tabnas_jsonl::translate())),
+        (
+            "jsonl",
+            structural_parts!(tabnas_jsonl::translate(), transduce),
+        ),
         ("markdown", structural_parts!(tabnas_markdown::translate())),
         ("toml", structural_parts!(tabnas_toml::translate())),
         ("xml", structural_parts!(tabnas_xml::translate())),

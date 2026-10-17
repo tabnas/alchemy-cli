@@ -65,8 +65,14 @@ type translationDescriptor struct {
 // the rest; a module whose interface carries none is absent.
 func grammarTransducers() map[string]*structuralPart {
 	json := tabnasjson.Translate()
+	json5 := tabnasjson5.Translate()
+	jsonc := tabnasjsonc.Translate()
+	jsonl := tabnasjsonl.Translate()
 	return map[string]*structuralPart{
-		"json": packagePart(json.Transduce != nil, func() (string, string) { return json.Transduce.Entry, json.Transduce.Source }),
+		"json":  packagePart(json.Transduce != nil, func() (string, string) { return json.Transduce.Entry, json.Transduce.Source }),
+		"json5": packagePart(json5.Transduce != nil, func() (string, string) { return json5.Transduce.Entry, json5.Transduce.Source }),
+		"jsonc": packagePart(jsonc.Transduce != nil, func() (string, string) { return jsonc.Transduce.Entry, jsonc.Transduce.Source }),
+		"jsonl": packagePart(jsonl.Transduce != nil, func() (string, string) { return jsonl.Transduce.Entry, jsonl.Transduce.Source }),
 	}
 }
 

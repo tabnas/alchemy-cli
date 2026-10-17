@@ -542,8 +542,10 @@ export function compile(request: Request): Compiled {
 // Whether the incremental source refused a document because the grammar's
 // value is not what its events showed (a root wrapped or replaced after it
 // streamed, a map rewritten, a repeated member that the grammar keeps
-// once): the grammar's own value is the document, so it is read again
-// whole.
+// once), or a transducer part's route refused a repeated member, which the
+// part streams twice and the composition's policy refuses, since the
+// grammar's value may keep the last or merge the two: the grammar's own
+// value is the document, so it is read again whole.
 function unfollowed(err: unknown): boolean {
   return isFail(err) && ('STREAMABILITY_UNKNOWN' === err.code || 'DUPLICATE_MEMBER' === err.code)
 }
