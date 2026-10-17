@@ -582,6 +582,7 @@ describe('cli translate', () => {
     assert.deepStrictEqual(
       formats.filter((f: any) => null !== f.transduce).map((f: any) => [f.id, f.transduce]),
       [
+        ['csv', 'csv-transduce'],
         ['json', 'json-transduce'],
         ['json5', 'json5-transduce'],
         ['jsonc', 'jsonc-transduce'],
