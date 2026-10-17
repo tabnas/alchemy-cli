@@ -240,7 +240,10 @@ fn structural_translation_parts_agree_with_their_descriptors_and_compile() {
         ("markdown", structural_parts!(tabnas_markdown::translate())),
         ("toml", structural_parts!(tabnas_toml::translate())),
         ("xml", structural_parts!(tabnas_xml::translate())),
-        ("yaml", structural_parts!(tabnas_yaml::translate())),
+        (
+            "yaml",
+            structural_parts!(tabnas_yaml::translate(), transduce),
+        ),
         ("zon", structural_parts!(tabnas_zon::translate(), transduce)),
     ];
 

@@ -363,6 +363,8 @@ func modules() []module {
 		{descriptor: func() at.Descriptor {
 			p := tabnasyaml.Translate()
 			return descriptor("tabnas-yaml", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
+		}, transduce: func() *at.PartText {
+			return partText((*modulePart)(tabnasyaml.Translate().Transduce))
 		}, parser: func() *tabnas.Tabnas { return tabnasyaml.MakeJsonic() }},
 		{descriptor: func() at.Descriptor {
 			p := tabnaszon.Translate()
