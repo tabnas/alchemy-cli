@@ -477,7 +477,10 @@ fn packages() -> Vec<(Option<Described>, Reader)> {
             descriptor!("tabnas-yaml", tabnas_yaml),
             reader!(tabnas_yaml),
         ),
-        (descriptor!("tabnas-zon", tabnas_zon), reader!(tabnas_zon)),
+        (
+            descriptor!("tabnas-zon", tabnas_zon, transduce),
+            reader!(tabnas_zon),
+        ),
     ]
 }
 
@@ -1129,6 +1132,7 @@ mod tests {
                 ("json5", "json5-transduce"),
                 ("jsonc", "jsonc-transduce"),
                 ("jsonl", "jsonl-transduce"),
+                ("zon", "zon-transduce"),
             ]
         );
     }

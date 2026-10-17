@@ -33,7 +33,7 @@ require (
 	github.com/tabnas/transduce/go v0.2.9
 	github.com/tabnas/xml/go v0.7.18
 	github.com/tabnas/yaml/go v0.5.24
-	github.com/tabnas/zon/go v0.5.17
+	github.com/tabnas/zon/go v0.5.18
 )
 
 // What alchemy's end-to-end tests (e2e) need besides, as they read

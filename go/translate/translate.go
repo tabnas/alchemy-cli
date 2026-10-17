@@ -363,6 +363,8 @@ func modules() []module {
 		{descriptor: func() at.Descriptor {
 			p := tabnaszon.Translate()
 			return descriptor("tabnas-zon", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
+		}, transduce: func() *at.PartText {
+			return partText((*modulePart)(tabnaszon.Translate().Transduce))
 		}, parser: func() *tabnas.Tabnas { return zonParser() }},
 	}
 }
