@@ -410,7 +410,7 @@ fn packages() -> Vec<(Option<Described>, Reader)> {
             reader!(tabnas_css),
         ),
         (
-            descriptor!("tabnas-csv", tabnas_csv, embed),
+            descriptor!("tabnas-csv", tabnas_csv, embed, transduce),
             reader!(tabnas_csv),
         ),
         (
@@ -1128,6 +1128,7 @@ mod tests {
         assert_eq!(
             through,
             [
+                ("csv", "csv-transduce"),
                 ("json", "json-transduce"),
                 ("json5", "json5-transduce"),
                 ("jsonc", "jsonc-transduce"),

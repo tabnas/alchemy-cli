@@ -215,7 +215,7 @@ fn structural_translation_parts_agree_with_their_descriptors_and_compile() {
         ("zon", ".{ .a = 1, .b = .{ true, false } }"),
     ];
     let formats = [
-        ("csv", structural_parts!(tabnas_csv::translate())),
+        ("csv", structural_parts!(tabnas_csv::translate(), transduce)),
         ("ini", structural_parts!(tabnas_ini::translate())),
         (
             "json",

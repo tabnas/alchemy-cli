@@ -270,6 +270,8 @@ func modules() []module {
 		{descriptor: func() at.Descriptor {
 			p := tabnascsv.Translate()
 			return descriptor("tabnas-csv", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
+		}, transduce: func() *at.PartText {
+			return partText((*modulePart)(tabnascsv.Translate().Transduce))
 		}, parser: func() *tabnas.Tabnas {
 			parser, err := tabnascsv.Make()
 			installed("tabnas-csv", err)
