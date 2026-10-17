@@ -229,7 +229,10 @@ fn structural_translation_parts_agree_with_their_descriptors_and_compile() {
             "jsonc",
             structural_parts!(tabnas_jsonc::translate(), transduce),
         ),
-        ("jsonic", structural_parts!(tabnas_jsonic::translate())),
+        (
+            "jsonic",
+            structural_parts!(tabnas_jsonic::translate(), transduce),
+        ),
         (
             "jsonl",
             structural_parts!(tabnas_jsonl::translate(), transduce),

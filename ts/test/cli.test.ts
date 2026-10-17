@@ -586,6 +586,7 @@ describe('cli translate', () => {
         ['json', 'json-transduce'],
         ['json5', 'json5-transduce'],
         ['jsonc', 'jsonc-transduce'],
+        ['jsonic', 'jsonic-transduce'],
         ['jsonl', 'jsonl-transduce'],
         ['zon', 'zon-transduce'],
       ],
