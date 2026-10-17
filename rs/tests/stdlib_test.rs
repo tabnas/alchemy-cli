@@ -1161,7 +1161,8 @@ fn run_passes(program: &Program, make: fn() -> Tabnas, text: &str) -> Result<Str
 /// of alchemy's streaming plan): over every JSON fixture of transduce's,
 /// the generated documents and the documents below, for the json part's
 /// spec and for specs that announce a named key, take a close pass's
-/// value and hand a container on through a replaced rule, the same bytes
+/// value, hand a container on through a replaced rule, name a member
+/// inside a rule's own container and yield a rule's text, the same bytes
 /// both ways, or the same code. The native ran each time the natives
 /// were on, and never when they were off.
 #[test]
@@ -1186,6 +1187,14 @@ fn transduce_tree_native_and_interpreted_agree() {
         (
             "a named key on every value",
             "record\n    entry :list (record (entry :container :array))\n    entry :val (record (entry :key \"v\") (entry :scalar 0))",
+        ),
+        (
+            "a pair's value as its text",
+            "record\n    entry :map (record (entry :container :object))\n    entry :pair (record (entry :key 0) (entry :text true))",
+        ),
+        (
+            "a container's own member and its text",
+            "record\n    entry :list (record (entry :container :object) (entry :member \"items\") (entry :text true))\n    entry :pair (record (entry :member 0))",
         ),
     ];
     let mut documents: Vec<(String, String)> = Vec::new();

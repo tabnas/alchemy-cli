@@ -534,6 +534,14 @@ const TREE_SPECS: Array<[string, string]> = [
     'a named key on every value',
     'record\n    entry :list (record (entry :container :array))\n    entry :val (record (entry :key "v") (entry :scalar 0))',
   ],
+  [
+    "a pair's value as its text",
+    'record\n    entry :map (record (entry :container :object))\n    entry :pair (record (entry :key 0) (entry :text true))',
+  ],
+  [
+    "a container's own member and its text",
+    'record\n    entry :list (record (entry :container :object) (entry :member "items") (entry :text true))\n    entry :pair (record (entry :member 0))',
+  ],
 ]
 
 describe('differential: transduce-tree', () => {

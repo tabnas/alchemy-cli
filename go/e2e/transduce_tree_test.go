@@ -40,13 +40,16 @@ func (r countingRouters) TransduceTree(spec shared.TreeSpec, downstream shared.S
 
 // treeSpecs are the specs the comparison runs: the json part's, and specs
 // that take a close pass's value, hand a container on through a replaced
-// rule, refuse a key that is not a string and announce a named key.
+// rule, refuse a key that is not a string, announce a named key, yield a
+// rule's text and name a member inside a rule's own container.
 var treeSpecs = [][2]string{
 	{"the json part's spec", "record\n    entry :map (record (entry :container :object))\n    entry :list (record (entry :container :array))\n    entry :pair (record (entry :key 0))\n    entry :val (record (entry :scalar 0))"},
 	{"a close pass's value, keyed by name", "record\n    entry :map (record (entry :container :object))\n    entry :list (record (entry :container :array))\n    entry :pair (record (entry :key 0))\n    entry :val (record (entry :scalar :value))"},
 	{"a container handed on through a replaced rule", "record\n    entry :list (record (entry :container :array))\n    entry :elem (record (entry :container :array))\n    entry :val (record (entry :scalar 0))"},
 	{"a key whose token is not a string", "record\n    entry :val (record (entry :key 0) (entry :scalar 0))"},
 	{"a named key on every value", "record\n    entry :list (record (entry :container :array))\n    entry :val (record (entry :key \"v\") (entry :scalar 0))"},
+	{"a pair's value as its text", "record\n    entry :map (record (entry :container :object))\n    entry :pair (record (entry :key 0) (entry :text true))"},
+	{"a container's own member and its text", "record\n    entry :list (record (entry :container :object) (entry :member \"items\") (entry :text true))\n    entry :pair (record (entry :member 0))"},
 }
 
 // runPasses drives one document's rule passes into program, its output
