@@ -39,7 +39,7 @@
     "alchemy": "bin/alchemy"
   },
   "peerDependencies": {
-    "@tabnas/abnf": ">=0.4.24",
+    "@tabnas/abnf": ">=0.4.25",
     "@tabnas/alchemy": ">=0.2.12",
     "@tabnas/c": ">=0.5.15",
     "@tabnas/chess": ">=0.1.17",

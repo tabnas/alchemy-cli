@@ -9,7 +9,7 @@ go 1.24.7
 // Renderers that transduce and render build on them, are in all three from
 // v0.2.0.
 require (
-	github.com/tabnas/abnf/go v0.4.24
+	github.com/tabnas/abnf/go v0.4.25
 	github.com/tabnas/alchemy/go v0.2.12
 	github.com/tabnas/c/go v0.5.15
 	github.com/tabnas/chess/go v0.1.17
@@ -48,6 +48,6 @@ require (
 )
 
 require (
-	github.com/tabnas/bnf/go v0.1.30 // indirect
+	github.com/tabnas/bnf/go v0.1.31 // indirect
 	github.com/tabnas/hoover/go v0.3.14 // indirect
 )
