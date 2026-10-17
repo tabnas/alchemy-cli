@@ -22,6 +22,7 @@ import { translate as exprParts } from '@tabnas/expr'
 import { translate as feedParts } from '@tabnas/feed'
 import { translate as gbnfParts } from '@tabnas/gbnf'
 import { translate as iniParts } from '@tabnas/ini'
+import { translate as markdownParts } from '@tabnas/markdown'
 import { translate as protoParts } from '@tabnas/proto'
 import { translate as semverParts } from '@tabnas/semver'
 import { translate as tomlParts } from '@tabnas/toml'
@@ -617,7 +618,8 @@ describe('cli translate', () => {
       ['pgn-database', 'semver-embed', 'feed-embed', 'expr-embed'],
     )
     // Why a format's documents are read whole, where its manifest says:
-    // every format transduce does not stream, each in the sentence its
+    // every format transduce does not stream, and Markdown, which it
+    // streams only once the last line is in, each in the sentence its
     // manifest gives; PGN's none, since it streams a game at a time.
     for (const [id, parts] of [
       ['abnf', abnfParts()],
@@ -628,6 +630,7 @@ describe('cli translate', () => {
       ['feed', feedParts()],
       ['gbnf', gbnfParts()],
       ['ini', iniParts()],
+      ['markdown', markdownParts()],
       ['proto', protoParts()],
       ['semver', semverParts()],
       ['toml', tomlParts()],
