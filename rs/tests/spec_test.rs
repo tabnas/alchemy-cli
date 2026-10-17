@@ -188,9 +188,12 @@ fn row_failures(file: &str, row: &Row) -> Vec<Fail> {
             let grammar = transduce_grammar(row);
             let doc = row.unesc_named("doc");
             let render = row_render(row);
+            let duplicates = row_duplicates(row);
             [true, false]
                 .into_iter()
-                .filter_map(|native| transduce_both(&input, grammar, &doc, render, native).err())
+                .filter_map(|native| {
+                    transduce_both(&input, grammar, &doc, render, duplicates, native).err()
+                })
                 .collect()
         }
         _ => {
@@ -397,8 +400,9 @@ fn transduce() {
         let grammar = transduce_grammar(row);
         let doc = row.unesc_named("doc");
         let render = row_render(row);
-        let native = transduce_both(program, grammar, &doc, render, true);
-        let interpreted = transduce_both(program, grammar, &doc, render, false);
+        let duplicates = row_duplicates(row);
+        let native = transduce_both(program, grammar, &doc, render, duplicates, true);
+        let interpreted = transduce_both(program, grammar, &doc, render, duplicates, false);
         match (&native, &interpreted) {
             (Ok(a), Ok(b)) if a == b => {}
             (Err(a), Err(b)) if run_code(a) == run_code(b) && (a.row, a.column) == (b.row, b.column) => {}
@@ -416,6 +420,21 @@ fn transduce() {
             .map_err(|fail| run_failure(&fail))
     })
     .file(spec_dir().join("transduce.tsv"));
+}
+
+/// The policy a transduce row's `duplicates` names for a member name an
+/// object repeats within a captured value: empty is the default, `first`
+/// keeps the earlier value, `last` the later.
+fn row_duplicates(row: &Row) -> Duplicates {
+    match row.named("duplicates") {
+        "" => Duplicates::Reject,
+        "first" => Duplicates::FirstWins,
+        "last" => Duplicates::LastWins,
+        other => panic!(
+            "{}: duplicates is empty, first or last, not {other:?}",
+            row.location()
+        ),
+    }
 }
 
 /// The format a transduce row's `grammar` names, whose parser reads its
@@ -442,6 +461,7 @@ fn transduce_both(
     grammar: &'static Format,
     doc: &str,
     render: Option<Renderer>,
+    duplicates: Duplicates,
     native: bool,
 ) -> Result<(Output, String), Fail> {
     std::thread::scope(|scope| {
@@ -451,6 +471,9 @@ fn transduce_both(
                 let mut compiled = compile_with(program, "transduce", Input::ParserEvents)?;
                 if !native {
                     compiled = compiled.with_native(false)?;
+                }
+                if duplicates != Duplicates::Reject {
+                    compiled = compiled.with_duplicates(duplicates)?;
                 }
                 let output = compiled.output();
                 drive_passes(&compiled, grammar, doc, render).map(|text| (output, text))

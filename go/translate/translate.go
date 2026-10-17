@@ -298,6 +298,8 @@ func modules() []module {
 		{descriptor: func() at.Descriptor {
 			p := tabnasjson.Translate()
 			return descriptor("tabnas-json", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
+		}, transduce: func() *at.PartText {
+			return partText((*modulePart)(tabnasjson.Translate().Transduce))
 		}, parser: func() *tabnas.Tabnas { return tabnasjson.Make() }},
 		{descriptor: func() at.Descriptor {
 			p := tabnasjson5.Translate()

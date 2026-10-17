@@ -434,7 +434,7 @@ fn packages() -> Vec<(Option<Described>, Reader)> {
             reader!(tabnas_ini),
         ),
         (
-            descriptor!("tabnas-json", tabnas_json, embed),
+            descriptor!("tabnas-json", tabnas_json, embed, transduce),
             reader!(tabnas_json),
         ),
         (
@@ -1058,16 +1058,23 @@ pub fn formats_json() -> String {
 mod tests {
     use super::*;
 
-    /// The json transducer, as its package's part spells it: the library's
-    /// `transduce-tree` over the json grammar's rules.
-    const JSON_TRANSDUCE: &str = "def json-transduce [input]\n  transduce-tree\n    record\n      entry :map (record (entry :container :object))\n      entry :list (record (entry :container :array))\n      entry :pair (record (entry :key 0))\n      entry :val (record (entry :scalar 0))\n    input\n";
-
     /// A transducer that writes `{\"ran\":true}` whatever the document:
     /// what it writes says which route ran.
     const MARKING_TRANSDUCE: &str = "def json-transduce [input]\n  as-events\n    scan-emit\n      []\n      fn [s pass] (transition s [])\n      fn [s] [object-start (key \"ran\") (scalar true) object-end]\n      parser-events input\n";
 
+    /// json without its transducer: read as a format whose package ships
+    /// none is read.
+    fn plain_json() -> Format {
+        let json = format("json").expect("json is a format");
+        Format {
+            part: json.part.clone(),
+            reader: json.reader,
+            transducer: None,
+        }
+    }
+
     /// json, read through a transducer part given beside its package's
-    /// parts, as a package that ships one is read.
+    /// parts in place of the one it ships.
     fn transduced_json(text: &str) -> Format {
         let json = format("json").expect("json is a format");
         Format {
@@ -1103,25 +1110,30 @@ mod tests {
         Ok(String::from_utf8(bytes).expect("the output is UTF-8"))
     }
 
-    /// A format whose package ships a transducer part is read through it,
-    /// its rule passes streamed into the composition over the part, and
-    /// one without is read as before: the two routes write the same bytes
-    /// for the same document, a number's lexeme kept, into a tree target,
-    /// a records target, and with a program over the input; the part's
-    /// own output shows the route ran. A path keeps the document's value,
-    /// the one route a path has. A repeated member, which the part
-    /// streams twice and the composition's tree-contract refuses, is read
-    /// again whole, as the incremental source's is.
+    /// A format whose package ships a transducer part is read through it
+    /// (json, through tabnas-json's), its rule passes streamed into the
+    /// composition over the part, and one without is read as before: the
+    /// two routes write the same bytes for the same document, a number's
+    /// lexeme kept, into a tree target, a records target, and with a
+    /// program over the input; a marking part given in the package's
+    /// place shows the route ran. A path keeps the document's value, the
+    /// one route a path has. A repeated member, which the part streams
+    /// twice and the composition's tree-contract refuses, is read again
+    /// whole, as the incremental source's is.
     #[test]
     fn a_transducer_part_reads_the_format_and_the_walk_stands_in_where_it_refuses() {
-        let plain = format("json").expect("json is a format");
-        let through = transduced_json(JSON_TRANSDUCE);
+        let plain = plain_json();
+        let through = format("json").expect("json is a format");
         let marking = transduced_json(MARKING_TRANSDUCE);
         assert!(plain.transducer().is_none());
         assert_eq!(
             through.transducer().map(|alc| alc.entry.as_str()),
-            Some("json-transduce")
+            Some("json-transduce"),
+            "the registry's json is read through its package's part"
         );
+        assert!(through
+            .transducer()
+            .is_some_and(|alc| alc.text.contains("transduce-tree")));
         let tree = r#"{"a":[1,2.50,"x",{"b":null}],"c":{},"d":[],"e":1e21,"f":true}"#;
         let records = r#"[{"a":1,"b":"x"},{"a":2,"b":"y"}]"#;
         let echo = Some(("echo.alc", "def export [input] (events input)\n"));
@@ -1133,9 +1145,9 @@ mod tests {
             ("csv", records, echo),
         ] {
             let expected =
-                translated(plain, to, None, program, doc).expect("the plain route writes");
-            let got = translated(&through, to, None, program, doc)
-                .expect("the transducer's route writes");
+                translated(&plain, to, None, program, doc).expect("the plain route writes");
+            let got =
+                translated(through, to, None, program, doc).expect("the transducer's route writes");
             assert_eq!(got, expected, "{to} from {doc} with {program:?}");
             let marked = translated(&marking, to, None, program, doc);
             assert_ne!(
@@ -1157,14 +1169,14 @@ mod tests {
         );
         let repeated = r#"{"a":1,"a":2}"#;
         assert_eq!(
-            translated(&through, "json", None, None, repeated).unwrap(),
-            translated(plain, "json", None, None, repeated).unwrap()
+            translated(through, "json", None, None, repeated).unwrap(),
+            translated(&plain, "json", None, None, repeated).unwrap()
         );
         assert_eq!(
-            translated(&through, "json", None, None, repeated).unwrap(),
+            translated(through, "json", None, None, repeated).unwrap(),
             "{\"a\":2}\n"
         );
-        let refused = translated(&through, "json", None, None, "[1,").unwrap_err();
+        let refused = translated(through, "json", None, None, "[1,").unwrap_err();
         assert_eq!(refused.code, Code::InputInvalid);
     }
 

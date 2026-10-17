@@ -17,16 +17,23 @@ import (
 	tt "github.com/tabnas/transduce/go"
 )
 
-// jsonTransduce is the json transducer, as its module's part spells it:
-// the library's transduce-tree over the json grammar's rules.
-const jsonTransduce = "def json-transduce [input]\n  transduce-tree\n    record\n      entry :map (record (entry :container :object))\n      entry :list (record (entry :container :array))\n      entry :pair (record (entry :key 0))\n      entry :val (record (entry :scalar 0))\n    input\n"
-
 // markingTransduce writes {"ran":true} whatever the document: what it
 // writes says which route ran.
 const markingTransduce = "def json-transduce [input]\n  as-events\n    scan-emit\n      []\n      fn [s pass] (transition s [])\n      fn [s] [object-start (key \"ran\") (scalar true) object-end]\n      parser-events input\n"
 
+// plainJSON is json without its transducer: read as a format whose module
+// ships none is read.
+func plainJSON(t *testing.T) *Format {
+	t.Helper()
+	json := Named("json")
+	if json == nil {
+		t.Fatal("json is a format")
+	}
+	return &Format{Part: json.Part, reader: json.reader, passes: json.passes}
+}
+
 // transducedJSON is json, read through a transducer part given beside its
-// module's parts, as a module that ships one is read.
+// module's parts in place of the one it ships.
 func transducedJSON(t *testing.T, text string) *Format {
 	t.Helper()
 	json := Named("json")
@@ -72,20 +79,20 @@ func mustTranslate(t *testing.T, from *Format, to, path string, program *alchemy
 	return out
 }
 
-// A format whose module ships a transducer part is read through it, its
-// rule passes streamed into the composition over the part, and one without
-// is read as before: the two routes write the same bytes for the same
-// document, a number's lexeme kept, into a tree target, a records target,
-// and with a program over the input; the part's own output shows the route
-// ran. A path keeps the document's value, the one route a path has. A
-// repeated member, which the part streams twice and the composition's
-// tree-contract refuses, is read again whole, as the incremental source's
-// is.
+// A format whose module ships a transducer part is read through it (json,
+// through tabnas/json's), its rule passes streamed into the composition
+// over the part, and one without is read as before: the two routes write
+// the same bytes for the same document, a number's lexeme kept, into a
+// tree target, a records target, and with a program over the input; a
+// marking part given in the module's place shows the route ran. A path
+// keeps the document's value, the one route a path has. A repeated member,
+// which the part streams twice and the composition's tree-contract
+// refuses, is read again whole, as the incremental source's is.
 func TestATransducerPartReadsTheFormatAndTheWalkStandsInWhereItRefuses(t *testing.T) {
-	plain := Named("json")
-	through := transducedJSON(t, jsonTransduce)
+	plain := plainJSON(t)
+	through := Named("json")
 	marking := transducedJSON(t, markingTransduce)
-	if plain.Transducer != nil || through.Transducer == nil || through.Transducer.Entry != "json-transduce" {
+	if plain.Transducer != nil || through.Transducer == nil || through.Transducer.Entry != "json-transduce" || !strings.Contains(through.Transducer.Text, "transduce-tree") {
 		t.Fatalf("plain %v, through %v", plain.Transducer, through.Transducer)
 	}
 	tree := `{"a":[1,2.50,"x",{"b":null}],"c":{},"d":[],"e":1e21,"f":true}`

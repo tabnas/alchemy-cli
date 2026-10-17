@@ -328,9 +328,9 @@ func rowFailures(t *testing.T, file string, row *support.Row) (fails []*Fail, ra
 		}
 		_, f = checkRow(input, declared)
 	case "transduce.tsv":
-		grammar, render := transduceGrammar(t, row), runRender(t, row)
+		grammar, render, duplicates := transduceGrammar(t, row), runRender(t, row), runDuplicates(t, row)
 		for _, native := range []bool{true, false} {
-			if _, o := runTransduce(input, grammar, row.UnescNamed("doc"), render, native); o.fail != nil {
+			if _, o := runTransduce(input, grammar, row.UnescNamed("doc"), render, duplicates, native); o.fail != nil {
 				fails = append(fails, o.fail)
 			}
 		}
@@ -545,6 +545,24 @@ func documentValue() (map[string]any, error) {
 	return out, err
 }
 
+// runDuplicates is the policy a transduce row's duplicates column names
+// for a member name an object repeats within a captured value: empty is
+// the default, first keeps the earlier value, last the later.
+func runDuplicates(t *testing.T, row *support.Row) tt.Duplicates {
+	t.Helper()
+	switch name := row.Named("duplicates"); name {
+	case "":
+		return tt.Reject
+	case "first":
+		return tt.FirstWins
+	case "last":
+		return tt.LastWins
+	default:
+		t.Fatalf("%s: duplicates is empty, first or last, not %q", row.Where(), name)
+		return tt.Reject
+	}
+}
+
 // transduceGrammar is the format a transduce row's grammar names, whose
 // parser reads its document: one of the command's own, with a parser.
 func transduceGrammar(t testing.TB, row *support.Row) *translate.Format {
@@ -561,11 +579,14 @@ func transduceGrammar(t testing.TB, row *support.Row) *translate.Format {
 // over doc, parsed with grammar, as `alchemy run --grammar` does, with the
 // default limits; the program's output kind rides along, for the
 // differential.
-func runTransduce(program string, grammar *translate.Format, doc string, render Renderer, native bool) (Output, runOutcome) {
+func runTransduce(program string, grammar *translate.Format, doc string, render Renderer, duplicates tt.Duplicates, native bool) (Output, runOutcome) {
 	var output Output
 	compiled, f := CompileWith(program, "transduce", InputParserEvents, routers, renderers)
 	if f == nil && !native {
 		compiled, f = compiled.WithNative(false)
+	}
+	if f == nil && duplicates != tt.Reject {
+		compiled, f = compiled.WithDuplicates(duplicates)
 	}
 	if f != nil {
 		return output, runOutcome{fail: f}
@@ -663,14 +684,15 @@ func TestSpecTransduce(t *testing.T) {
 	if len(spec.Rows) == 0 {
 		t.Fatal("transduce.tsv holds no rows")
 	}
-	if got := strings.Join(spec.Rows[0].Header, " "); got != "input expected grammar doc render" {
+	if got := strings.Join(spec.Rows[0].Header, " "); got != "input expected grammar doc render duplicates" {
 		t.Fatalf("transduce.tsv's columns are %s", got)
 	}
 	r := support.Runner{
 		ParseRow: func(input string, row *support.Row) (any, error) {
 			grammar, doc, render := transduceGrammar(t, row), row.UnescNamed("doc"), runRender(t, row)
-			output, native := runTransduce(input, grammar, doc, render, true)
-			_, interpreted := runTransduce(input, grammar, doc, render, false)
+			duplicates := runDuplicates(t, row)
+			output, native := runTransduce(input, grammar, doc, render, duplicates, true)
+			_, interpreted := runTransduce(input, grammar, doc, render, duplicates, false)
 			if !native.agrees(interpreted) {
 				return nil, fmt.Errorf("native and interpreted runs disagree:\n  native:      %s\n  interpreted: %s", native, interpreted)
 			}

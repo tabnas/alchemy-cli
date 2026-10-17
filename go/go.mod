@@ -20,7 +20,7 @@ require (
 	github.com/tabnas/feed/go v0.6.18
 	github.com/tabnas/gbnf/go v0.1.20
 	github.com/tabnas/ini/go v0.5.20
-	github.com/tabnas/json/go v0.5.17
+	github.com/tabnas/json/go v0.5.18
 	github.com/tabnas/json5/go v0.5.16
 	github.com/tabnas/jsonc/go v0.5.14
 	github.com/tabnas/jsonic/go v0.7.9

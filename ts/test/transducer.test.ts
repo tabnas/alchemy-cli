@@ -3,6 +3,7 @@
 // A format whose package ships a transducer part is read through it (the
 // Rust crate's unit tests in rs/src/translate.rs): the route over its
 // parser's rule passes, composed over the part, and what it falls back to.
+// json's package ships one.
 
 import { describe, it } from 'node:test'
 import assert from 'node:assert'
@@ -13,18 +14,6 @@ import { BytesWriter } from '@tabnas/render'
 import { Fail, Limits, Metrics } from '@tabnas/transduce'
 
 import { Format, format as formatNamed, formats, parsePath, parserNames, run } from '../dist/translate'
-
-// The json transducer, as its package's part spells it: the library's
-// `transduce-tree` over the json grammar's rules.
-const JSON_TRANSDUCE =
-  'def json-transduce [input]\n' +
-  '  transduce-tree\n' +
-  '    record\n' +
-  '      entry :map (record (entry :container :object))\n' +
-  '      entry :list (record (entry :container :array))\n' +
-  '      entry :pair (record (entry :key 0))\n' +
-  '      entry :val (record (entry :scalar 0))\n' +
-  '    input\n'
 
 // A transducer that writes `{"ran":true}` whatever the document: what it
 // writes says which route ran.
@@ -37,8 +26,7 @@ const MARKING_TRANSDUCE =
   '      fn [s] [object-start (key "ran") (scalar true) object-end]\n' +
   '      parser-events input\n'
 
-// json, read through a transducer part given beside its package's parts,
-// as a package that ships one is read.
+// json, read through a transducer part given in its package's place.
 function transducedJson(text: string): Format {
   const json = formatNamed('json')
   assert.ok(json)
@@ -47,6 +35,14 @@ function transducedJson(text: string): Format {
     entry: 'json-transduce',
     text,
   })
+}
+
+// json without its transducer: read as a format whose package ships none,
+// the walk over its parsed value.
+function plainJson(): Format {
+  const json = formatNamed('json')
+  assert.ok(json)
+  return new Format(json.part, () => makeJson())
 }
 
 function translated(
@@ -87,12 +83,13 @@ describe('a transducer part', () => {
   // composition's tree-contract refuses, is read again whole, as the
   // incremental source's is.
   it('reads the format, and the walk stands in where it refuses', () => {
-    const plain = formatNamed('json')
-    assert.ok(plain)
-    const through = transducedJson(JSON_TRANSDUCE)
+    const plain = plainJson()
+    const through = formatNamed('json')
+    assert.ok(through)
     const marking = transducedJson(MARKING_TRANSDUCE)
     assert.equal(plain.transducer, undefined)
     assert.equal(through.transducer?.entry, 'json-transduce')
+    assert.ok(through.transducer?.text.includes('transduce-tree'))
     const tree = '{"a":[1,2.50,"x",{"b":null}],"c":{},"d":[],"e":1e21,"f":true}'
     const records = '[{"a":1,"b":"x"},{"a":2,"b":"y"}]'
     const echo = { file: 'echo.alc', text: 'def export [input] (events input)\n' }

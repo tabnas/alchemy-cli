@@ -41,6 +41,7 @@ import {
   rendererNamed,
 } from '@tabnas/alchemy'
 import { Limits, Metrics } from '@tabnas/alchemy/shared'
+import type { Duplicates } from '@tabnas/alchemy/shared'
 
 import { OWN_CODES, compile, compileWith, failCode, sibling } from './host'
 
@@ -170,7 +171,10 @@ function rowFailures(file: string, input: string, row: SpecRow): unknown[] {
       const grammar = transduceGrammar(row)
       const doc = row.unescNamed('doc')
       const render = rowRender(row)
-      return [true, false].flatMap((native) => met(() => runPasses(input, grammar, doc, render, native).text))
+      const duplicates = rowDuplicates(row)
+      return [true, false].flatMap((native) =>
+        met(() => runPasses(input, grammar, doc, render, duplicates, native).text),
+      )
     }
     default: {
       const cell = row.unescNamed('doc')
@@ -285,6 +289,17 @@ describe('the catalogue', () => {
   })
 })
 
+// The policy a transduce row's `duplicates` names for a member name an
+// object repeats within a captured value: empty is the default, first
+// keeps the earlier value, last the later.
+function rowDuplicates(row: SpecRow): Duplicates {
+  const name = row.named('duplicates')
+  if ('' === name) return 'reject'
+  if ('first' === name) return 'first_wins'
+  if ('last' === name) return 'last_wins'
+  throw new Error(`${row.where()}: duplicates is empty, first or last, not ${JSON.stringify(name)}`)
+}
+
 // The format a transduce row's `grammar` names, whose parser reads its
 // document: one of the command's own, with a parser.
 function transduceGrammar(row: SpecRow): Format {
@@ -306,10 +321,12 @@ function runPasses(
   grammar: Format,
   doc: string,
   render: Renderer | undefined,
+  duplicates: Duplicates,
   native: boolean,
 ): { output: string; text: string } {
   let compiled = compileWith(program, 'transduce', 'ParserEvents/1')
   if (!native) compiled = compiled.withNative(false)
+  if ('reject' !== duplicates) compiled = compiled.withDuplicates(duplicates)
   const writer = new BytesWriter()
   const limits = Limits.default()
   const metrics = new Metrics()
@@ -390,8 +407,9 @@ makeRunner({
     const grammar = transduceGrammar(row)
     const doc = row.unescNamed('doc')
     const render = rowRender(row)
-    const native = passed(() => runPasses(program, grammar, doc, render, true))
-    const interpreted = passed(() => runPasses(program, grammar, doc, render, false))
+    const duplicates = rowDuplicates(row)
+    const native = passed(() => runPasses(program, grammar, doc, render, duplicates, true))
+    const interpreted = passed(() => runPasses(program, grammar, doc, render, duplicates, false))
     let agree: boolean
     if (native.ok && interpreted.ok) {
       agree = native.text === interpreted.text

@@ -574,7 +574,7 @@ describe('cli translate', () => {
       lift: null,
       embed: null,
       render: 'json',
-      transduce: null,
+      transduce: 'json-transduce',
       loss: ['JSON has no spelling for Infinity or NaN, so a number that is not finite is written as null.'],
     })
     const markdown = byId('markdown')

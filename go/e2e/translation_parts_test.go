@@ -64,7 +64,10 @@ type translationDescriptor struct {
 // interface carries one, read by direct field access as grammarParts reads
 // the rest; a module whose interface carries none is absent.
 func grammarTransducers() map[string]*structuralPart {
-	return map[string]*structuralPart{}
+	json := tabnasjson.Translate()
+	return map[string]*structuralPart{
+		"json": packagePart(json.Transduce != nil, func() (string, string) { return json.Transduce.Entry, json.Transduce.Source }),
+	}
 }
 
 func localPart(entry, source string) *structuralPart {
