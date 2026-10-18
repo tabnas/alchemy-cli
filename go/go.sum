@@ -1,7 +1,7 @@
 github.com/tabnas/abnf/go v0.4.25 h1:eNri95GuxUziivzGnpHMzk8Ii0gxL2tCzhMdIMpuWJk=
 github.com/tabnas/abnf/go v0.4.25/go.mod h1:zgkhnKf6pBkUOrTDwNWgK5G6+Ju08MlWNmPgF2RsSO4=
-github.com/tabnas/alchemy/go v0.2.12 h1:NRCyDKlRkpj0rIZ8SqkmaCgS6TjTr3TLERbrU0vmN1E=
-github.com/tabnas/alchemy/go v0.2.12/go.mod h1:qWQADWcP3qB30Y2QqGAZnr86r5YasVJF46Hizbklvdw=
+github.com/tabnas/alchemy/go v0.2.13 h1:a3EaTF8RA7SvzBskFA0ZRPIG4BDzLTr16w/SVqxJU5c=
+github.com/tabnas/alchemy/go v0.2.13/go.mod h1:qWQADWcP3qB30Y2QqGAZnr86r5YasVJF46Hizbklvdw=
 github.com/tabnas/bnf/go v0.1.31 h1:cI/8ZfMQVKQT1lntd2W/ihbyoUrUUOR7crVyklQI9n8=
 github.com/tabnas/bnf/go v0.1.31/go.mod h1:JEiPdU/LKw8sJpxtFpswmOTN/RyBWEzE030yP4eRVBk=
 github.com/tabnas/c/go v0.5.15 h1:Iu4enjiKICzTQTG7kaKREpVa/acadSMKu8U+eykS2u8=
@@ -38,8 +38,8 @@ github.com/tabnas/jsonl/go v0.1.18 h1:MMKgyiCtDkVqj082a2cvvX7T50OTW6h4ifc4Ghirj4
 github.com/tabnas/jsonl/go v0.1.18/go.mod h1:ZHkvSw+xw50tJeJX0yGd8lYqlCJGRDG1jXHljUsUoRU=
 github.com/tabnas/markdown/go v0.7.13 h1:MbjpysPwt++8A8ibYZYyVCSYWAZPc5yiTk5d4KQG1sU=
 github.com/tabnas/markdown/go v0.7.13/go.mod h1:K07KNEuR2Mc4UxPrMMvfj3p0PX8o2TwPk/pH7DVbHbo=
-github.com/tabnas/parser/go v0.12.12 h1:LtbRsDKSzoju6zyaeJpx9c9RT+jAbPQ0SzQMEizL3jg=
-github.com/tabnas/parser/go v0.12.12/go.mod h1:WrlfEVyZ1QjEIowWiyEu3K1iHj7wxuPut5zoH9Trehk=
+github.com/tabnas/parser/go v0.12.13 h1:0vz6afG+6fjgH2BnGiZaSJYkN5w1/+Sa5AsMCtOmw7s=
+github.com/tabnas/parser/go v0.12.13/go.mod h1:WrlfEVyZ1QjEIowWiyEu3K1iHj7wxuPut5zoH9Trehk=
 github.com/tabnas/proto/go v0.6.11 h1:zzUJVCoZnRRE4izag93K2GrcLXJ9cIStSRq6XmjlIO0=
 github.com/tabnas/proto/go v0.6.11/go.mod h1:WsQJq2sqvzaJIIDJ0n5MJ4G0vbXiqJ3eNhpqyyXSzvE=
 github.com/tabnas/render/go v0.2.5 h1:6/Ofb8aAfPzeUCRpZ8fKc+OFRNwree80UmFupOD/QGQ=
@@ -50,8 +50,8 @@ github.com/tabnas/support/go v0.3.9 h1:tGaoMTNnPrBw9rtRqQZDmvHpkFgMiMzr3BibEKrtZ
 github.com/tabnas/support/go v0.3.9/go.mod h1:q+EGPO8fRFQAYDwRHFH4lafD5l5W/NCdY8vhN9IJOkY=
 github.com/tabnas/toml/go v0.5.18 h1:smYvBbeS6NHLOrURl7CEcfE7vJfSX99EmSGYVB+pTf0=
 github.com/tabnas/toml/go v0.5.18/go.mod h1:r0osB/zd7BiTpAvnv+YoCfNVCALz4Kz+nUpq6SnT/Rw=
-github.com/tabnas/transduce/go v0.2.10 h1:gOdGzJIsdTNhFUQ0bgWLGXypViC9ETyNy2wDeigpjwU=
-github.com/tabnas/transduce/go v0.2.10/go.mod h1:YFVfGakGpSHIu6vcGa7ZHrXL/58/rlDA/4+FSNAVcFQ=
+github.com/tabnas/transduce/go v0.2.11 h1:BAlQ/LIY1nAgmEHUiPohNgxdhM++1IJlT+DWv+sqBGo=
+github.com/tabnas/transduce/go v0.2.11/go.mod h1:FE+ZRWv/JN4ai3VRBD8PgaEaX+s4rSY6hbmfXzhQ7pc=
 github.com/tabnas/xml/go v0.7.19 h1:98iPXLqu1UzxpaC5DQvTSnciVv3TBNkMmH2D8QshhHI=
 github.com/tabnas/xml/go v0.7.19/go.mod h1:zzOXCvxiZY73WGtuyWVnAKFKZ8Bv0VRBTiLCVrrX+Io=
 github.com/tabnas/yaml/go v0.5.25 h1:PCnQ9+TMMKMOkcnMicNxi75HQg2P+zGGNTtee4xDUbo=
