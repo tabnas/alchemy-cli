@@ -30,7 +30,7 @@ require (
 	github.com/tabnas/render/go v0.2.5
 	github.com/tabnas/semver/go v0.0.11
 	github.com/tabnas/toml/go v0.5.18
-	github.com/tabnas/transduce/go v0.2.10
+	github.com/tabnas/transduce/go v0.2.11
 	github.com/tabnas/xml/go v0.7.19
 	github.com/tabnas/yaml/go v0.5.25
 	github.com/tabnas/zon/go v0.5.18
@@ -43,7 +43,7 @@ require (
 // translate imports the engine too, to read ZON's big integers in the form
 // ZON's translation part declares (zonParser).
 require (
-	github.com/tabnas/parser/go v0.12.12
+	github.com/tabnas/parser/go v0.12.13
 	github.com/tabnas/support/go v0.3.9
 )
 
