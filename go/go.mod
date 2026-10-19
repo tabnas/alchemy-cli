@@ -43,7 +43,7 @@ require (
 // translate imports the engine too, to read ZON's big integers in the form
 // ZON's translation part declares (zonParser).
 require (
-	github.com/tabnas/parser/go v0.12.13
+	github.com/tabnas/parser/go v0.12.14
 	github.com/tabnas/support/go v0.3.9
 )
 
