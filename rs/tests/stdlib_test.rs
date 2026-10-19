@@ -1139,29 +1139,58 @@ impl tabnas_alchemy::shared::Routers<tabnas_alchemy::value::Val> for CountingRou
         }
         made
     }
+
+    fn transduce_tree_reads_member_and_text(&self) -> bool {
+        tabnas_alchemy::shared::Routers::<tabnas_alchemy::value::Val>::transduce_tree_reads_member_and_text(
+            &tabnas_transduce::routers(),
+        )
+    }
 }
 
 /// One document's rule passes into a program over parser events, its
 /// output rendered as JSON; the output, or the failure.
 fn run_passes(program: &Program, make: fn() -> Tabnas, text: &str) -> Result<String, Fail> {
+    let (out, outcome) = run_passes_under(program, make, text, &Limits::default());
+    outcome.map(|()| out)
+}
+
+/// A failure's message without the position the interpreter ends it with
+/// when the failure is inside the standard library, ` (at stdlib/…)`.
+fn without_library_position(message: &str) -> &str {
+    message.split(" (at stdlib/").next().unwrap_or(message)
+}
+
+/// One document's rule passes into a program over parser events under
+/// `limits`, its output rendered as JSON: what it wrote, and how it ended.
+fn run_passes_under(
+    program: &Program,
+    make: fn() -> Tabnas,
+    text: &str,
+    limits: &Limits,
+) -> (String, Result<(), Fail>) {
     let buffer = Shared::default();
-    let sink = program.parser_sink(
-        Box::new(buffer.clone()),
-        Some(Renderer::Json),
-        &Limits::default(),
-        Metrics::new(),
-    )?;
-    let (outcome, _) = tabnas_transduce::ParserEventSource::new(make(), text).run_boxed(sink);
-    outcome?;
+    let outcome = program
+        .parser_sink(
+            Box::new(buffer.clone()),
+            Some(Renderer::Json),
+            limits,
+            Metrics::new(),
+        )
+        .and_then(|sink| {
+            let (outcome, _) =
+                tabnas_transduce::ParserEventSource::new(make(), text).run_boxed(sink);
+            outcome.map(|_| ())
+        });
     let bytes = buffer.0.lock().unwrap().clone();
-    Ok(String::from_utf8(bytes).expect("utf-8 output"))
+    (String::from_utf8(bytes).expect("utf-8 output"), outcome)
 }
 
 /// The library's `transduce-tree` and transduce's native one (decision 3
 /// of alchemy's streaming plan): over every JSON fixture of transduce's,
 /// the generated documents and the documents below, for the json part's
 /// spec and for specs that announce a named key, take a close pass's
-/// value and hand a container on through a replaced rule, the same bytes
+/// value, hand a container on through a replaced rule, name a member
+/// inside a rule's own container and yield a rule's text, the same bytes
 /// both ways, or the same code. The native ran each time the natives
 /// were on, and never when they were off.
 #[test]
@@ -1186,6 +1215,14 @@ fn transduce_tree_native_and_interpreted_agree() {
         (
             "a named key on every value",
             "record\n    entry :list (record (entry :container :array))\n    entry :val (record (entry :key \"v\") (entry :scalar 0))",
+        ),
+        (
+            "a pair's value as its text",
+            "record\n    entry :map (record (entry :container :object))\n    entry :pair (record (entry :key 0) (entry :text true))",
+        ),
+        (
+            "a container's own member and its text",
+            "record\n    entry :list (record (entry :container :object) (entry :member \"items\") (entry :text true))\n    entry :pair (record (entry :member 0))",
         ),
     ];
     let mut documents: Vec<(String, String)> = Vec::new();
@@ -1265,4 +1302,94 @@ fn transduce_tree_native_and_interpreted_agree() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
     assert!(compared > 100, "{compared} documents compared");
     eprintln!("transduce-tree: {compared} documents agree both ways");
+}
+
+/// A `:text` rule's text under a small `max_scalar_bytes`: the native holds
+/// it where the library's `string-join` does, so the two write the same
+/// bytes, or refuse with the same code, limit and message (the message's
+/// byte count names the join), at each bound from one that refuses every
+/// text to one that refuses none; and some of the refusals are the texts'
+/// own, not the guard's. The interpreter ends a failure inside the
+/// standard library with the library's position, which the native, running
+/// none of its text, does not.
+#[test]
+fn transduce_tree_texts_are_bounded_alike() {
+    let specs = [
+        (
+            "a pair's value as its text",
+            "record\n    entry :map (record (entry :container :object))\n    entry :pair (record (entry :key 0) (entry :text true))",
+        ),
+        (
+            "a container's own member and its text",
+            "record\n    entry :list (record (entry :container :object) (entry :member \"items\") (entry :text true))\n    entry :pair (record (entry :member 0))",
+        ),
+    ];
+    let documents = [
+        r#"{"a":{"ab":1}}"#,
+        r#"{"a":{"b":1,"c":2222}}"#,
+        r#"{"a":{"b":123}}"#,
+        r#"{"a":[10,20]}"#,
+        r#"[1,[22,333],"x",{"é":"日本"}]"#,
+        r#"{"a":[1,2.50,"x",{"b":null}],"c":{},"d":[],"e":1e21,"f":true}"#,
+    ];
+    let made = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut failures = Vec::new();
+    let (mut compared, mut texts_refused) = (0, 0);
+    for (spec_name, spec) in specs {
+        let src = format!("def spec\n  {spec}\n\ndef export [input] (transduce-tree spec input)\n");
+        let native = tabnas_alchemy::compile_with(
+            &src,
+            "tree.alc",
+            tabnas_alchemy::Input::ParserEvents,
+            Arc::new(CountingRouters(made.clone())),
+            common::renderers(),
+        )
+        .expect("the program compiles");
+        let interpreted = native.with_native(false).unwrap();
+        for text in documents {
+            for max in [1, 3, 4, 5, 7, 8, 11, 16, 64] {
+                let limits = Limits {
+                    max_scalar_bytes: max,
+                    ..Limits::default()
+                };
+                let before = made.load(std::sync::atomic::Ordering::Relaxed);
+                let a = run_passes_under(&native, tabnas_json::make, text, &limits);
+                let b = run_passes_under(&interpreted, tabnas_json::make, text, &limits);
+                assert_eq!(
+                    made.load(std::sync::atomic::Ordering::Relaxed) - before,
+                    1,
+                    "{spec_name}, {text}, {max}: the native ran once"
+                );
+                let same = a.0 == b.0
+                    && match (&a.1, &b.1) {
+                        (Ok(()), Ok(())) => true,
+                        (Err(x), Err(y)) => {
+                            x.code == y.code
+                                && x.limit == y.limit
+                                && x.message == without_library_position(&y.message)
+                        }
+                        _ => false,
+                    };
+                if !same {
+                    failures.push(format!(
+                        "{spec_name}, {text}, max_scalar_bytes {max}\n  native:      {a:?}\n  interpreted: {b:?}"
+                    ));
+                }
+                if let Err(fail) = &a.1 {
+                    if fail.message.starts_with("string-join:") {
+                        texts_refused += 1;
+                    }
+                }
+                compared += 1;
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+    assert!(
+        texts_refused > 10,
+        "{texts_refused} texts refused at the bound"
+    );
+    eprintln!(
+        "transduce-tree: {compared} bounded runs agree both ways, {texts_refused} texts refused"
+    );
 }

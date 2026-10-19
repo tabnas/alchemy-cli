@@ -534,6 +534,14 @@ const TREE_SPECS: Array<[string, string]> = [
     'a named key on every value',
     'record\n    entry :list (record (entry :container :array))\n    entry :val (record (entry :key "v") (entry :scalar 0))',
   ],
+  [
+    "a pair's value as its text",
+    'record\n    entry :map (record (entry :container :object))\n    entry :pair (record (entry :key 0) (entry :text true))',
+  ],
+  [
+    "a container's own member and its text",
+    'record\n    entry :list (record (entry :container :object) (entry :member "items") (entry :text true))\n    entry :pair (record (entry :member 0))',
+  ],
 ]
 
 describe('differential: transduce-tree', () => {
@@ -613,5 +621,75 @@ describe('differential: transduce-tree', () => {
     }
     assert.deepStrictEqual(failures, [])
     assert.ok(100 < compared, `${compared} documents compared`)
+  })
+
+  // A `:text` rule's text under a small `max_scalar_bytes`: the native holds
+  // it where the library's `string-join` does, so the two write the same
+  // bytes, or refuse with the same code, limit and message (the message's
+  // byte count names the join), at each bound from one that refuses every
+  // text to one that refuses none; and some of the refusals are the texts'
+  // own, not the guard's. The interpreter ends a failure inside the
+  // standard library with the library's position, which the native,
+  // running none of its text, does not (rs/tests/stdlib_test.rs).
+  it("transduce-tree's texts are bounded alike", () => {
+    const specs = TREE_SPECS.filter(([, spec]) => spec.includes(':text'))
+    assert.equal(specs.length, 2)
+    const documents = [
+      '{"a":{"ab":1}}',
+      '{"a":{"b":1,"c":2222}}',
+      '{"a":{"b":123}}',
+      '{"a":[10,20]}',
+      '[1,[22,333],"x",{"é":"日本"}]',
+      '{"a":[1,2.50,"x",{"b":null}],"c":{},"d":[],"e":1e21,"f":true}',
+    ]
+    let made = 0
+    const counting: any = {
+      ...routers,
+      transduceTree(spec: any, downstream: any) {
+        const sink = routers.transduceTree!(spec, downstream)
+        if (undefined !== sink) made++
+        return sink
+      },
+    }
+    const run = (program: Program, text: string, limits: Limits) => {
+      const writer = new BytesWriter()
+      let fail: any
+      try {
+        new ParserEventSource(makeJson(), text).run(program.parserSink(writer, 'json', limits))
+      } catch (err) {
+        fail = err
+      }
+      return {
+        text: writer.text(),
+        fail:
+          undefined === fail
+            ? undefined
+            : { code: fail.code, limit: fail.limit, message: String(fail.message).split(' (at stdlib/')[0] },
+      }
+    }
+    const failures: string[] = []
+    let textsRefused = 0
+    for (const [specName, spec] of specs) {
+      const src = `def spec\n  ${spec}\n\ndef export [input] (transduce-tree spec input)\n`
+      const native = alchemy.compile(src, 'tree.alc', { routers: counting, renderers, input: 'ParserEvents/1' })
+      const interpreted = native.withNative(false)
+      for (const text of documents) {
+        for (const max of [1, 3, 4, 5, 7, 8, 11, 16, 64]) {
+          const limits = Limits.with({ max_scalar_bytes: max })
+          const before = made
+          const a = run(native, text, limits)
+          const b = run(interpreted, text, limits)
+          assert.equal(made - before, 1, `${specName}, ${text}, ${max}: the native ran once`)
+          if (JSON.stringify(a) !== JSON.stringify(b)) {
+            failures.push(
+              `${specName}, ${text}, max_scalar_bytes ${max}\n  native:      ${JSON.stringify(a)}\n  interpreted: ${JSON.stringify(b)}`,
+            )
+          }
+          if (a.fail?.message?.startsWith('string-join:')) textsRefused++
+        }
+      }
+    }
+    assert.deepStrictEqual(failures, [])
+    assert.ok(10 < textsRefused, `${textsRefused} texts refused at the bound`)
   })
 })

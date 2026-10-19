@@ -9,8 +9,8 @@ go 1.24.7
 // Renderers that transduce and render build on them, are in all three from
 // v0.2.0.
 require (
-	github.com/tabnas/abnf/go v0.4.24
-	github.com/tabnas/alchemy/go v0.2.10
+	github.com/tabnas/abnf/go v0.4.25
+	github.com/tabnas/alchemy/go v0.2.13
 	github.com/tabnas/c/go v0.5.15
 	github.com/tabnas/chess/go v0.1.17
 	github.com/tabnas/css/go v0.5.16
@@ -30,7 +30,7 @@ require (
 	github.com/tabnas/render/go v0.2.5
 	github.com/tabnas/semver/go v0.0.11
 	github.com/tabnas/toml/go v0.5.18
-	github.com/tabnas/transduce/go v0.2.9
+	github.com/tabnas/transduce/go v0.2.11
 	github.com/tabnas/xml/go v0.7.19
 	github.com/tabnas/yaml/go v0.5.25
 	github.com/tabnas/zon/go v0.5.18
@@ -43,11 +43,11 @@ require (
 // translate imports the engine too, to read ZON's big integers in the form
 // ZON's translation part declares (zonParser).
 require (
-	github.com/tabnas/parser/go v0.12.12
+	github.com/tabnas/parser/go v0.12.14
 	github.com/tabnas/support/go v0.3.9
 )
 
 require (
-	github.com/tabnas/bnf/go v0.1.30 // indirect
+	github.com/tabnas/bnf/go v0.1.31 // indirect
 	github.com/tabnas/hoover/go v0.3.14 // indirect
 )
