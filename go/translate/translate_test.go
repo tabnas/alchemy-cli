@@ -288,7 +288,10 @@ func TestARegisteredReaderDefectStillStands(t *testing.T) {
 // transduce's walker gives its members in sorted key order (semver's
 // version, css's nodes, a C syntax tree's nodes, and a PGN game's tags); a
 // module's typed value is written in its fields' order, where the Rust and
-// TypeScript readers keep the document's (a feed). Otherwise the values are
+// TypeScript readers keep the document's (a feed, and a PGN move's
+// annotations). PGN's transducer part keeps the document's order, so its
+// example is a document the part refuses, which is read whole as the
+// typed database's tree. Otherwise the values are
 // the same, and the matrix, comparing values, cannot see the order;
 // TestAReadersMemberOrderIsPinned holds each entry to its example. (A
 // grammar spec was one until tabnas-bnf 0.1.30, whose Go serializer writes
@@ -298,8 +301,9 @@ var orderDivergent = map[string][2]string{
 	"semver": {"1.2.3-rc.1", `{"build":[],"major":1,"minor":2,"patch":3,"prerelease":["rc",1]}`},
 	"css": {"a{color:red}", `{"rules":[{"declarations":[{"property":"color","type":"declaration","value":"red"}],` +
 		`"selectors":["a"],"type":"rule"}],"type":"stylesheet"}`},
-	"pgn": {"[White \"W\"]\n[Black \"B\"]\n\n1. e4 1-0\n",
-		`[{"tags":{"Black":"B","White":"W"},"moves":[{"san":"e4","piece":"P","to":"e4","number":1,"side":"w"}],"result":"1-0"}]`},
+	"pgn": {"[White \"W\"]\n[Black \"B\"]\n\n1. e4 {a} (1. d4) {b} $1 1-0\n",
+		`[{"tags":{"Black":"B","White":"W"},"moves":[{"san":"e4","piece":"P","to":"e4","number":1,"side":"w","nags":[1],` +
+			`"comments":[{"kind":"brace","text":"a"},{"kind":"brace","text":"b"}],"variations":[{"moves":[{"san":"d4","piece":"P","to":"d4","number":1,"side":"w"}]}]}],"result":"1-0"}]`},
 	"feed": {`<feed xmlns="http://www.w3.org/2005/Atom"><title>T</title><entry><title>A</title></entry></feed>`,
 		`{"format":"atom","version":"1.0","title":{"type":"text","value":"T"},"entries":[{"title":{"type":"text","value":"A"}}]}`},
 	"c": {"// c\n", `{"children":[],"kind":"translation_unit","span":{"col":1,"end":0,"line":1,"start":0},` +
@@ -310,7 +314,8 @@ var orderDivergent = map[string][2]string{
 // example. The Rust and TypeScript commands write semver's example as
 // {"major":1,"minor":2,"patch":3,"prerelease":["rc",1],"build":[]}, css's
 // and C's with each node's kind or type first, the game's tags as
-// {"White":"W","Black":"B"}, and the feed with its entries before its
+// {"White":"W","Black":"B"} and the move's comments, variations and glyphs
+// in the order they first appear, and the feed with its entries before its
 // title.
 func TestAReadersMemberOrderIsPinned(t *testing.T) {
 	for id, c := range orderDivergent {

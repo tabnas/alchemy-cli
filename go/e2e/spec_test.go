@@ -662,11 +662,43 @@ func transduceDifferential(t testing.TB, grammar *translate.Format, doc, written
 	if !ok {
 		return fmt.Errorf("the output %q holds no value", written)
 	}
+	if memberOrderFree[grammar.ID()] {
+		read, value = sortedMembers(read), sortedMembers(value)
+	}
 	a, b := plainEvents(t, &read), plainEvents(t, &value)
 	if !reflect.DeepEqual(a, b) {
 		return fmt.Errorf("the transducer's events are not the walk of the grammar's value\n  written: %v\n  walked:  %v", a, b)
 	}
 	return nil
+}
+
+// memberOrderFree is the formats whose Go reader gives an object's members
+// in another order than the document's, so that the differential compares
+// a row's events with the walk with each object's members in key order: Go
+// reads a PGN database as typed values, a game's tags a map in sorted key
+// order and a move's fields and annotations in the struct's order, where
+// the part, as the Rust and TypeScript readers do, keeps the document's
+// order (translate/translate_test.go's orderDivergent).
+var memberOrderFree = map[string]bool{"pgn": true}
+
+// sortedMembers is a value with each object's members in key order.
+func sortedMembers(d tt.Datum) tt.Datum {
+	switch d.Kind {
+	case tt.DatumArray:
+		items := make([]tt.Datum, len(d.Items))
+		for i, item := range d.Items {
+			items[i] = sortedMembers(item)
+		}
+		d.Items = items
+	case tt.DatumObject:
+		members := make([]tt.Member, len(d.Members))
+		for i, m := range d.Members {
+			members[i] = tt.Member{Key: m.Key, Value: sortedMembers(m.Value)}
+		}
+		sort.SliceStable(members, func(i, j int) bool { return members[i].Key < members[j].Key })
+		d.Members = members
+	}
+	return d
 }
 
 // TestSpecTransduce runs transduce.tsv: a program over a grammar's rule

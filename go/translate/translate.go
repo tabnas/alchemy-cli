@@ -94,17 +94,20 @@ type Format struct {
 	Part *at.Part
 	// reader is a source over a text with a fresh parser of the format's
 	// grammar under its own options: a ParserSource takes its parser over,
-	// so each read has one. It is nil where tree is not.
+	// so each read has one. It is nil where the module has no parser here.
 	reader func(text string) *tt.ParserSource
 	// passes is a source of the parser's rule passes over a text, with a
 	// fresh parser as reader has one: what a program over parser events
-	// reads (a transducer part, run --grammar). It is nil where tree is
-	// not.
+	// reads (a transducer part, run --grammar). It is nil where the module
+	// has no parser here.
 	passes func(text string) *tt.ParserEventSource
 	// tree is a document as the tree the format's module reads it as with
 	// its own API, where its parser's value is not yet the tree its parts
-	// declare (an expression's operators, or a typed value). It is nil
-	// where reader is not.
+	// declare (an expression's operators, or a typed value): a whole read
+	// reads it. It is nil where reader is not, but for a module that ships
+	// a transducer part (PGN): its parser's rule passes stream through the
+	// part, and a document the part does not stream is read whole as this
+	// tree.
 	tree func(text string) (any, *tt.Fail)
 	// check is what the module's own parse checks before its parser runs,
 	// which the parser does not check itself: a document it refuses is not
@@ -122,18 +125,18 @@ type Format struct {
 func (f *Format) ID() string { return f.Part.ID }
 
 // Parses is whether the format's documents are parsed, so that a program
-// over parser events can read them (Passes); a format read as the tree
-// its module's API makes of a document has no parser here.
-func (f *Format) Parses() bool { return f.tree == nil }
+// over parser events can read them (Passes); a format read only as the
+// tree its module's API makes of a document has no parser here.
+func (f *Format) Parses() bool { return f.passes != nil }
 
 // Passes is the parser's rule passes over text: transduce's source of
 // ParserEvents/1 with a fresh parser of the format's grammar, for a
 // program over parser events, a transducer part's or run --grammar's. The
 // check the module's parse makes first, where it makes one, runs first,
-// and its refusal is the failure; a format read as a tree has no parser,
-// and refuses.
+// and its refusal is the failure; a format read only as a tree has no
+// parser, and refuses.
 func (f *Format) Passes(text string) (*tt.ParserEventSource, *tt.Fail) {
-	if f.tree != nil {
+	if f.passes == nil {
 		return nil, tt.InputFail(f.ID() + " is read as a tree, not parsed: it has no rule passes for a program to read")
 	}
 	if f.check != nil {
@@ -232,7 +235,9 @@ func installed(name string, err error) {
 // module is a grammar module this command carries: its parts, the
 // transducer part it hands over beside them where its interface carries
 // one (nil otherwise; PartTransducer reads the two together), its parser,
-// a fresh one each time, or its tree, and its check (Format's).
+// a fresh one each time, or its tree, or both where a transducer part
+// reads the parser's passes and a whole read the tree, and its check
+// (Format's).
 type module struct {
 	descriptor func() at.Descriptor
 	transduce  func() *at.PartText
@@ -244,7 +249,9 @@ type module struct {
 // modules is every grammar module this command carries, each with how its
 // documents are read: the module's own parser, under its own options, or,
 // where its parser's value is not yet the tree its parts declare, the tree
-// its own API reads a document as.
+// its own API reads a document as. chess's is both: a database streams
+// through its transducer part over the parser's rule passes, and one the
+// part does not stream is read whole as the typed database's tree.
 func modules() []module {
 	return []module{
 		{descriptor: func() at.Descriptor {
@@ -262,7 +269,9 @@ func modules() []module {
 		{descriptor: func() at.Descriptor {
 			p := tabnaschess.Translate()
 			return descriptor("tabnas-chess", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
-		}, tree: pgnTree},
+		}, transduce: func() *at.PartText {
+			return partText((*modulePart)(tabnaschess.Translate().Transduce))
+		}, parser: func() *tabnas.Tabnas { return tabnaschess.Make() }, tree: pgnTree},
 		{descriptor: func() at.Descriptor {
 			p := tabnascss.Translate()
 			return descriptor("tabnas-css", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))

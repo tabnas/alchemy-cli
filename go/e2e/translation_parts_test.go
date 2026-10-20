@@ -22,6 +22,7 @@ import (
 	translate "github.com/tabnas/alchemy-cli/go/translate"
 	. "github.com/tabnas/alchemy/go"
 	altranslate "github.com/tabnas/alchemy/go/translate"
+	tabnaschess "github.com/tabnas/chess/go"
 	tabnascsv "github.com/tabnas/csv/go"
 	tabnasini "github.com/tabnas/ini/go"
 	tabnasjson "github.com/tabnas/json/go"
@@ -64,6 +65,7 @@ type translationDescriptor struct {
 // interface carries one, read by direct field access as grammarParts reads
 // the rest; a module whose interface carries none is absent.
 func grammarTransducers() map[string]*structuralPart {
+	chess := tabnaschess.Translate()
 	csv := tabnascsv.Translate()
 	json := tabnasjson.Translate()
 	json5 := tabnasjson5.Translate()
@@ -80,6 +82,7 @@ func grammarTransducers() map[string]*structuralPart {
 		"jsonc":  packagePart(jsonc.Transduce != nil, func() (string, string) { return jsonc.Transduce.Entry, jsonc.Transduce.Source }),
 		"jsonic": packagePart(jsonic.Transduce != nil, func() (string, string) { return jsonic.Transduce.Entry, jsonic.Transduce.Source }),
 		"jsonl":  packagePart(jsonl.Transduce != nil, func() (string, string) { return jsonl.Transduce.Entry, jsonl.Transduce.Source }),
+		"pgn":    packagePart(chess.Transduce != nil, func() (string, string) { return chess.Transduce.Entry, chess.Transduce.Source }),
 		"xml":    packagePart(xml.Transduce != nil, func() (string, string) { return xml.Transduce.Entry, xml.Transduce.Source }),
 		"yaml":   packagePart(yaml.Transduce != nil, func() (string, string) { return yaml.Transduce.Entry, yaml.Transduce.Source }),
 		"zon":    packagePart(zon.Transduce != nil, func() (string, string) { return zon.Transduce.Entry, zon.Transduce.Source }),

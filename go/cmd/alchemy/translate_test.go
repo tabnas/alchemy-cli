@@ -134,8 +134,7 @@ func TestFormatsPrintsTheRegistryAsJSON(t *testing.T) {
 	// every format transduce's Rust and TypeScript lists leave out, and
 	// Markdown, which they stream only once its last line is in, each in
 	// the sentence its manifest gives. PGN's says nothing: it streams a
-	// game at a time there, though Go reads it whole (transduce's
-	// DIVERGENCE.md 5).
+	// game at a time through its transducer part, here as there.
 	for id, manifest := range map[string]string{
 		"abnf":     tabnasabnf.Translate().Manifest,
 		"c":        tabnasc.Translate().Manifest,
