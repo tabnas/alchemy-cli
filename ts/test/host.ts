@@ -18,9 +18,10 @@ import { join } from 'node:path'
 
 import * as alchemy from '@tabnas/alchemy'
 import { EventRecorder, Limits, Metrics, replay } from '@tabnas/alchemy/shared'
-import { make as makeJson } from '@tabnas/json'
 import { BytesWriter, renderers } from '@tabnas/render'
-import { ParserSource, Prune, SourceMode, routers } from '@tabnas/transduce'
+import { ParserSource, routers } from '@tabnas/transduce'
+
+import { format } from '../dist/translate'
 
 // This repository's root: two levels above dist-test/.
 export const REPO_ROOT = join(__dirname, '..', '..')
@@ -89,12 +90,24 @@ export function thrown(fn: () => unknown): any {
   throw new Error('expected a failure')
 }
 
+// Push the events of the JSON document `text` into `sink`, as `alchemy
+// run` reads its input (rs/tests/common/mod.rs's `json_into`): JSON's own
+// transducer part over the parser's rule passes, the engine's arrays
+// emptied behind it.
+export function jsonInto(text: string, limits: any, metrics: any, sink: any): void {
+  const json = format('json')
+  if (undefined === json) throw new Error('the command reads JSON')
+  const part = json.transducerProgram()
+  if (undefined === part) throw new Error('the JSON grammar ships a transducer part')
+  const head = part.parserSinkInto(sink, limits, metrics)
+  json.passes(text).grammar(json.id).prune().limits(limits).metrics(metrics).run(head)
+}
+
 // What a host does with a program and a JSON text (rs/tests/run_test.rs's
-// `drive`): parse the text with the json grammar incrementally, pruned
-// under the program's row selector when it has one, push the events into
-// the program's sink, and mark a failure as leaving partial output when
-// `output_bytes` says bytes reached the writer. The outcome, and the text
-// the writer received.
+// `drive`): read the text as `alchemy run` reads its input, push the
+// events into the program's sink, and mark a failure as leaving partial
+// output when `output_bytes` says bytes reached the writer. The outcome,
+// and the text the writer received.
 export function drive(
   program: any,
   text: string,
@@ -109,15 +122,8 @@ export function drive(
   } catch (fail) {
     return { fail, out: '' }
   }
-  const selector = program.rowSelector()
-  const prune = undefined === selector ? Prune.never() : Prune.under(selector)
   try {
-    new ParserSource(makeJson(), text)
-      .grammar('json')
-      .mode(SourceMode.incremental(prune))
-      .limits(limits)
-      .metrics(metrics)
-      .run(sink)
+    jsonInto(text, limits, metrics, sink)
   } catch (fail) {
     if (alchemy.isFail(fail) && metrics.output_bytes > 0 && !fail.committedOutput) fail.committed()
     return { fail, out: writer.text() }

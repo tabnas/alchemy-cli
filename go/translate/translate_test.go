@@ -2226,8 +2226,8 @@ func TestAZonIntegerNoFloatHoldsIsTheBigObject(t *testing.T) {
 	}
 }
 
-// The metrics a run is given are its own, whether the incremental attempt
-// wrote the output or one it gave up was read again whole.
+// The metrics a run is given are its own, whether the transducer part's
+// attempt wrote the output or one it gave up was read again whole.
 func TestARunsMetricsAreThoseOfTheAttemptThatWroteTheOutput(t *testing.T) {
 	json := format(t, "json")
 	for _, text := range []string{`{"a": [1, 2]}`, `{"a": 1, "a": 2}`} {

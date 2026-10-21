@@ -10,15 +10,13 @@ mod common;
 
 use std::sync::{Arc, Mutex};
 
+use common::{compile, json_into, renderers, routers};
 use tabnas_alchemy::ast::Sources;
 use tabnas_alchemy::interp::Runtime;
 use tabnas_alchemy::lower::{Lowering, Out, Renderer};
 use tabnas_alchemy::resolve::resolve;
 use tabnas_alchemy::shared::{Fail, Limits, Metrics};
 use tabnas_alchemy::{desugar, parse_file, stdlib};
-use tabnas_transduce::{ParserSource, Prune, SourceMode};
-
-use common::{compile, renderers, routers};
 
 /// The spec's worked example, byte for byte as aless's fixture has it.
 const RECORDS: &str = r#"{"response":{"metadata":{"fields":[{"title":"Identifier","path":["id"]},{"title":"Full name","path":["person","name"]},{"title":"Balance","path":["account","balance"]}]},"payload":{"deep":{"records":[{"id":123,"person":{"name":"Alice"},"account":{"balance":50.25}},{"account":{"balance":72},"person":{"name":"Bob"},"id":456}]}}}}"#;
@@ -51,9 +49,9 @@ impl std::io::Write for Shared {
     }
 }
 
-/// Run `src` over the JSON `input` through the json grammar's
-/// incremental events, lowered through transduce's routers and render's
-/// renderers; the output bytes, or the failure.
+/// Run `src` over the JSON `input`, read as `alchemy run` reads its
+/// input, lowered through transduce's routers and render's renderers; the
+/// output bytes, or the failure.
 fn run(src: &str, input: &str, native: bool, render: Option<Renderer>) -> Result<String, Fail> {
     let rt = runtime(src, native);
     let result = rt.export()?;
@@ -63,15 +61,7 @@ fn run(src: &str, input: &str, native: bool, render: Option<Renderer>) -> Result
     let out: Out = Box::new(tabnas_render::WriteOut::new(buffer.clone()));
     let sink = Lowering::new(rt, &limits, metrics.clone(), routers(), renderers())
         .sink(&result, out, render)?;
-    let (outcome, _) = ParserSource::new(tabnas_json::make(), input)
-        .grammar("json")
-        .mode(SourceMode::Incremental {
-            prune: Prune::Never,
-        })
-        .limits(limits)
-        .metrics(metrics)
-        .run_owned(sink);
-    outcome?;
+    json_into(input, &limits, metrics, Box::new(sink))?;
     let bytes = buffer.0.lock().unwrap().clone();
     Ok(String::from_utf8(bytes).expect("utf-8 output"))
 }

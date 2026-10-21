@@ -75,13 +75,14 @@ function translated(
 describe('a transducer part', () => {
   // A format whose package ships a transducer part is read through it, its
   // rule passes streamed into the composition over the part, and one
-  // without is read as before: the two routes write the same bytes for the
-  // same document, a number's lexeme kept, into a tree target, a records
-  // target, and with a program over the input; the part's own output shows
-  // the route ran. A path keeps the document's value, the one route a
-  // path has. A repeated member, which the part streams twice and the
-  // composition's tree-contract refuses, is read again whole, as the
-  // incremental source's is.
+  // without is read whole, its value walked: the two routes write the same
+  // bytes for the same document, into a tree target, a records target, and
+  // with a program over the input, but for a number's lexeme, which the
+  // part keeps and the walk spells as the engine does; the part's own
+  // output shows the route ran. A path keeps the document's value, the one
+  // route a path has. A repeated member, which the part streams twice and
+  // the composition's tree-contract refuses, is read again whole, as a
+  // format without a part is read.
   it('reads the format, and the walk stands in where it refuses', () => {
     const plain = plainJson()
     const through = formatNamed('json')
@@ -91,13 +92,21 @@ describe('a transducer part', () => {
     assert.equal(through.transducer?.entry, 'json-transduce')
     assert.ok(through.transducer?.text.includes('transduce-tree'))
     const tree = '{"a":[1,2.50,"x",{"b":null}],"c":{},"d":[],"e":1e21,"f":true}'
+    // The same document, its numbers spelled as the engine spells them.
+    const spelled = tree.replace('2.50', '2.5')
+    assert.equal(translated(through, 'json', undefined, undefined, tree), `${tree}\n`, "the part keeps a number's lexeme")
+    assert.equal(
+      translated(plain, 'json', undefined, undefined, tree),
+      `${spelled}\n`,
+      'the walk spells a number as the engine does',
+    )
     const records = '[{"a":1,"b":"x"},{"a":2,"b":"y"}]'
     const echo = { file: 'echo.alc', text: 'def export [input] (events input)\n' }
     const cases: Array<[string, string, { file: string; text: string } | undefined]> = [
-      ['json', tree, undefined],
-      ['yaml', tree, undefined],
+      ['json', spelled, undefined],
+      ['yaml', spelled, undefined],
       ['csv', records, undefined],
-      ['json', tree, echo],
+      ['json', spelled, echo],
       ['csv', records, echo],
     ]
     for (const [to, doc, program] of cases) {

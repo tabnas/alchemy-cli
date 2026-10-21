@@ -78,17 +78,15 @@ Each runtime installs a command named `alchemy`:
 | Runtime | Install |
 |---|---|
 | TypeScript (Node 24 or later) | `npm install -g @tabnas/alchemy-cli` |
-| Go | `go install -tags tabnas_nodecell github.com/tabnas/alchemy-cli/go/cmd/alchemy@latest` |
+| Go | `go install github.com/tabnas/alchemy-cli/go/cmd/alchemy@latest` |
 | Rust (1.85 or later) | `cargo install tabnas-alchemy-cli` |
 
-The Go command needs the `tabnas_nodecell` build tag: `run` reads its
-document through transduce's incremental source, which builds only with
-it, and a build without it refuses `run` with `STREAMABILITY_UNKNOWN`
-before reading the document. `translate` reads a document whole where
-its grammar is not verified for the incremental source, which in a
-build without the tag is every grammar, so such a build writes each
-number by its value rather than by the lexeme the document spelled it
-with.
+The Go command needs no build tag. `run` reads its document through
+JSON's transducer part, and `translate` reads a document through its
+format's part, or whole where the format ships none. Neither route needs
+transduce's rule-event adapter, which builds only with the
+`tabnas_nodecell` tag, so a build with the tag reads every document as a
+build without it does.
 
 ## Layout
 

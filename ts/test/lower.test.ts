@@ -11,9 +11,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert'
 
-import { make as makeJson } from '@tabnas/json'
 import { BytesWriter, StringOut } from '@tabnas/render'
-import { ParserSource, Prune, SourceMode } from '@tabnas/transduce'
 
 import {
   Lowering,
@@ -29,7 +27,7 @@ import {
 import { Ev, Limits, Metrics, fromJSON, walkDatum } from '@tabnas/alchemy/shared'
 
 import { EXPECTED_CSV, PROGRAM, RECORDS } from './common'
-import { OPTIONS, compile, thrown } from './host'
+import { OPTIONS, compile, jsonInto, thrown } from './host'
 
 function runtime(src: string, native: boolean): Runtime {
   const forms = desugarProgram(parseFile(src, 't.alc'), src)
@@ -37,8 +35,8 @@ function runtime(src: string, native: boolean): Runtime {
   return new Runtime(resolve(forms, sources, outer), sources, OPTIONS).withNative(native)
 }
 
-// Run `src` over the JSON `input` through the json grammar's incremental
-// events; the output, or the failure thrown.
+// Run `src` over the JSON `input`, read as `alchemy run` reads its input;
+// the output, or the failure thrown.
 function runSrc(src: string, input: string, native: boolean, render?: Renderer): string {
   const rt = runtime(src, native)
   const result = run(rt.export())
@@ -46,12 +44,7 @@ function runSrc(src: string, input: string, native: boolean, render?: Renderer):
   const metrics = new Metrics()
   const out = new StringOut()
   const sink = new Lowering(rt, limits, metrics).sink(result, out, render)
-  new ParserSource(makeJson(), input)
-    .grammar('json')
-    .mode(SourceMode.incremental(Prune.never()))
-    .limits(limits)
-    .metrics(metrics)
-    .run(sink)
+  jsonInto(input, limits, metrics, sink)
   return out.text
 }
 

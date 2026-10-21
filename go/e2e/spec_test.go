@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -174,9 +173,8 @@ func (o runOutcome) agrees(other runOutcome) bool {
 }
 
 // runBoth compiles program and runs it over doc as `alchemy run` does: the
-// document read by the JSON grammar incrementally, pruned under the
-// program's row selector when it has one, with the default limits; the
-// standard compositions native or through the library's text.
+// document read through JSON's transducer part, with the default limits;
+// the standard compositions native or through the library's text.
 func runBoth(program, doc string, render Renderer, native bool) runOutcome {
 	compiled, f := Compile(program, "run", routers, renderers)
 	if f == nil && !native {
@@ -189,10 +187,9 @@ func runBoth(program, doc string, render Renderer, native bool) runOutcome {
 	return runOutcome{out: out, fail: f}
 }
 
-// driveRun parses doc with the json grammar incrementally, pruned under
-// the program's row selector when it has one, and pushes its events
-// through the program's sink: the output, or the failure. metrics may be
-// nil.
+// driveRun reads doc as `alchemy run` reads its input (jsonInto) and pushes
+// its events through the program's sink: the output, or the failure.
+// metrics may be nil.
 func driveRun(program *Program, doc string, render Renderer, limits tt.Limits, metrics *tt.Metrics) (string, *Fail) {
 	if metrics == nil {
 		metrics = tt.NewMetrics()
@@ -202,52 +199,15 @@ func driveRun(program *Program, doc string, render Renderer, limits tt.Limits, m
 	if f != nil {
 		return "", f
 	}
-	prune := tt.Prune{}
-	if selector, ok := program.RowSelector(); ok {
-		prune = tt.PruneUnderSelector(selector)
-	}
-	_, f = tt.NewParserSource(tabnasjson.Make(), doc).
-		Grammar("json").
-		Mode(tt.IncrementalMode(prune)).
-		Limits(limits).
-		Metrics(metrics).
-		Run(sink)
+	f = jsonInto(doc, limits, metrics, sink)
 	return buffer.String(), f
 }
-
-// beforeTheSource is whether a row's run ends before its document is read:
-// its program fails to compile, natively or interpreted, or its sink
-// cannot be built (a renderer for a program that renders its own text).
-// Such a row runs in every build; any other needs the incremental source.
-func beforeTheSource(program string, render Renderer) bool {
-	for _, native := range []bool{true, false} {
-		compiled, f := Compile(program, "run", routers, renderers)
-		if f == nil && !native {
-			compiled, f = compiled.WithNative(false)
-		}
-		if f == nil {
-			_, f = compiled.Sink(io.Discard, render, tt.DefaultLimits(), nil)
-		}
-		if f != nil {
-			return true
-		}
-	}
-	return false
-}
-
-// needsIncremental is the reason a test that reads a document as `alchemy
-// run` does is skipped in a build without the incremental adapter.
-const needsIncremental = "reads its document incrementally, as alchemy run does, and this build has no incremental adapter (build with -tags tabnas_nodecell)"
 
 // TestSpecRun runs run.tsv: a program run over a JSON document, the bytes
 // it writes or the failure. Every row runs twice, with the standard
 // compositions native and through the library's text, and the two must
 // agree to the byte, or on the failure's code and position: a row whose
 // two paths differ fails whatever its expected cell says.
-//
-// A run reads its document incrementally. A build without the adapter
-// (no tabnas_nodecell tag) runs the rows that end before the document is
-// read, and skips the rest by name, saying why.
 func TestSpecRun(t *testing.T) {
 	spec, err := support.LoadSpec(filepath.Join(specDir(t), "run.tsv"), nil)
 	if err != nil {
@@ -285,31 +245,22 @@ func TestSpecRun(t *testing.T) {
 			return 0, 0, false
 		},
 	}
-	ran, skipped := 0, 0
 	for _, row := range spec.Rows {
 		input := row.Unesc(0)
 		t.Run(fmt.Sprintf("row %d", row.Line), func(t *testing.T) {
-			if !tt.AdapterBuilt() && !beforeTheSource(input, runRender(t, row)) {
-				skipped++
-				t.Skip(row.Where() + ": " + needsIncremental)
-			}
-			ran++
 			if err := r.CheckRow(row, input, row.Col(1)); err != nil {
 				t.Error(err)
 			}
 		})
 	}
-	t.Logf("run.tsv: %d rows run, %d skipped (no incremental adapter)", ran, skipped)
 }
 
 // rowFailures is what a row's program meets, as the runners above meet it:
 // the reader's (reader.tsv), the desugarer's (pipe.tsv), compile's
 // (check.tsv, over the input its protocol column declares: empty for JSON
 // events, parser for the parser's rule passes), or a run's on both paths
-// (run.tsv). ran is false for a run
-// row this build cannot run: one that reads its document, in a build
-// without the incremental adapter.
-func rowFailures(t *testing.T, file string, row *support.Row) (fails []*Fail, ran bool) {
+// (run.tsv).
+func rowFailures(t *testing.T, file string, row *support.Row) (fails []*Fail) {
 	input := row.Unesc(0)
 	var f *Fail
 	switch file {
@@ -334,23 +285,20 @@ func rowFailures(t *testing.T, file string, row *support.Row) (fails []*Fail, ra
 				fails = append(fails, o.fail)
 			}
 		}
-		return fails, true
+		return fails
 	default:
 		render := runRender(t, row)
-		if !tt.AdapterBuilt() && !beforeTheSource(input, render) {
-			return nil, false
-		}
 		for _, native := range []bool{true, false} {
 			if o := runBoth(input, runDoc(row), render, native); o.fail != nil {
 				fails = append(fails, o.fail)
 			}
 		}
-		return fails, true
+		return fails
 	}
 	if f != nil {
 		fails = append(fails, f)
 	}
-	return fails, true
+	return fails
 }
 
 // placeholder is a template's `{name}`; finalPlaceholder one that ends it,
@@ -438,18 +386,13 @@ func TestTheRaisedMessagesMatchTheDocument(t *testing.T) {
 	met := map[string]bool{}
 	// The codes each finer code is raised with: one, wherever it is raised.
 	raisedAs := map[string]map[Code]bool{}
-	failures, skipped := 0, 0
+	failures := 0
 	for _, spec := range specs {
 		for _, row := range spec.Rows {
 			if !support.IsErrorExpect(row.Col(1)) {
 				continue
 			}
-			fails, ran := rowFailures(t, spec.Name, row)
-			if !ran {
-				skipped++
-				continue
-			}
-			for _, f := range fails {
+			for _, f := range rowFailures(t, spec.Name, row) {
 				switch f.Code {
 				case CodeDSLParseError, CodeDSLTypeError, CodeStreamReused, CodeStreamabilityUnknown:
 				default:
@@ -505,10 +448,6 @@ func TestTheRaisedMessagesMatchTheDocument(t *testing.T) {
 		if _, ok := hints[code].(string); !ok {
 			t.Errorf("options.hint.%s is not declared", code)
 		}
-	}
-	if skipped > 0 {
-		t.Logf("%d run rows read their document, which this build cannot (build with -tags tabnas_nodecell); every line met is left to a build that can", skipped)
-		return
 	}
 	codes := make([]string, 0, len(declared))
 	for code := range declared {
@@ -644,15 +583,10 @@ func transduceDifferential(t testing.TB, grammar *translate.Format, doc, written
 	if f != nil {
 		return nil
 	}
-	// The output read back incrementally streams a repeated member twice;
-	// a build without the incremental adapter reads it whole, so a
-	// repeated member is kept once on both sides and compared so.
-	mode := tt.MaterializeMode()
-	if tt.Incremental("json") {
-		mode = tt.IncrementalMode(tt.Prune{})
-	}
+	// The output read back through JSON's part streams a repeated member
+	// twice, which the collection refuses.
 	c := &collect{builder: tt.NewDatumBuilder(math.MaxInt, "max_capture_bytes", tt.Reject)}
-	if _, f := tt.NewParserSource(tabnasjson.Make(), written).Grammar("json").Mode(mode).Run(c); f != nil {
+	if f := jsonInto(written, tt.DefaultLimits(), tt.NewMetrics(), c); f != nil {
 		if f.Code == tt.CodeDuplicateMember {
 			return nil
 		}

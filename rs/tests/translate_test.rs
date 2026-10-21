@@ -2169,8 +2169,8 @@ fn a_zon_integer_no_double_holds_is_the_big_object() {
     );
 }
 
-/// The metrics a run is given are its own, whether the incremental attempt
-/// wrote the output or one it gave up was read again whole.
+/// The metrics a run is given are its own, whether the transducer part's
+/// attempt wrote the output or one it gave up was read again whole.
 #[test]
 fn a_runs_metrics_are_those_of_the_attempt_that_wrote_the_output() {
     let json = format("json");

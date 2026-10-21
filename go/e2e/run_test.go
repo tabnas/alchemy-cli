@@ -31,15 +31,14 @@ import (
 	tabnasyaml "github.com/tabnas/yaml/go"
 )
 
-// hostRun is what a host does: read text with the json grammar,
-// incrementally (readRun: through the walk in a build without the
-// adapter), pruned under the program's row selector when it has one, push
-// the events into the program's sink, and mark a failure as leaving
-// partial output when OutputBytes says bytes reached the writer.
+// hostRun is what a host does: read text as `alchemy run` reads its input
+// (driveRun), push the events into the program's sink, and mark a failure
+// as leaving partial output when OutputBytes says bytes reached the
+// writer.
 func hostRun(t testing.TB, program *Program, text string, render Renderer, limits tt.Limits) (string, *Fail) {
 	t.Helper()
 	metrics := tt.NewMetrics()
-	out, f := readRun(t, program, text, render, limits, metrics)
+	out, f := driveRun(program, text, render, limits, metrics)
 	if f != nil && metrics.OutputBytes.Load() > 0 && !f.CommittedOutput {
 		f.Committed()
 	}
@@ -120,7 +119,6 @@ func TestNoMatchingRowsPrintsTheHeaderOnly(t *testing.T) {
 // exported; with enough rows to pass the writer's budget, the failure says
 // the output is partial, and what was committed is whole records.
 func TestInvalidTrailingInputFailsAfterRowsWereExported(t *testing.T) {
-	requireIncremental(t)
 	whole := recordsJSON(2000)
 	doc := whole + " x"
 	for _, program := range both(t) {
@@ -599,7 +597,6 @@ func cutArray(n int) string {
 // until its end, so a run that fails inside one leaves the values before
 // it whole.
 func TestAFailedJSONRunLeavesWholeValues(t *testing.T) {
-	requireIncremental(t)
 	program := mustCompile(t, "def export [input] (json input)", "export.alc")
 	f, out := hostErr(t, program, cutArray(4000), tt.DefaultLimits())
 	if f.Code != CodeInputInvalid || !f.CommittedOutput {
@@ -623,7 +620,6 @@ func TestAFailedJSONRunLeavesWholeValues(t *testing.T) {
 // holds a record until its end, so a run that fails inside one leaves the
 // records before it whole, natively and interpreted.
 func TestAFailedScanEmitRunLeavesWholeRecords(t *testing.T) {
-	requireIncremental(t)
 	source := `def step [s event]
   match event
     case array-start (transition (push :array s) [])
@@ -674,7 +670,6 @@ def export [input]
 // longer than the writer's budget, so without the marks its last fragment
 // is still buffered when the failure drops the buffer.
 func TestAFailedConcatMapRunThroughReplaceTextLeavesWholeItems(t *testing.T) {
-	requireIncremental(t)
 	source := `def line [x]
   concat (get "name" x) "\n"
 

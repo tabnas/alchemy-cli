@@ -12,32 +12,27 @@
 // route (the source's lift, the root adapters, the embedding, the inferred
 // table, the render), compiles the composition with transduce's routers
 // and render's renderers, and runs it over the input read with the source
-// format's grammar: incrementally where transduce's differential suite has
-// verified that grammar (`capability.incremental`), so that a number keeps
-// the lexeme the document spelled it with, and materialized otherwise,
-// when a path selects a value below the root, and for a document whose
-// value the grammar builds otherwise than its events showed (a YAML stream
-// of several documents, a merge key, a repeated member), which the
-// incremental source refuses part way: the grammar's own value is the
-// document, so it is read again whole. Where a package's parser builds a
-// value that is not yet the tree its parts declare, and the package's API
-// reads a document as that tree (expr's simplified form, proto's
-// descriptor, and the grammar spec a grammar notation's document compiles
-// to), that tree is the document, read whole. A package that ships a
-// transducer part (its manifest's `translate.transduce`, the alchemy file
-// whose entry makes the format's JSON events of the parser's rule passes)
-// is read through it instead: the route is composed over the transducer
-// (`composeParsed`), and the input's rule passes stream through transduce's
-// `ParserEventSource` into the program, whatever the grammar, with nothing
-// held but what the part keeps; where the part's events are not what the
-// grammar's value holds (a repeated member, which it streams twice and
-// `tree-contract` refuses), the document is read again whole, as above.
-// Nothing here knows a format by its name: a format is what its manifest
-// says, and a package whose manifest names no parts this host can take is
-// not a format here.
+// format's grammar. A package that ships a transducer part (its manifest's
+// `translate.transduce`, the alchemy file whose entry makes the format's
+// JSON events of the parser's rule passes) is read through it: the route
+// is composed over the transducer (`composeParsed`), and the input's rule
+// passes stream through transduce's `ParserEventSource` into the program,
+// whatever the grammar, with nothing held but what the part keeps. Any
+// other format is parsed whole and its value walked, and so is a document
+// when a path selects a value below the root, and one whose events are not
+// what the grammar's value holds, which the part refuses part way (a YAML
+// stream of several documents, a merge key, a repeated member, which a
+// part streams twice and `tree-contract` refuses): the grammar's own value
+// is the document, so it is read again whole. Where a package's parser
+// builds a value that is not yet the tree its parts declare, and the
+// package's API reads a document as that tree (expr's simplified form,
+// proto's descriptor, and the grammar spec a grammar notation's document
+// compiles to), that tree is the document, read whole. Nothing here knows
+// a format by its name: a format is what its manifest says, and a package
+// whose manifest names no parts this host can take is not a format here.
 
 import { abnfCompile, toJsonic, toPureSpec, translate as abnfParts } from '@tabnas/abnf'
-import { Program, compile as compileProgram, isFail, translate } from '@tabnas/alchemy'
+import { Program, compile as compileProgram, compileSources, isFail, translate } from '@tabnas/alchemy'
 import type { CompileOptions } from '@tabnas/alchemy'
 import { C, translate as cParts } from '@tabnas/c'
 import { Chess, translate as chessParts } from '@tabnas/chess'
@@ -71,10 +66,7 @@ import {
   Metrics,
   ParserEventSource,
   ParserSource,
-  Prune,
-  SourceMode,
   TreeContract,
-  capability,
   engineFailure,
   getPath,
   routers,
@@ -124,16 +116,15 @@ type Reading =
 // ParserSource has, which TreeSource has too.
 interface DocumentSource {
   grammar(name: string): DocumentSource
-  mode(mode: SourceMode): DocumentSource
   limits(limits: Limits): DocumentSource
   metrics(metrics: Metrics): DocumentSource
   run(sink: Sink): Flow
 }
 
-// The tree a package's API reads a document as, read whole, whatever the
-// mode, and walked as the ParserSource walks a parser's value, under the
-// same limits and counts; a failure to read it is reported as the
-// ParserSource reports an engine error.
+// The tree a package's API reads a document as, read whole and walked as
+// the ParserSource walks a parser's value, under the same limits and
+// counts; a failure to read it is reported as the ParserSource reports an
+// engine error.
 class TreeSource implements DocumentSource {
   private sourceLimits: Limits = Limits.default()
   private sourceMetrics: Metrics = new Metrics()
@@ -141,10 +132,6 @@ class TreeSource implements DocumentSource {
   constructor(private readonly read: () => unknown) {}
 
   grammar(_name: string): this {
-    return this
-  }
-
-  mode(_mode: SourceMode): this {
     return this
   }
 
@@ -190,11 +177,6 @@ class CheckedSource implements DocumentSource {
     return this
   }
 
-  mode(mode: SourceMode): this {
-    this.source = this.source.mode(mode)
-    return this
-  }
-
   limits(limits: Limits): this {
     this.source = this.source.limits(limits)
     return this
@@ -222,6 +204,10 @@ class CheckedSource implements DocumentSource {
 // rule passes, through which `translate` reads the format's documents),
 // where it ships one.
 export class Format {
+  // The transducer part compiled on its own, once asked for; null where
+  // the package ships none.
+  private compiled?: Program | null
+
   constructor(
     readonly part: translate.Part,
     private readonly reading: Reading,
@@ -269,20 +255,45 @@ export class Format {
     return new CheckedSource(() => reading.check(text), new ParserSource(reading.parser(), text))
   }
 
+  // The transducer part compiled on its own, over the parser's rule
+  // passes, its entry the export: the stage a host puts in front of a
+  // program of its own, as `run` does in front of a program over a JSON
+  // document, and the one `read` reads through. Compiled once, when first
+  // asked for; undefined where the package ships no part.
+  transducerProgram(): Program | undefined {
+    if (undefined === this.compiled) {
+      const alc = this.transducer
+      this.compiled =
+        undefined === alc
+          ? null
+          : compileSources(
+              [
+                { file: alc.file, text: alc.text },
+                { file: 'main', text: `def export [input] (${alc.entry} input)` },
+              ],
+              { ...OPTIONS, input: 'ParserEvents/1' },
+            )
+    }
+    return this.compiled ?? undefined
+  }
+
   // A document read whole with this format's grammar, as a value: its
-  // events as `translate` reads them, incrementally where the grammar is
-  // verified (so a number keeps the lexeme the document spelled it with),
-  // collected, or the grammar's value where the incremental source cannot
-  // follow it. A repeated member keeps its last value.
+  // events as `translate` reads them, through the transducer part its
+  // package ships (so that a number keeps the lexeme the document spelled
+  // it with), collected; or the grammar's own value, walked, where the
+  // package ships no part and where the part's events are not what the
+  // grammar's value holds (a repeated member, which the part streams
+  // twice). A repeated member keeps its last value.
   read(input: string, limits: Limits): Datum {
-    if (capability.incremental(this.id)) {
+    const part = this.transducerProgram()
+    if (undefined !== part) {
       try {
-        return read(this, input, SourceMode.incremental(Prune.never()), limits)
+        return readThrough(this, part, input, limits)
       } catch (err) {
         if (!unfollowed(err)) throw err
       }
     }
-    return read(this, input, SourceMode.materialize(), limits)
+    return read(this, input, limits)
   }
 }
 
@@ -539,12 +550,11 @@ export function compile(request: Request): Compiled {
   return { composition, program, parsed: { composition: over, program: over.compile(undefined, OPTIONS) } }
 }
 
-// Whether the incremental source refused a document because the grammar's
-// value is not what its events showed (a root wrapped or replaced after it
-// streamed, a map rewritten, a repeated member that the grammar keeps
-// once), or a transducer part's route refused a repeated member, which the
+// Whether a transducer part's route refused a document because the
+// grammar's value is not what the passes showed: the part's own refusal
+// (`fail :unstreamable`), a second root, or a repeated member, which the
 // part streams twice and the composition's policy refuses, since the
-// grammar's value may keep the last or merge the two: the grammar's own
+// grammar's value may keep the last or merge the two. The grammar's own
 // value is the document, so it is read again whole.
 function unfollowed(err: unknown): boolean {
   return isFail(err) && ('STREAMABILITY_UNKNOWN' === err.code || 'DUPLICATE_MEMBER' === err.code)
@@ -578,10 +588,10 @@ export function runCompiled(
   metrics: Metrics,
 ): void {
   const { composition, program, parsed } = compiled
-  // What a run writes is held until the run has succeeded, so that a run
-  // the incremental source gives up part way is run again from the start
+  // What a run writes is held until the run has succeeded, so that a run a
+  // transducer part gives up part way is run again whole from the start
   // rather than written twice.
-  const attempt = (mode: SourceMode, metrics: Metrics): Buffer => {
+  const attempt = (metrics: Metrics): Buffer => {
     const held = new BytesWriter()
     const inner = program.sink(held, undefined, request.limits, metrics)
     // The source's events reach a tree's render as the source made them,
@@ -590,15 +600,9 @@ export function runCompiled(
     const sink: Sink = 'tree' === composition.front ? new TreeContract(inner) : inner
     const path = request.path
     if (undefined === path) {
-      request.from
-        .reader(input)
-        .grammar(request.from.id)
-        .mode(mode)
-        .limits(request.limits)
-        .metrics(metrics)
-        .run(sink)
+      request.from.reader(input).grammar(request.from.id).limits(request.limits).metrics(metrics).run(sink)
     } else {
-      const value = read(request.from, input, SourceMode.materialize(), request.limits)
+      const value = read(request.from, input, request.limits)
       const selected = getPath(value, path)
       if (undefined === selected) {
         throw Fail.input(`the path ${pathText(path)} names nothing in the document`)
@@ -612,8 +616,7 @@ export function runCompiled(
   // program, streamed whatever the grammar. A document whose events are
   // not what the grammar's value holds (a repeated member, streamed twice,
   // which the composition's tree-contract refuses) is read again whole
-  // below, as the incremental source's is: the grammar's own value is the
-  // document.
+  // below: the grammar's own value is the document.
   let transduced: Buffer | undefined
   if (undefined !== parsed) {
     const own = new Metrics()
@@ -624,27 +627,7 @@ export function runCompiled(
       if (!unfollowed(err)) throw err
     }
   }
-  const incremental = undefined === request.path && capability.incremental(request.from.id)
-  let bytes: Buffer
-  if (undefined !== transduced) {
-    bytes = transduced
-  } else if (incremental) {
-    const selector = program.rowSelector()
-    const mode = SourceMode.incremental(undefined === selector ? Prune.never() : Prune.under(selector))
-    // The incremental attempt counts into metrics of its own, which the
-    // caller's take on once it has succeeded: a run given up part way
-    // counts nothing.
-    const own = new Metrics()
-    try {
-      bytes = attempt(mode, own)
-      absorb(metrics, own)
-    } catch (err) {
-      if (!unfollowed(err)) throw err
-      bytes = attempt(SourceMode.materialize(), metrics)
-    }
-  } else {
-    bytes = attempt(SourceMode.materialize(), metrics)
-  }
+  const bytes = undefined !== transduced ? transduced : attempt(metrics)
   let written = 0
   try {
     let rest: Uint8Array = bytes
@@ -677,24 +660,41 @@ function absorb(into: Metrics, from: Metrics): void {
   into.retained_bytes_high = Math.max(into.retained_bytes_high, from.retained_bytes_high)
 }
 
-// The events of a document, collected into a value.
+// The events of a document, collected into a value, which keeps the last
+// of a repeated member.
 class Collect implements Sink {
-  constructor(readonly builder: DatumBuilder) {}
+  private readonly builder = new DatumBuilder(Number.POSITIVE_INFINITY, 'max_capture_bytes', 'last_wins')
 
   event(ev: JsonEvent): 'continue' {
     if ('end' !== ev.type) this.builder.event(ev)
     return 'continue'
   }
+
+  // The value collected, once the document has ended.
+  take(): Datum {
+    const value = this.builder.take()
+    if (undefined === value) throw Fail.input('the document holds no value')
+    return value
+  }
 }
 
 // A document read whole with a format's grammar, as a value. A repeated
 // member keeps its last value, as the grammar's own value does.
-function read(format: Format, input: string, mode: SourceMode, limits: Limits): Datum {
-  const collect = new Collect(new DatumBuilder(Number.POSITIVE_INFINITY, 'max_capture_bytes', 'last_wins'))
-  format.reader(input).grammar(format.id).mode(mode).limits(limits).run(collect)
-  const value = collect.builder.take()
-  if (undefined === value) throw Fail.input('the document holds no value')
-  return value
+function read(format: Format, input: string, limits: Limits): Datum {
+  const collect = new Collect()
+  format.reader(input).grammar(format.id).limits(limits).run(collect)
+  return collect.take()
+}
+
+// A document read through a format's transducer part, as a value: the
+// part's events over the parser's rule passes, held to a tree's contract
+// (one root, each key once in an object) and collected.
+function readThrough(format: Format, part: Program, input: string, limits: Limits): Datum {
+  const collect = new Collect()
+  const metrics = new Metrics()
+  const head = part.parserSinkInto(new TreeContract(collect), limits, metrics)
+  format.passes(input).limits(limits).metrics(metrics).run(head)
+  return collect.take()
 }
 
 // The largest index a path holds: Rust's `usize::MAX`, which a double

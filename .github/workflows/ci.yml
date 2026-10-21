@@ -30,11 +30,12 @@ jobs:
     with:
       deps: "parser debug json jsonic jsonc csv abnf ebnf gbnf alchemy transduce render"
 
-  # The shared workflow runs `go test ./...` with no build tags. `alchemy
-  # run` reads its document through transduce's incremental source, which
-  # that module builds only under the `tabnas_nodecell` build tag; without
-  # it the run tests skip, and so do go/e2e's tests that read a document.
-  # This job runs the suite once more with the tag.
+  # The shared workflow runs `go test ./...` with no build tags. transduce
+  # builds its rule-event adapter only under the `tabnas_nodecell` tag,
+  # which earlier releases told Go users to install the command with.
+  # Neither `alchemy run` nor `translate` reads through the adapter now,
+  # and this job runs the suite once more with the tag, to hold that such
+  # a build reads every document as one without it.
   go-nodecell:
     strategy:
       fail-fast: false

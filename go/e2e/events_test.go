@@ -138,9 +138,6 @@ def export [input]
 // empty array, strings that need escapes, and a scalar root, byte for byte
 // as the block form has them.
 func TestEventsRenderANestedDocumentAsAYamlLikeBlock(t *testing.T) {
-	// The documents spell numbers by lexemes (1.5e3, -0) and repeat a
-	// member, which only the incremental source keeps.
-	requireIncremental(t)
 	program := mustCompile(t, yamlLike, "render.alc")
 	if program.Output() != OutputText {
 		t.Errorf("%s", program.Output())
@@ -304,9 +301,6 @@ func TestExplainReportsAnEventsPipeline(t *testing.T) {
 	if jsonMember(t, kj, "confidence") != `"proven"` || jsonMember(t, kj, "retention") != "[]" {
 		t.Errorf("%s", EncodeJSON(kj))
 	}
-	// The document repeats a member, which only the incremental source
-	// keeps.
-	requireIncremental(t)
 	if got := render(t, keys, `{"a":1,"b":{"c":[2,{"d":3}]},"a":4}`); got != "\"a\"\n\"b\"\n\"c\"\n\"d\"\n\"a\"\n" {
 		t.Errorf("%q", got)
 	}
@@ -320,8 +314,6 @@ func TestExplainReportsAnEventsPipeline(t *testing.T) {
 // stream of unknown items through; and a stream of values is refused
 // before anything runs.
 func TestEventsAProgramBuildsFeedAnyTakerOfJSONEvents(t *testing.T) {
-	// The documents spell numbers by lexemes (1.50, -0).
-	requireIncremental(t)
 	back := mustCompile(t, "def export [input] (json (events input))", "back.alc")
 	if back.Output() != OutputText {
 		t.Errorf("%s", back.Output())

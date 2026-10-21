@@ -16,6 +16,7 @@ import (
 	"strings"
 	"testing"
 
+	translate "github.com/tabnas/alchemy-cli/go/translate"
 	. "github.com/tabnas/alchemy/go"
 	tabnasjson "github.com/tabnas/json/go"
 	tabnas "github.com/tabnas/parser/go"
@@ -149,27 +150,33 @@ func replayRun(t testing.TB, program *Program, doc string, render Renderer, limi
 	return replayEvents(program, mustEvents(t, doc), render, limits, metrics)
 }
 
-// requireIncremental skips a test that reads its document incrementally,
-// as `alchemy run` does, in a build without the incremental adapter.
-func requireIncremental(t testing.TB) {
-	t.Helper()
-	if !tt.AdapterBuilt() {
-		t.Skip(needsIncremental)
+// jsonInto pushes the events of the JSON document doc into sink, as
+// `alchemy run` reads its input (rs/tests/common/mod.rs's json_into):
+// JSON's own transducer part over the parser's rule passes, the engine's
+// arrays emptied behind it. It needs no adapter of transduce's, so it reads
+// in every build.
+func jsonInto(doc string, limits tt.Limits, metrics *tt.Metrics, sink tt.Sink) *Fail {
+	json := translate.Named("json")
+	if json == nil {
+		panic("the command reads JSON")
 	}
-}
-
-// readRun reads doc into program's sink the way the Rust test it is
-// ported from does: incrementally, as `alchemy run` does, when this build
-// has the adapter; through the materialized walk otherwise. The documents
-// these tests read spell every number in its shortest form and repeat no
-// member, so the walk's events are the incremental source's; a test whose
-// document does not uses driveRun and requireIncremental.
-func readRun(t testing.TB, program *Program, doc string, render Renderer, limits tt.Limits, metrics *tt.Metrics) (string, *Fail) {
-	t.Helper()
-	if tt.AdapterBuilt() {
-		return driveRun(program, doc, render, limits, metrics)
+	part, f := json.TransducerProgram()
+	if f != nil {
+		return f
 	}
-	return replayRun(t, program, doc, render, limits, metrics)
+	if part == nil {
+		panic("the JSON grammar ships a transducer part")
+	}
+	head, f := part.ParserSinkInto(sink, limits, metrics)
+	if f != nil {
+		return f
+	}
+	source, f := json.Passes(doc)
+	if f != nil {
+		return f
+	}
+	_, f = source.Grammar(json.ID()).Prune().Limits(limits).Metrics(metrics).Run(head)
+	return f
 }
 
 // runtimeOf is a runtime over src, named t.alc, on the tests' stages

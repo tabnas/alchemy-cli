@@ -31,12 +31,13 @@
 //! stack's end in a debug build as in a release one. `--max-output-bytes`
 //! sets the writer's limit; the others are transduce's defaults.
 //!
-//! `run` parses `INPUT` with the tabnas JSON grammar through transduce's
-//! `ParserSource`, incrementally, pruning the parsed tree under the
-//! program's row selector when the plan knows one; other input formats
-//! are aless's business. The output goes through a coalescing writer to
-//! standard output and is flushed once, at the end; a failure found after
-//! bytes were written says so.
+//! `run` reads `INPUT` as JSON through JSON's own transducer part, the
+//! one `translate` reads a JSON document through: the part makes the
+//! document's events of the parser's rule passes, and the engine's arrays
+//! are emptied behind them. Other input formats are aless's business. The
+//! output goes through a coalescing writer to standard output and is
+//! flushed once, at the end; a failure found after bytes were written
+//! says so.
 //!
 //! `translate` reads `INPUT` with the grammar of `--from` and writes it in
 //! `--to`, through the translation parts each format's package exports,
@@ -59,9 +60,7 @@ use std::sync::Arc;
 use tabnas_alchemy::translate::Options;
 use tabnas_alchemy::{canonical, format, parse_file, Input, Program, Renderer};
 use tabnas_alchemy_cli::translate::{self, Format};
-use tabnas_transduce::{
-    Code, Fail, Limits, Metrics, ParserSink, ParserSource, Prune, Sink, SourceMode,
-};
+use tabnas_transduce::{Code, Fail, Limits, Metrics, ParserSink, Sink};
 
 /// This crate's version, read from `rs/Cargo.toml`. It MUST equal
 /// `ts/package.json` "version": admin/publish.sh rewrites both, and
@@ -245,7 +244,7 @@ fn run(args: &[String]) -> Result<String, Exit> {
                         metrics.clone(),
                     )?;
                     let input = read(&options.input)?;
-                    execute(&program, sink, metrics, &input, limits)?;
+                    execute(sink, metrics, &input, limits)?;
                 }
                 Some(grammar) => {
                     let sink = program.parser_sink(
@@ -466,25 +465,31 @@ impl RunOptions {
 }
 
 /// Run the program over one JSON document, into the sink that writes its
-/// output.
+/// output. The document's events come from JSON's own transducer part
+/// over the parser's rule passes, the engine's arrays emptied behind
+/// them.
 fn execute(
-    program: &Program,
     sink: Box<dyn Sink + Send>,
     metrics: Arc<Metrics>,
     input: &str,
     limits: Limits,
 ) -> Result<(), Fail> {
-    let prune = match program.row_selector() {
-        Some(selector) => Prune::Under(selector.clone()),
-        None => Prune::Never,
-    };
-    let (outcome, _) = ParserSource::new(tabnas_json::make(), input)
-        .grammar("json")
-        .mode(SourceMode::Incremental { prune })
-        .limits(limits)
-        .metrics(metrics.clone())
-        .run_owned(sink);
-    outcome
+    let json = translate::format("json")
+        .ok_or_else(|| Fail::input("no JSON grammar to read the input"))?;
+    let part = json
+        .transducer_program()?
+        .ok_or_else(|| Fail::input("the JSON grammar ships no transducer part"))?;
+    let head = part.parser_sink_into(sink, &limits, metrics.clone())?;
+    json.passes(input)
+        .and_then(|source| {
+            source
+                .grammar(json.id())
+                .prune()
+                .limits(limits)
+                .metrics(metrics.clone())
+                .run_boxed(head)
+                .0
+        })
         .map(|_| ())
         .map_err(|fail| committed(fail, &metrics))
 }

@@ -13,11 +13,9 @@ mod common;
 
 use std::sync::{Arc, Mutex};
 
+use common::{compile, compile_sources, json_into};
 use tabnas_alchemy::shared::{Code, Fail, Limits, Metrics};
 use tabnas_alchemy::{Program, Source};
-use tabnas_transduce::{ParserSource, Prune, SourceMode};
-
-use common::{compile, compile_sources};
 
 /// A render part: definitions prefixed by the format's name, no `export`.
 const PART: &str = "; A part of the lines format: each item quoted, one to a line.
@@ -62,9 +60,8 @@ impl std::io::Write for Shared {
     }
 }
 
-/// Parse `text` with the json grammar incrementally, pruned under the
-/// program's row selector when it has one, and push its events into the
-/// program's sink.
+/// Read `text` as `alchemy run` reads its input and push its events into
+/// the program's sink.
 fn drive(program: &Program, text: &str) -> (Result<(), Fail>, String) {
     let limits = Limits::default();
     let metrics = Metrics::new();
@@ -73,16 +70,7 @@ fn drive(program: &Program, text: &str) -> (Result<(), Fail>, String) {
         Ok(sink) => sink,
         Err(f) => return (Err(f), String::new()),
     };
-    let prune = match program.row_selector() {
-        Some(selector) => Prune::Under(selector.clone()),
-        None => Prune::Never,
-    };
-    let (outcome, _) = ParserSource::new(tabnas_json::make(), text)
-        .grammar("json")
-        .mode(SourceMode::Incremental { prune })
-        .limits(limits)
-        .metrics(metrics)
-        .run_owned(sink);
+    let outcome = json_into(text, &limits, metrics, sink);
     let bytes = buffer.0.lock().unwrap().clone();
     (
         outcome.map(|_| ()),

@@ -22,11 +22,10 @@ use tabnas_alchemy::{desugar, parse, Input, Output, Program, Renderer};
 use tabnas_alchemy_cli::translate::{self, Format};
 use tabnas_support::{is_error_expect, load_spec_dir, Failure, Row, Runner, SpecOptions};
 use tabnas_transduce::{
-    walk_datum, Datum, DatumBuilder, Duplicates, Flow, JsonEvent, OwnedJsonEvent, ParserSource,
-    Prune, Sink, SourceMode,
+    walk_datum, Datum, DatumBuilder, Duplicates, Flow, JsonEvent, OwnedJsonEvent, Sink,
 };
 
-use common::{compile, compile_with, spec_dir, text_value};
+use common::{compile, compile_with, json_into, spec_dir, text_value};
 
 /// A program run over a JSON document: the bytes it writes, or the
 /// failure. See alchemy's `test/AGENTS.md` for the columns.
@@ -74,9 +73,8 @@ fn row_render(row: &Row) -> Option<Renderer> {
 }
 
 /// Compile `program` and run it over `doc`, as `alchemy run` does: on a
-/// thread of `STACK_BYTES`, the document read by the JSON grammar
-/// incrementally, pruned under the program's row selector when it has
-/// one, with the default limits.
+/// thread of `STACK_BYTES`, the document read through JSON's transducer
+/// part, with the default limits.
 fn run_both(
     program: &str,
     doc: &str,
@@ -118,17 +116,7 @@ fn drive(program: &Program, doc: &str, render: Option<Renderer>) -> Result<Strin
     let metrics = Metrics::new();
     let buffer = Shared::default();
     let sink = program.sink(Box::new(buffer.clone()), render, &limits, metrics.clone())?;
-    let prune = match program.row_selector() {
-        Some(selector) => Prune::Under(selector.clone()),
-        None => Prune::Never,
-    };
-    let (outcome, _) = ParserSource::new(tabnas_json::make(), doc)
-        .grammar("json")
-        .mode(SourceMode::Incremental { prune })
-        .limits(limits)
-        .metrics(metrics)
-        .run_owned(sink);
-    outcome?;
+    json_into(doc, &limits, metrics, sink)?;
     let bytes = buffer.0.lock().unwrap().clone();
     Ok(String::from_utf8(bytes).expect("the output is UTF-8"))
 }
@@ -505,13 +493,14 @@ fn drive_passes(
 }
 
 /// The events of a document, collected into a value under a duplicate
-/// policy.
-struct Collect(DatumBuilder);
+/// policy, where the run that fed them leaves it.
+#[derive(Clone)]
+struct Collect(Arc<Mutex<DatumBuilder>>);
 
 impl Sink for Collect {
     fn event(&mut self, ev: JsonEvent<'_>) -> Result<Flow, Fail> {
         if !matches!(ev, JsonEvent::End) {
-            self.0.event(ev)?;
+            self.0.lock().unwrap().event(ev)?;
         }
         Ok(Flow::Continue)
     }
@@ -527,17 +516,17 @@ fn differential(grammar: &Format, doc: &str, written: &str) -> Result<(), String
     let Ok(value) = grammar.read(doc, &Limits::default()) else {
         return Ok(());
     };
-    let collect = Collect(DatumBuilder::new(
+    let collect = Collect(Arc::new(Mutex::new(DatumBuilder::new(
         usize::MAX,
         "max_capture_bytes",
         Duplicates::Reject,
-    ));
-    let (outcome, mut collect) = ParserSource::new(tabnas_json::make(), written)
-        .grammar("json")
-        .mode(SourceMode::Incremental {
-            prune: Prune::Never,
-        })
-        .run_owned(collect);
+    ))));
+    let outcome = json_into(
+        written,
+        &Limits::default(),
+        Metrics::new(),
+        Box::new(collect.clone()),
+    );
     let read = match outcome {
         Err(fail) if fail.code == Code::DuplicateMember => return Ok(()),
         Err(fail) => {
@@ -547,6 +536,8 @@ fn differential(grammar: &Format, doc: &str, written: &str) -> Result<(), String
         }
         Ok(_) => collect
             .0
+            .lock()
+            .unwrap()
             .take()
             .ok_or_else(|| format!("the output {written:?} holds no value"))?,
     };
