@@ -1649,7 +1649,7 @@ describe('translate', () => {
     assert.strictEqual(translateText(zon, json, translateText(zon, zon, text)).trimEnd(), want)
   })
 
-  // The metrics a run is given are its own, whether the incremental
+  // The metrics a run is given are its own, whether the transducer part's
   // attempt wrote the output or one it gave up was read again whole.
   it("a run's metrics are those of the attempt that wrote the output", () => {
     const json = named('json')

@@ -81,13 +81,14 @@ func mustTranslate(t *testing.T, from *Format, to, path string, program *alchemy
 
 // A format whose module ships a transducer part is read through it (json,
 // through tabnas/json's), its rule passes streamed into the composition
-// over the part, and one without is read as before: the two routes write
-// the same bytes for the same document, a number's lexeme kept, into a
-// tree target, a records target, and with a program over the input; a
+// over the part, and one without is read whole, its value walked: the two
+// routes write the same bytes for the same document, into a tree target, a
+// records target, and with a program over the input, but for a number's
+// lexeme, which the part keeps and the walk spells as the engine does; a
 // marking part given in the module's place shows the route ran. A path
 // keeps the document's value, the one route a path has. A repeated member,
 // which the part streams twice and the composition's tree-contract
-// refuses, is read again whole, as the incremental source's is.
+// refuses, is read again whole, as a format without a part is read.
 func TestATransducerPartReadsTheFormatAndTheWalkStandsInWhereItRefuses(t *testing.T) {
 	plain := plainJSON(t)
 	through := Named("json")
@@ -96,27 +97,28 @@ func TestATransducerPartReadsTheFormatAndTheWalkStandsInWhereItRefuses(t *testin
 		t.Fatalf("plain %v, through %v", plain.Transducer, through.Transducer)
 	}
 	tree := `{"a":[1,2.50,"x",{"b":null}],"c":{},"d":[],"e":1e21,"f":true}`
+	// The same document, its numbers spelled as the engine spells them.
+	spelled := strings.ReplaceAll(tree, "2.50", "2.5")
+	if got := mustTranslate(t, through, "json", "", nil, tree); got != tree+"\n" {
+		t.Errorf("the part keeps a number's lexeme: %q", got)
+	}
+	if got := mustTranslate(t, plain, "json", "", nil, tree); got != spelled+"\n" {
+		t.Errorf("the walk spells a number as the engine does: %q", got)
+	}
 	records := `[{"a":1,"b":"x"},{"a":2,"b":"y"}]`
 	echo := &alchemy.Source{File: "echo.alc", Text: "def export [input] (events input)\n"}
 	for _, c := range []struct {
 		to, doc string
 		program *alchemy.Source
 	}{
-		{"json", tree, nil},
-		{"yaml", tree, nil},
+		{"json", spelled, nil},
+		{"yaml", spelled, nil},
 		{"csv", records, nil},
-		{"json", tree, echo},
+		{"json", spelled, echo},
 		{"csv", records, echo},
 	} {
 		expected := mustTranslate(t, plain, c.to, "", c.program, c.doc)
 		got := mustTranslate(t, through, c.to, "", c.program, c.doc)
-		if !tt.AdapterBuilt() {
-			// Without the incremental adapter the plain route reads the
-			// document whole and writes a number by its value, where the
-			// transducer's route keeps the document's lexeme: 2.5 for
-			// 2.50, the one difference between the two.
-			got = strings.ReplaceAll(got, "2.50", "2.5")
-		}
 		if got != expected {
 			t.Errorf("%s from %s: the transducer's route wrote %q, the plain one %q", c.to, c.doc, got, expected)
 		}

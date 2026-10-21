@@ -20,9 +20,9 @@ use tabnas_alchemy::shared::{
 };
 use tabnas_alchemy::{Output, Program, Renderer};
 use tabnas_render::{JsonRenderer, StringOut, WriteOut};
-use tabnas_transduce::{ParserSource, Prune, SourceMode};
+use tabnas_transduce::ParserSource;
 
-use common::compile;
+use common::{compile, json_into};
 
 /// The spec's worked example: aless's `tests/fixtures/records.json`,
 /// byte for byte (329 bytes; the metadata before the rows; Bob's members
@@ -71,10 +71,9 @@ impl std::io::Write for Shared {
     }
 }
 
-/// What a host does: parse `text` with the json grammar incrementally,
-/// pruned under the program's row selector when it has one, push the
-/// events into the program's sink, and mark a failure as leaving partial
-/// output when `output_bytes` says bytes reached the writer.
+/// What a host does: read `text` as `alchemy run` reads its input, push
+/// the events into the program's sink, and mark a failure as leaving
+/// partial output when `output_bytes` says bytes reached the writer.
 fn drive(
     program: &Program,
     text: &str,
@@ -87,16 +86,7 @@ fn drive(
         Ok(sink) => sink,
         Err(f) => return (Err(f), String::new()),
     };
-    let prune = match program.row_selector() {
-        Some(selector) => Prune::Under(selector.clone()),
-        None => Prune::Never,
-    };
-    let (outcome, _) = ParserSource::new(tabnas_json::make(), text)
-        .grammar("json")
-        .mode(SourceMode::Incremental { prune })
-        .limits(limits.clone())
-        .metrics(metrics.clone())
-        .run_owned(sink);
+    let outcome = json_into(text, limits, metrics.clone(), sink);
     let outcome = outcome.map(|_| ()).map_err(|f| {
         if Metrics::get(&metrics.output_bytes) > 0 && !f.committed_output {
             f.committed()

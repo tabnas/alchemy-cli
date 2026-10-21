@@ -217,8 +217,8 @@ func TestTranslateWritesADocumentInAnotherFormat(t *testing.T) {
 		{"json", "jsonl", `[{"a":1},2]`, "{\"a\":1}\n2\n"},
 		// Lossy: TOML has no null, and writes the root under the key.
 		{"json", "toml", `[1,null]`, "\"items\" = [ 1 ]\n"},
-		// The values the incremental source cannot follow, read again whole:
-		// a YAML stream of several documents, a repeated member.
+		// The values a transducer part cannot follow, read again whole: a
+		// YAML stream of several documents, a repeated member.
 		{"yaml", "json", "a: 1\n---\nb: 2\n", `[{"a":1},{"b":2}]` + "\n"},
 		{"json", "json", `{"a":1,"a":2}`, `{"a":2}` + "\n"},
 	} {

@@ -6,11 +6,10 @@ package main
 // (rs/tests/cli_test.rs): the five commands, standard input as -, the
 // statuses, and that nothing but the answer reaches standard output.
 //
-// The binary is built once, with the build tags this test binary has: the
-// incremental adapter (tabnas_nodecell) or not. Without it, run refuses
-// with STREAMABILITY_UNKNOWN before the document is read, so the cases
-// that run a document are skipped there, by name, and
-// TestRunRefusesWithoutTheIncrementalAdapter holds the refusal.
+// The binary is built once, with the build tags this test binary has
+// (tabnas_nodecell or none). run reads its document through JSON's
+// transducer part, which needs no adapter of transduce's, so every case
+// runs in either build, and TestRunReadsADocumentInEveryBuild holds that.
 
 import (
 	"bytes"
@@ -108,15 +107,6 @@ func tempFile(t *testing.T, name, content string) string {
 	return path
 }
 
-// needsRun skips a case that runs a document in a build without the
-// incremental adapter.
-func needsRun(t *testing.T) {
-	t.Helper()
-	if !tt.AdapterBuilt() {
-		t.Skip("runs a document incrementally, as alchemy run does, and this build has no incremental adapter (build with -tags tabnas_nodecell)")
-	}
-}
-
 // records is the spec's worked example: aless's
 // tests/fixtures/records.json.
 const records = `{"response":{"metadata":{"fields":[{"title":"Identifier","path":["id"]},{"title":"Full name","path":["person","name"]},{"title":"Balance","path":["account","balance"]}]},"payload":{"deep":{"records":[{"id":123,"person":{"name":"Alice"},"account":{"balance":50.25}},{"account":{"balance":72},"person":{"name":"Bob"},"id":456}]}}}}`
@@ -163,14 +153,10 @@ func TestADefinitionOverSelectedItemsChecksAndRuns(t *testing.T) {
 		if o := invoke(t, []string{"check", path}, nil); o.status != 0 {
 			t.Errorf("%s: %+v", c.name, o)
 		}
-		if !tt.AdapterBuilt() {
-			continue
-		}
 		if o := invoke(t, []string{"run", path, "-"}, text(c.input)); o.status != 0 || o.stdout != c.want {
 			t.Errorf("%s: %+v", c.name, o)
 		}
 	}
-	needsRun(t)
 }
 
 func TestCheckReportsAReaderFailureAsJSONOnStderrWithStatus2(t *testing.T) {
@@ -222,7 +208,6 @@ func TestExplainPrintsThePlanReport(t *testing.T) {
 }
 
 func TestRunPrintsTheWorkedExampleCsvBothWays(t *testing.T) {
-	needsRun(t)
 	programPath := tempFile(t, "export.alc", program)
 	input := tempFile(t, "records.json", records)
 	for _, c := range []struct {
@@ -241,7 +226,6 @@ func TestRunPrintsTheWorkedExampleCsvBothWays(t *testing.T) {
 }
 
 func TestRunRendersATableResultAsCsvOrJSON(t *testing.T) {
-	needsRun(t)
 	table := tempFile(t, "table.alc", strings.Replace(program, "    csv csv-options\n", "", 1))
 	if o := invoke(t, []string{"run", table, "-"}, text(records)); o.status != 0 || o.stdout != expectedCSV {
 		t.Errorf("%+v", o)
@@ -293,7 +277,6 @@ func TestRunStatusesFollowTheFailureCode(t *testing.T) {
 	if o := invoke(t, []string{"run", bad, "-"}, text("not json")); o.status != 2 || failJSON(t, o)["code"] != "DSL_TYPE_ERROR" {
 		t.Errorf("%+v", o)
 	}
-	needsRun(t)
 	programPath := tempFile(t, "export2.alc", program)
 	// Metadata after the rows: INPUT_ORDER_VIOLATION, status 1, no output.
 	reordered := `{"response":{"payload":{"deep":{"records":[{"id":1,"person":{"name":"a"},"account":{"balance":2}}]}},"metadata":{"fields":[{"title":"Identifier","path":["id"]}]}}}`
@@ -409,7 +392,6 @@ func TestAProgramInsideTheBoundRuns(t *testing.T) {
 			t.Errorf("%s: %+v", command, o)
 		}
 	}
-	needsRun(t)
 	if o := invoke(t, []string{"run", path, "-"}, text(`["a","b"]`)); o.status != 0 || o.stdout != "a,b" {
 		t.Errorf("%+v", o)
 	}
@@ -424,7 +406,6 @@ func TestSelfApplicationIsAFailureNotAnAbort(t *testing.T) {
 	if o.status != 2 || f["code"] != "STREAMABILITY_UNKNOWN" || !strings.HasPrefix(f["message"].(string), "recursion: ") {
 		t.Errorf("%d %v", o.status, f)
 	}
-	needsRun(t)
 	perItem := tempFile(t, "omega-item.alc", "def w [f] (f f)\ndef export [input]\n  pipe input\n    select (path each-index)\n    map (fn [x] (w w))\n    join \",\"\n")
 	o = invoke(t, []string{"run", perItem, "-"}, text("[1]"))
 	f = failJSON(t, o)
@@ -449,7 +430,6 @@ func TestCheckReportsAFailThePlanReaches(t *testing.T) {
 // program that happens to share a library file's name is still read as
 // its own text.
 func TestALibraryFailureNamesTheLibraryFile(t *testing.T) {
-	needsRun(t)
 	lib, _ := alchemy.StdlibSource("stdlib/table.alc")
 	row, col := 0, 0
 	for i, line := range strings.Split(lib, "\n") {
@@ -505,7 +485,6 @@ func TestRunTakesAnOutputLimit(t *testing.T) {
 	if o := invoke(t, []string{"run", "--max-output-bytes", "many", programPath, "-"}, text(records)); o.status != 2 || failJSON(t, o)["code"] != "INPUT_INVALID" {
 		t.Errorf("%+v", o)
 	}
-	needsRun(t)
 	o := invoke(t, []string{"run", "--max-output-bytes", "20", programPath, "-"}, text(records))
 	f := failJSON(t, o)
 	if limit, _ := f["limit"].(map[string]any); o.status != 5 || limit["name"] != "max_output_bytes" || len(o.stdout) > 20 {
@@ -516,27 +495,14 @@ func TestRunTakesAnOutputLimit(t *testing.T) {
 	}
 }
 
-// In a build without the incremental adapter, run refuses with the
-// source's STREAMABILITY_UNKNOWN, status 2, before the document is read
-// and writing nothing, rather than read it through the materialized walk,
-// which would not be the run the plan report promises (number lexemes
-// lost, a repeated member collapsed, the whole document held).
-func TestRunRefusesWithoutTheIncrementalAdapter(t *testing.T) {
-	if tt.AdapterBuilt() {
-		t.Skip("this build has the incremental adapter; the run cases above run instead")
-	}
+// run reads its document through JSON's transducer part in every build,
+// with the tabnas_nodecell tag or without it: a number keeps its lexeme,
+// and a repeated member streams as the document spells it, twice.
+func TestRunReadsADocumentInEveryBuild(t *testing.T) {
 	echo := tempFile(t, "echo.alc", "def export [input] (json input)\n")
-	o := invoke(t, []string{"run", echo, "-"}, text(`{"a":[1.50,1e2],"a":2}`))
-	f := failJSON(t, o)
-	if o.status != 2 || o.stdout != "" || f["code"] != "STREAMABILITY_UNKNOWN" || f["output"] != "none" || !strings.Contains(f["message"].(string), "tabnas_nodecell") {
-		t.Errorf("%d %q %v", o.status, o.stdout, f)
-	}
-	// Before the document is read: an input that cannot be read is never
-	// reached, so the refusal is still the source's, not `cannot read`.
-	o = invoke(t, []string{"run", echo, "/nonexistent/input.json"}, nil)
-	f = failJSON(t, o)
-	if o.status != 2 || o.stdout != "" || f["code"] != "STREAMABILITY_UNKNOWN" || !strings.Contains(f["message"].(string), "tabnas_nodecell") {
-		t.Errorf("%d %q %v", o.status, o.stdout, f)
+	doc := `{"a":[1.50,1e2],"a":2}`
+	if o := invoke(t, []string{"run", echo, "-"}, text(doc)); o.status != 0 || o.stdout != doc+"\n" || o.stderr != "" {
+		t.Errorf("%+v", o)
 	}
 }
 

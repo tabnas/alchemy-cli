@@ -9,9 +9,10 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use tabnas_alchemy::shared::{Fail, Renderers, Routers};
+use tabnas_alchemy::shared::{Fail, Flow, Limits, Metrics, Renderers, Routers, Sink};
 use tabnas_alchemy::value::Val;
 use tabnas_alchemy::{Input, Program, Source};
+use tabnas_alchemy_cli::translate;
 use tabnas_support::Value;
 
 /// The routers a host passes alchemy: transduce's.
@@ -40,6 +41,30 @@ pub fn compile_with(src: &str, file: &str, input: Input) -> Result<Program, Fail
 /// render's renderers.
 pub fn compile_sources(sources: &[Source<'_>]) -> Result<Program, Fail> {
     tabnas_alchemy::compile_sources(sources, routers(), renderers())
+}
+
+/// Push the events of the JSON document `text` into `sink`, as `alchemy
+/// run` reads its input: JSON's own transducer part over the parser's
+/// rule passes, the engine's arrays emptied behind it. The run's outcome,
+/// a failure of the sink's as it was.
+pub fn json_into(
+    text: &str,
+    limits: &Limits,
+    metrics: Arc<Metrics>,
+    sink: Box<dyn Sink + Send>,
+) -> Result<Flow, Fail> {
+    let json = translate::format("json").expect("the command reads JSON");
+    let part = json
+        .transducer_program()?
+        .expect("the JSON grammar ships a transducer part");
+    let head = part.parser_sink_into(sink, limits, metrics.clone())?;
+    json.passes(text)?
+        .grammar(json.id())
+        .prune()
+        .limits(limits.clone())
+        .metrics(metrics)
+        .run_boxed(head)
+        .0
 }
 
 /// This repository's root: the parent of `rs/`.

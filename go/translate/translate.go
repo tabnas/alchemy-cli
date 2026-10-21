@@ -13,35 +13,28 @@
 // (the source's lift, the root adapters, the embedding, the inferred table,
 // the render), compiles the composition with transduce's routers and
 // render's renderers, and runs it over the input read with the source
-// format's grammar: incrementally where transduce's differential suite has
-// verified that grammar (tt.Incremental), so that a number keeps the lexeme
-// the document spelled it with, and materialized otherwise, when a path
-// selects a value below the root, and for a document whose value the
-// grammar builds otherwise than its events showed (a YAML stream of several
-// documents, a merge key, a repeated member), which the incremental source
-// refuses part way: the grammar's own value is the document, so it is read
-// again whole. Where a module's parser builds a value that is not yet the
-// tree its parts declare (an expression's operators, proto's syntax tree, a
-// typed feed or database, a grammar notation's document, which compiles to
-// a grammar spec), the tree the module's API reads a document as is the
-// document, read whole. Nothing here knows a format by its name: a format
-// is what its manifest says, and a module whose manifest names no parts
-// this host can take is not a format here.
+// format's grammar. A module that ships a transducer part (its manifest's
+// translate.transduce, the alchemy file whose entry makes the format's JSON
+// events of the parser's rule passes) is read through it: the route is
+// composed over the transducer (at.ComposeParsed), and the input's rule
+// passes stream through transduce's ParserEventSource into the program,
+// whatever the grammar, with nothing held but what the part keeps. Any
+// other format is parsed whole and its value walked, and so is a document
+// when a path selects a value below the root, and one whose events are not
+// what the grammar's value holds, which the part refuses part way (a YAML
+// stream of several documents, a merge key, a repeated member, which a part
+// streams twice and tree-contract refuses): the grammar's own value is the
+// document, so it is read again whole. Where a module's parser builds a
+// value that is not yet the tree its parts declare (an expression's
+// operators, proto's syntax tree, a typed feed or database, a grammar
+// notation's document, which compiles to a grammar spec), the tree the
+// module's API reads a document as is the document, read whole. Nothing
+// here knows a format by its name: a format is what its manifest says, and
+// a module whose manifest names no parts this host can take is not a
+// format here.
 //
-// A module that ships a transducer part (its manifest's translate.transduce,
-// the alchemy file whose entry makes the format's JSON events of the
-// parser's rule passes) is read through it instead: the route is composed
-// over the transducer (at.ComposeParsed), and the input's rule passes
-// stream through transduce's ParserEventSource into the program, whatever
-// the grammar, with nothing held but what the part keeps; where the part's
-// events are not what the grammar's value holds (a repeated member, which
-// it streams twice and tree-contract refuses), the document is read again
-// whole, as above.
-//
-// The incremental source needs the engine's node-cell identity, which
-// transduce builds only with the tabnas_nodecell tag. Without it no grammar
-// is verified, so every document is read whole, and a number is written by
-// its value rather than by the lexeme the document spelled it with.
+// Neither route needs transduce's rule-event adapter (the tabnas_nodecell
+// build tag), so every build reads a document as every other does.
 package translate
 
 import (
@@ -117,8 +110,13 @@ type Format struct {
 	// manifest's translate.transduce: the alchemy file whose entry makes
 	// the format's JSON events of its parser's rule passes, through which
 	// translate reads the format's documents. Nil where the module ships
-	// none, and the documents are read as Read reads them.
+	// none, and the documents are read whole.
 	Transducer *at.Alc
+	// compileOnce compiles Transducer on its own, once asked for
+	// (TransducerProgram), into compiled or compileFail.
+	compileOnce sync.Once
+	compiled    *alchemy.Program
+	compileFail *tt.Fail
 }
 
 // ID is the manifest's languageId.
@@ -147,19 +145,19 @@ func (f *Format) Passes(text string) (*tt.ParserEventSource, *tt.Fail) {
 	return f.passes(text), nil
 }
 
-// run drives sink with a document's events as the format reads it, after
-// the check its module's own parse makes first, where it makes one: its
-// parser's, through transduce's ParserSource in mode, or the tree its
-// module's API reads, read whole whatever the mode and walked as the
-// ParserSource walks a parser's value, under the same limits and counts.
-func (f *Format) run(input string, mode tt.SourceMode, limits tt.Limits, metrics *tt.Metrics, sink tt.Sink) (tt.Flow, *tt.Fail) {
+// run drives sink with a document's events as the format reads it whole,
+// after the check its module's own parse makes first, where it makes one:
+// its parser's value, walked by transduce's ParserSource, or the tree its
+// module's API reads, walked as the ParserSource walks a parser's value,
+// under the same limits and counts.
+func (f *Format) run(input string, limits tt.Limits, metrics *tt.Metrics, sink tt.Sink) (tt.Flow, *tt.Fail) {
 	if f.check != nil {
 		if fail := f.check(input); fail != nil {
 			return tt.Continue, fail
 		}
 	}
 	if f.tree == nil {
-		return f.reader(input).Grammar(f.ID()).Mode(mode).Limits(limits).Metrics(metrics).Run(sink)
+		return f.reader(input).Grammar(f.ID()).Limits(limits).Metrics(metrics).Run(sink)
 	}
 	guarded := tt.NewGuarded(sink, limits, tt.NewAbortFlag(), metrics)
 	defer guarded.Flush()
@@ -174,19 +172,45 @@ func (f *Format) run(input string, mode tt.SourceMode, limits tt.Limits, metrics
 	return guarded.Event(tt.EvEnd())
 }
 
+// TransducerProgram is the transducer part compiled on its own, over the
+// parser's rule passes, its entry the export: the stage a host puts in
+// front of a program of its own, as run does in front of a program over a
+// JSON document, and the one Read reads through. It is compiled once, when
+// first asked for, and nil where the module ships no part.
+func (f *Format) TransducerProgram() (*alchemy.Program, *tt.Fail) {
+	f.compileOnce.Do(func() {
+		alc := f.Transducer
+		if alc == nil {
+			return
+		}
+		sources := []alchemy.Source{
+			{File: alc.File, Text: alc.Text},
+			{File: "main", Text: "def export [input] (" + alc.Entry + " input)"},
+		}
+		f.compiled, f.compileFail = alchemy.CompileSourcesWith(sources, alchemy.InputParserEvents, tt.Routers(), tr.Renderers())
+	})
+	return f.compiled, f.compileFail
+}
+
 // Read is a document read whole with this format's grammar, as a value:
-// its events as translate reads them, incrementally where the grammar is
-// verified (so a number keeps the lexeme the document spelled it with),
-// collected, or the grammar's value where the incremental source cannot
-// follow it. A repeated member keeps its last value.
+// its events as translate reads them, through the transducer part its
+// module ships (so that a number keeps the lexeme the document spelled it
+// with), collected; or the grammar's own value, walked, where the module
+// ships no part and where the part's events are not what the grammar's
+// value holds (a repeated member, which the part streams twice). A
+// repeated member keeps its last value.
 func (f *Format) Read(input string, limits tt.Limits) (tt.Datum, *tt.Fail) {
-	if tt.Incremental(f.ID()) {
-		value, fail := read(f, input, tt.IncrementalMode(tt.Prune{}), limits)
+	part, fail := f.TransducerProgram()
+	if fail != nil {
+		return tt.Datum{}, fail
+	}
+	if part != nil {
+		value, fail := readThrough(f, part, input, limits)
 		if fail == nil || !unfollowed(fail) {
 			return value, fail
 		}
 	}
-	return read(f, input, tt.MaterializeMode(), limits)
+	return read(f, input, limits)
 }
 
 // modulePart is a grammar module's TranslationPart. Every module owns its
@@ -827,13 +851,12 @@ func attemptParsed(r *Request, program *alchemy.Program, input string, metrics *
 	return held.Bytes(), nil
 }
 
-// unfollowed is whether the incremental source refused a document because
-// the grammar's value is not what its events showed (a root wrapped or
-// replaced after it streamed, a map rewritten, a repeated member that the
-// grammar keeps once), or a transducer part's route refused a repeated
-// member, which the part streams twice and the composition's policy
-// refuses, since the grammar's value may keep the last or merge the two:
-// the grammar's own value is the document, so it is read again whole.
+// unfollowed is whether a transducer part's route refused a document
+// because the grammar's value is not what the passes showed: the part's own
+// refusal (fail :unstreamable), a second root, or a repeated member, which
+// the part streams twice and the composition's policy refuses, since the
+// grammar's value may keep the last or merge the two. The grammar's own
+// value is the document, so it is read again whole.
 func unfollowed(f *tt.Fail) bool {
 	return f.Code == tt.CodeStreamabilityUnknown || f.Code == tt.CodeDuplicateMember
 }
@@ -852,14 +875,14 @@ func Run(r *Request, input string, out io.Writer, metrics *tt.Metrics) *tt.Fail 
 // RunCompiled is Run, with the request's composition compiled already
 // (Compile), so that one compiled composition serves many inputs.
 //
-// What a run writes is held until the run has succeeded, so that a run the
-// incremental source gives up part way is run again from the start rather
-// than written twice.
+// What a run writes is held until the run has succeeded, so that a run a
+// transducer part gives up part way is run again whole from the start
+// rather than written twice.
 func RunCompiled(r *Request, compiled *Compiled, input string, out io.Writer, metrics *tt.Metrics) *tt.Fail {
 	if metrics == nil {
 		metrics = tt.NewMetrics()
 	}
-	attempt := func(mode tt.SourceMode, metrics *tt.Metrics) ([]byte, *tt.Fail) {
+	attempt := func(metrics *tt.Metrics) ([]byte, *tt.Fail) {
 		var held bytes.Buffer
 		sink, f := compiled.Program.Sink(&held, alchemy.RenderDefault, r.Limits, metrics)
 		if f != nil {
@@ -872,13 +895,13 @@ func RunCompiled(r *Request, compiled *Compiled, input string, out io.Writer, me
 			sink = tt.NewTreeContract(sink)
 		}
 		if r.Path == nil {
-			_, f := r.From.run(input, mode, r.Limits, metrics, sink)
+			_, f := r.From.run(input, r.Limits, metrics, sink)
 			if f != nil {
 				return nil, f
 			}
 			return held.Bytes(), nil
 		}
-		value, f := read(r.From, input, tt.MaterializeMode(), r.Limits)
+		value, f := read(r.From, input, r.Limits)
 		if f != nil {
 			return nil, f
 		}
@@ -904,8 +927,7 @@ func RunCompiled(r *Request, compiled *Compiled, input string, out io.Writer, me
 	// program, streamed whatever the grammar. A document whose events are
 	// not what the grammar's value holds (a repeated member, streamed
 	// twice, which the composition's tree-contract refuses) is read again
-	// whole below, as the incremental source's is: the grammar's own value
-	// is the document.
+	// whole below: the grammar's own value is the document.
 	transduced := false
 	if compiled.parsed != nil {
 		own := tt.NewMetrics()
@@ -918,25 +940,8 @@ func RunCompiled(r *Request, compiled *Compiled, input string, out io.Writer, me
 			return f
 		}
 	}
-	switch {
-	case transduced:
-	case r.Path == nil && tt.Incremental(r.From.ID()):
-		prune := tt.Prune{}
-		if selector, ok := compiled.Program.RowSelector(); ok {
-			prune = tt.PruneUnderSelector(selector)
-		}
-		// The incremental attempt counts into metrics of its own, which
-		// the caller's take on once it has succeeded: a run given up part
-		// way counts nothing.
-		own := tt.NewMetrics()
-		written, f = attempt(tt.IncrementalMode(prune), own)
-		if f != nil && unfollowed(f) {
-			written, f = attempt(tt.MaterializeMode(), metrics)
-		} else if f == nil {
-			absorb(metrics, own)
-		}
-	default:
-		written, f = attempt(tt.MaterializeMode(), metrics)
+	if !transduced {
+		written, f = attempt(metrics)
 	}
 	if f != nil {
 		return f
@@ -979,8 +984,13 @@ func raise(high *atomic.Uint64, v uint64) {
 	}
 }
 
-// collect is the events of a document, collected into a value.
+// collect is the events of a document, collected into a value, which
+// keeps the last of a repeated member.
 type collect struct{ builder *tt.DatumBuilder }
+
+func newCollect() *collect {
+	return &collect{builder: tt.NewDatumBuilder(math.MaxInt, "max_capture_bytes", tt.LastWins)}
+}
 
 func (c *collect) Event(ev tt.Event) (tt.Flow, *tt.Fail) {
 	if ev.Kind != tt.End {
@@ -991,18 +1001,43 @@ func (c *collect) Event(ev tt.Event) (tt.Flow, *tt.Fail) {
 	return tt.Continue, nil
 }
 
-// read is a document read whole with a format's grammar, as a value. A
-// repeated member keeps its last value, as the grammar's own value does.
-func read(format *Format, input string, mode tt.SourceMode, limits tt.Limits) (tt.Datum, *tt.Fail) {
-	c := &collect{builder: tt.NewDatumBuilder(math.MaxInt, "max_capture_bytes", tt.LastWins)}
-	if _, f := format.run(input, mode, limits, tt.NewMetrics(), c); f != nil {
-		return tt.Datum{}, f
-	}
+// value is the value collected, once the document has ended.
+func (c *collect) value() (tt.Datum, *tt.Fail) {
 	value, ok := c.builder.Take()
 	if !ok {
 		return tt.Datum{}, tt.InputFail("the document holds no value")
 	}
 	return value, nil
+}
+
+// read is a document read whole with a format's grammar, as a value. A
+// repeated member keeps its last value, as the grammar's own value does.
+func read(format *Format, input string, limits tt.Limits) (tt.Datum, *tt.Fail) {
+	c := newCollect()
+	if _, f := format.run(input, limits, tt.NewMetrics(), c); f != nil {
+		return tt.Datum{}, f
+	}
+	return c.value()
+}
+
+// readThrough is a document read through a format's transducer part, as a
+// value: the part's events over the parser's rule passes, held to a tree's
+// contract (one root, each key once in an object) and collected.
+func readThrough(format *Format, part *alchemy.Program, input string, limits tt.Limits) (tt.Datum, *tt.Fail) {
+	c := newCollect()
+	metrics := tt.NewMetrics()
+	head, f := part.ParserSinkInto(tt.NewTreeContract(c), limits, metrics)
+	if f != nil {
+		return tt.Datum{}, f
+	}
+	source, f := format.Passes(input)
+	if f != nil {
+		return tt.Datum{}, f
+	}
+	if _, f := source.Limits(limits).Metrics(metrics).Run(head); f != nil {
+		return tt.Datum{}, f
+	}
+	return c.value()
 }
 
 // maxIndex is the largest index a path can name, 2^64 - 1, and twoTo64 the

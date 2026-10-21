@@ -30,26 +30,17 @@
 // --max-output-bytes sets the writer's limit; the others are transduce's
 // defaults.
 //
-// run parses INPUT with the tabnas JSON grammar through transduce's
-// ParserSource, incrementally, pruning the parsed tree under the program's
-// row selector when the plan knows one; other input formats are aless's
-// business. The output goes through a coalescing writer to standard output
-// and is flushed once, at the end; a failure found after bytes were
-// written says so.
-//
-// The incremental source needs the engine's node-cell identity, which
-// transduce builds only with the tabnas_nodecell tag. A build without it
-// has no verified grammar, and run reports the source's
-// STREAMABILITY_UNKNOWN (status 2) without reading the document, rather
-// than read it some other way: the materialized walk would lose number
-// lexemes (1.50 written 1.5), keep one of a repeated member where the
-// stream reports both, and hold the whole document, which is not the run
-// the plan report promises. Build the command with -tags tabnas_nodecell.
-// With --grammar FORMAT, run parses INPUT with that format's grammar
-// through transduce's ParserEventSource and compiles the program over the
-// parser's rule passes, as a transducer part is compiled; the source of
-// rule passes needs no adapter, so such a run reads its document in every
-// build.
+// run reads INPUT as JSON through JSON's own transducer part, the one
+// translate reads a JSON document through: the part makes the document's
+// events of the parser's rule passes, and the engine's arrays are emptied
+// behind them. Other input formats are aless's business. The output goes
+// through a coalescing writer to standard output and is flushed once, at
+// the end; a failure found after bytes were written says so. With
+// --grammar FORMAT, run parses INPUT with that format's grammar through
+// transduce's ParserEventSource and compiles the program over the parser's
+// rule passes, as a transducer part is compiled. The source of rule passes
+// needs no adapter of transduce's, so every run reads its document in every
+// build, with the tabnas_nodecell tag or without it.
 //
 // translate reads INPUT with the grammar of --from and writes it in --to,
 // through the translation parts each format's module exports, as the
@@ -59,10 +50,6 @@
 // names the member a root is wrapped under for a format whose document must
 // be an object (items by default); --with runs a program over the input
 // first, as run does, and writes its export's events or table in --to.
-// translate reads a document incrementally where its grammar is verified
-// and whole otherwise, so a build without the tag reads every document
-// whole, and writes a number by its value rather than by the lexeme the
-// document spelled it with.
 package main
 
 import (
@@ -81,7 +68,6 @@ import (
 	"github.com/tabnas/alchemy-cli/go/translate"
 	alchemy "github.com/tabnas/alchemy/go"
 	at "github.com/tabnas/alchemy/go/translate"
-	tabnasjson "github.com/tabnas/json/go"
 	tr "github.com/tabnas/render/go"
 	tt "github.com/tabnas/transduce/go"
 )
@@ -271,8 +257,7 @@ func run(args []string, stdin io.Reader, stdout io.Writer) (string, *exit) {
 		limits.MaxOutputBytes = options.maxOutputBytes
 		// Whatever refuses the run is found before the input is read, so a
 		// refusal never waits on standard input or drains a large file to
-		// say so: the renderer the program cannot take, and in a build
-		// without the incremental adapter the source's own refusal.
+		// say so: the renderer the program cannot take.
 		metrics := tt.NewMetrics()
 		if options.grammar != nil {
 			sink, f := program.ParserSink(stdout, options.render, limits, metrics)
@@ -292,14 +277,11 @@ func run(args []string, stdin io.Reader, stdout io.Writer) (string, *exit) {
 		if f != nil {
 			return "", fromFail(f)
 		}
-		if f := incrementalRefusal(sink); f != nil {
-			return "", fromFail(f)
-		}
 		input, e := read(options.input, stdin)
 		if e != nil {
 			return "", e
 		}
-		if f := execute(program, sink, metrics, input, limits); f != nil {
+		if f := execute(sink, metrics, input, limits); f != nil {
 			return "", fromFail(f)
 		}
 		return "", nil
@@ -558,35 +540,31 @@ func parseRunOptions(args []string) (*runOptions, *exit) {
 	return options, nil
 }
 
-// incrementalRefusal is the source's refusal to read JSON incrementally,
-// or nil. Only a build without the incremental adapter refuses, and the
-// source refuses before it parses anything, so asking it over an empty
-// document gives the failure the run would meet, before the input is
-// read; sink sees no event.
-func incrementalRefusal(sink tt.Sink) *tt.Fail {
-	if tt.Incremental("json") {
-		return nil
-	}
-	_, f := tt.NewParserSource(tabnasjson.Make(), "").
-		Grammar("json").
-		Mode(tt.IncrementalMode(tt.Prune{})).
-		Run(sink)
-	return f
-}
-
 // execute runs the program over one JSON document, into the sink that
-// writes its output.
-func execute(program *alchemy.Program, sink tt.Sink, metrics *tt.Metrics, input string, limits tt.Limits) *tt.Fail {
-	prune := tt.Prune{}
-	if selector, ok := program.RowSelector(); ok {
-		prune = tt.PruneUnderSelector(selector)
+// writes its output. The document's events come from JSON's own transducer
+// part over the parser's rule passes, the engine's arrays emptied behind
+// them.
+func execute(sink tt.Sink, metrics *tt.Metrics, input string, limits tt.Limits) *tt.Fail {
+	json := translate.Named("json")
+	if json == nil {
+		return tt.InputFail("no JSON grammar to read the input")
 	}
-	_, f := tt.NewParserSource(tabnasjson.Make(), input).
-		Grammar("json").
-		Mode(tt.IncrementalMode(prune)).
-		Limits(limits).
-		Metrics(metrics).
-		Run(sink)
+	part, f := json.TransducerProgram()
+	if f != nil {
+		return f
+	}
+	if part == nil {
+		return tt.InputFail("the JSON grammar ships no transducer part")
+	}
+	head, f := part.ParserSinkInto(sink, limits, metrics)
+	if f != nil {
+		return f
+	}
+	source, f := json.Passes(input)
+	if f != nil {
+		return committed(f, metrics)
+	}
+	_, f = source.Grammar(json.ID()).Prune().Limits(limits).Metrics(metrics).Run(head)
 	return committed(f, metrics)
 }
 

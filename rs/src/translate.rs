@@ -9,30 +9,26 @@
 //! compose the route (the source's lift, the root adapters, the
 //! embedding, the inferred table, the render), compiles the composition
 //! with transduce's routers and render's renderers, and runs it over the
-//! input read with the source format's grammar: incrementally where
-//! transduce's differential suite has verified that grammar
-//! ([`capability::incremental`]), so that a number keeps the lexeme the
-//! document spelled it with, and materialized otherwise, when a path
-//! selects a value below the root, and for a document whose value the
-//! grammar builds otherwise than its events showed (a YAML stream of
-//! several documents, a merge key, a repeated member), which the
-//! incremental source refuses part way: the grammar's own value is the
-//! document, so it is read again whole. Where a package's parser builds a
-//! value that is not yet the tree its parts declare, and the package's API
-//! reads a document as that tree (expr's simplified form, proto's
-//! descriptor, C's realized syntax tree, and the grammar spec a grammar
-//! notation's document compiles to), that tree is the document, read
-//! whole. A package that ships a transducer part (its manifest's
-//! `translate.transduce`, the alchemy file whose entry makes the format's
-//! JSON events of the parser's rule passes) is read through it instead:
-//! the route is composed over the transducer (`compose_parsed`), and the
-//! input's rule passes stream through transduce's `ParserEventSource` into
-//! the program, whatever the grammar, with nothing held but what the part
-//! keeps; where the part's events are not what the grammar's value holds
-//! (a repeated member, which it streams twice and `tree-contract` refuses),
-//! the document is read again whole, as above. Nothing here knows a
-//! format by its name: a format is what its manifest says, and a package
-//! whose manifest names no parts this host can take is not a format here.
+//! input read with the source format's grammar. A package that ships a
+//! transducer part (its manifest's `translate.transduce`, the alchemy file
+//! whose entry makes the format's JSON events of the parser's rule passes)
+//! is read through it: the route is composed over the transducer
+//! (`compose_parsed`), and the input's rule passes stream through
+//! transduce's `ParserEventSource` into the program, whatever the grammar,
+//! with nothing held but what the part keeps. Any other format is parsed
+//! whole and its value walked, and so is a document when a path selects a
+//! value below the root, and one whose events are not what the grammar's
+//! value holds, which the part refuses part way (a YAML stream of several
+//! documents, a merge key, a repeated member, which a part streams twice
+//! and `tree-contract` refuses): the grammar's own value is the document,
+//! so it is read again whole. Where a package's parser builds a value that
+//! is not yet the tree its parts declare, and the package's API reads a
+//! document as that tree (expr's simplified form, proto's descriptor, C's
+//! realized syntax tree, and the grammar spec a grammar notation's
+//! document compiles to), that tree is the document, read whole. Nothing
+//! here knows a format by its name: a format is what its manifest says,
+//! and a package whose manifest names no parts this host can take is not
+//! a format here.
 
 use std::io::Write;
 use std::sync::{Arc, OnceLock};
@@ -41,11 +37,10 @@ use tabnas_alchemy::translate::{
     compose, compose_parsed, compose_program, compose_program_parsed, Alc, Composition, Descriptor,
     Front, Options, Part, PartText, Render, Root, Shape,
 };
-use tabnas_alchemy::{Output, Program, Source};
+use tabnas_alchemy::{Input, Output, Program, Source};
 use tabnas_transduce::{
-    capability, walk_datum, AbortFlag, Code, Datum, DatumBuilder, Duplicates, Fail, Flow, Guarded,
-    JsonEvent, Limits, Metrics, ParserEventSource, ParserSource, Prune, Segment, Sink, SourceMode,
-    TreeContract,
+    walk_datum, AbortFlag, Code, Datum, DatumBuilder, Duplicates, Fail, Flow, Guarded, JsonEvent,
+    Limits, Metrics, ParserEventSource, ParserSource, Segment, Sink, TreeContract,
 };
 
 /// A format's grammar applied to a text, two ways, each over a fresh parser
@@ -82,6 +77,8 @@ pub struct Format {
     pub part: Part,
     reader: Reader,
     transducer: Option<Alc>,
+    /// The transducer part compiled on its own, once asked for.
+    compiled: OnceLock<Result<Option<Program>, Fail>>,
 }
 
 impl Format {
@@ -124,26 +121,48 @@ impl Format {
         }
     }
 
+    /// The transducer part compiled on its own, over the parser's rule
+    /// passes, its entry the export: the stage a host puts in front of a
+    /// program of its own, as `run` does in front of a program over a JSON
+    /// document, and the one [`Format::read`] reads through. Compiled once,
+    /// when first asked for; `None` where the package ships no part.
+    pub fn transducer_program(&self) -> Result<Option<Program>, Fail> {
+        self.compiled
+            .get_or_init(|| {
+                let Some(alc) = &self.transducer else {
+                    return Ok(None);
+                };
+                let main = format!("def export [input] ({} input)", alc.entry);
+                let sources = [
+                    Source::new(&alc.file, &alc.text),
+                    Source::new("main", &main),
+                ];
+                tabnas_alchemy::compile_sources_with(
+                    &sources,
+                    Input::ParserEvents,
+                    Arc::new(tabnas_transduce::routers()),
+                    Arc::new(tabnas_render::renderers()),
+                )
+                .map(Some)
+            })
+            .clone()
+    }
+
     /// A document read whole with this format's grammar, as a value: its
-    /// events as `translate` reads them, incrementally where the grammar
-    /// is verified (so a number keeps the lexeme the document spelled it
-    /// with), collected, or the grammar's value where the incremental
-    /// source cannot follow it. A repeated member keeps its last value.
+    /// events as `translate` reads them, through the transducer part its
+    /// package ships (so that a number keeps the lexeme the document
+    /// spelled it with), collected; or the grammar's own value, walked,
+    /// where the package ships no part and where the part's events are
+    /// not what the grammar's value holds (a repeated member, which the
+    /// part streams twice). A repeated member keeps its last value.
     pub fn read(&self, input: &str, limits: &Limits) -> Result<Datum, Fail> {
-        if capability::incremental(self.id()) {
-            match read(
-                self,
-                input,
-                SourceMode::Incremental {
-                    prune: Prune::Never,
-                },
-                limits,
-            ) {
+        if let Some(part) = self.transducer_program()? {
+            match read_through(self, &part, input, limits) {
                 Err(fail) if unfollowed(&fail) => {}
                 outcome => return outcome,
             }
         }
-        read(self, input, SourceMode::Materialize, limits)
+        read(self, input, limits)
     }
 }
 
@@ -507,6 +526,7 @@ pub fn formats() -> &'static [Format] {
                     part,
                     reader,
                     transducer,
+                    compiled: OnceLock::new(),
                 })
             })
             .collect();
@@ -647,13 +667,12 @@ pub fn compile(request: &Request<'_>) -> Result<Compiled, Fail> {
     })
 }
 
-/// Whether the incremental source refused a document because the
-/// grammar's value is not what its events showed (a root wrapped or
-/// replaced after it streamed, a map rewritten, a repeated member that the
-/// grammar keeps once), or a transducer part's route refused a repeated
-/// member, which the part streams twice and the composition's policy
-/// refuses, since the grammar's value may keep the last or merge the two:
-/// the grammar's own value is the document, so it is read again whole.
+/// Whether a transducer part's route refused a document because the
+/// grammar's value is not what the passes showed: the part's own refusal
+/// (`fail :unstreamable`), a second root, or a repeated member, which the
+/// part streams twice and the composition's policy refuses, since the
+/// grammar's value may keep the last or merge the two. The grammar's own
+/// value is the document, so it is read again whole.
 fn unfollowed(fail: &Fail) -> bool {
     matches!(
         fail.code,
@@ -661,8 +680,8 @@ fn unfollowed(fail: &Fail) -> bool {
     )
 }
 
-/// What a run writes, held until the run has succeeded, so that a run
-/// the incremental source gives up part way is run again from the start
+/// What a run writes, held until the run has succeeded, so that a run a
+/// transducer part gives up part way is run again whole from the start
 /// rather than written twice.
 #[derive(Clone, Default)]
 struct Held(Arc<std::sync::Mutex<Vec<u8>>>);
@@ -706,7 +725,7 @@ pub fn run_compiled(
         program,
         parsed,
     } = compiled;
-    let attempt = |mode: SourceMode, metrics: Arc<Metrics>| -> Result<Vec<u8>, Fail> {
+    let attempt = |metrics: Arc<Metrics>| -> Result<Vec<u8>, Fail> {
         let held = Held::default();
         let sink = program.sink(
             Box::new(held.clone()),
@@ -723,15 +742,10 @@ pub fn run_compiled(
         };
         match &request.path {
             None => {
-                source(request.from, input, mode, &request.limits, metrics, sink).0?;
+                source(request.from, input, &request.limits, metrics, sink).0?;
             }
             Some(path) => {
-                let value = read(
-                    request.from,
-                    input,
-                    SourceMode::Materialize,
-                    &request.limits,
-                )?;
+                let value = read(request.from, input, &request.limits)?;
                 let selected = value.get_path(path).ok_or_else(|| {
                     Fail::input(format!(
                         "the path {} names nothing in the document",
@@ -754,8 +768,7 @@ pub fn run_compiled(
     // program, streamed whatever the grammar. A document whose events are
     // not what the grammar's value holds (a repeated member, streamed
     // twice, which the composition's tree-contract refuses) is read again
-    // whole below, as the incremental source's is: the grammar's own value
-    // is the document.
+    // whole below: the grammar's own value is the document.
     let transduced = match parsed {
         Some((_, program)) => {
             let own = Metrics::new();
@@ -770,29 +783,9 @@ pub fn run_compiled(
         }
         None => None,
     };
-    let incremental = request.path.is_none() && capability::incremental(request.from.id());
-    let bytes = if let Some(bytes) = transduced {
-        bytes
-    } else if incremental {
-        let mode = SourceMode::Incremental {
-            prune: program
-                .row_selector()
-                .map_or(Prune::Never, |s| Prune::Under(s.clone())),
-        };
-        // The incremental attempt counts into metrics of its own, which
-        // the caller's take on once it has succeeded: a run given up part
-        // way counts nothing.
-        let own = Metrics::new();
-        match attempt(mode, own.clone()) {
-            Err(fail) if unfollowed(&fail) => attempt(SourceMode::Materialize, metrics)?,
-            outcome => {
-                let bytes = outcome?;
-                absorb(&metrics, &own);
-                bytes
-            }
-        }
-    } else {
-        attempt(SourceMode::Materialize, metrics)?
+    let bytes = match transduced {
+        Some(bytes) => bytes,
+        None => attempt(metrics)?,
     };
     let mut written = 0;
     write_out(&mut out, &bytes, &mut written).map_err(|e| {
@@ -885,27 +878,52 @@ fn absorb(into: &Metrics, from: &Metrics) {
     Metrics::raise(&into.retained_bytes_high, Metrics::get(retained_bytes_high));
 }
 
-/// The events of a document, collected into a value.
-struct Collect(DatumBuilder);
+/// The events of a document, collected into a value, which keeps the last
+/// of a repeated member; shared, so that a sink handed on by value leaves
+/// the value where its caller takes it.
+#[derive(Clone)]
+struct Collect(Arc<std::sync::Mutex<DatumBuilder>>);
+
+impl Collect {
+    fn new() -> Collect {
+        Collect(Arc::new(std::sync::Mutex::new(DatumBuilder::new(
+            usize::MAX,
+            "max_capture_bytes",
+            Duplicates::LastWins,
+        ))))
+    }
+
+    fn builder(&self) -> std::sync::MutexGuard<'_, DatumBuilder> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// The value collected, once the document has ended.
+    fn take(&self) -> Result<Datum, Fail> {
+        self.builder()
+            .take()
+            .ok_or_else(|| Fail::input("the document holds no value"))
+    }
+}
 
 impl Sink for Collect {
     fn event(&mut self, ev: JsonEvent<'_>) -> Result<Flow, Fail> {
         if !matches!(ev, JsonEvent::End) {
-            self.0.event(ev)?;
+            self.builder().event(ev)?;
         }
         Ok(Flow::Continue)
     }
 }
 
-/// A document's events as a format reads it, into `sink`, which comes back
-/// with the outcome: its parser's, through transduce's parser source in
-/// `mode` (after the check its package's parse makes first, where it makes
-/// one), or the tree its package's API reads, read whole whatever the mode
-/// and walked under the same limits and counts.
+/// A document's events as a format reads it whole, into `sink`, which
+/// comes back with the outcome: its parser's value, walked by transduce's
+/// parser source (after the check its package's parse makes first, where
+/// it makes one), or the tree its package's API reads, walked under the
+/// same limits and counts.
 fn source<S: Sink + Send + 'static>(
     format: &Format,
     input: &str,
-    mode: SourceMode,
     limits: &Limits,
     metrics: Arc<Metrics>,
     sink: S,
@@ -913,7 +931,6 @@ fn source<S: Sink + Send + 'static>(
     match format.reader {
         Reader::Parser(parsing) => (parsing.events)(input)
             .grammar(format.id())
-            .mode(mode)
             .limits(limits.clone())
             .metrics(metrics)
             .run_owned(sink),
@@ -921,7 +938,6 @@ fn source<S: Sink + Send + 'static>(
             Err(refused) => (Err(refused), sink),
             Ok(()) => (parsing.events)(input)
                 .grammar(format.id())
-                .mode(mode)
                 .limits(limits.clone())
                 .metrics(metrics)
                 .run_owned(sink),
@@ -939,18 +955,35 @@ fn source<S: Sink + Send + 'static>(
 
 /// A document read whole with a format's grammar, as a value. A repeated
 /// member keeps its last value, as the grammar's own value does.
-fn read(format: &Format, input: &str, mode: SourceMode, limits: &Limits) -> Result<Datum, Fail> {
-    let collect = Collect(DatumBuilder::new(
-        usize::MAX,
-        "max_capture_bytes",
-        Duplicates::LastWins,
-    ));
-    let (outcome, mut collect) = source(format, input, mode, limits, Metrics::new(), collect);
+fn read(format: &Format, input: &str, limits: &Limits) -> Result<Datum, Fail> {
+    let (outcome, collect) = source(format, input, limits, Metrics::new(), Collect::new());
     outcome?;
-    collect
-        .0
-        .take()
-        .ok_or_else(|| Fail::input("the document holds no value"))
+    collect.take()
+}
+
+/// A document read through a format's transducer part, as a value: the
+/// part's events over the parser's rule passes, held to a tree's contract
+/// (one root, each key once in an object) and collected.
+fn read_through(
+    format: &Format,
+    part: &Program,
+    input: &str,
+    limits: &Limits,
+) -> Result<Datum, Fail> {
+    let collect = Collect::new();
+    let metrics = Metrics::new();
+    let head = part.parser_sink_into(
+        Box::new(TreeContract::new(collect.clone())),
+        limits,
+        metrics.clone(),
+    )?;
+    format
+        .passes(input)?
+        .limits(limits.clone())
+        .metrics(metrics)
+        .run_boxed(head)
+        .0?;
+    collect.take()
 }
 
 /// A path given as a JSON array of segments, each a string (a member's
@@ -1078,6 +1111,7 @@ mod tests {
             part: json.part.clone(),
             reader: json.reader,
             transducer: None,
+            compiled: OnceLock::new(),
         }
     }
 
@@ -1093,6 +1127,7 @@ mod tests {
                 entry: "json-transduce".to_string(),
                 text: text.to_string(),
             }),
+            compiled: OnceLock::new(),
         }
     }
 
@@ -1147,14 +1182,15 @@ mod tests {
 
     /// A format whose package ships a transducer part is read through it
     /// (json, through tabnas-json's), its rule passes streamed into the
-    /// composition over the part, and one without is read as before: the
-    /// two routes write the same bytes for the same document, a number's
-    /// lexeme kept, into a tree target, a records target, and with a
-    /// program over the input; a marking part given in the package's
-    /// place shows the route ran. A path keeps the document's value, the
-    /// one route a path has. A repeated member, which the part streams
-    /// twice and the composition's tree-contract refuses, is read again
-    /// whole, as the incremental source's is.
+    /// composition over the part, and one without is read whole, its
+    /// value walked: the two routes write the same bytes for the same
+    /// document, into a tree target, a records target, and with a program
+    /// over the input, but for a number's lexeme, which the part keeps and
+    /// the walk spells as the engine does; a marking part given in the
+    /// package's place shows the route ran. A path keeps the document's
+    /// value, the one route a path has. A repeated member, which the part
+    /// streams twice and the composition's tree-contract refuses, is read
+    /// again whole, as a format without a part is read.
     #[test]
     fn a_transducer_part_reads_the_format_and_the_walk_stands_in_where_it_refuses() {
         let plain = plain_json();
@@ -1170,13 +1206,25 @@ mod tests {
             .transducer()
             .is_some_and(|alc| alc.text.contains("transduce-tree")));
         let tree = r#"{"a":[1,2.50,"x",{"b":null}],"c":{},"d":[],"e":1e21,"f":true}"#;
+        // The same document, its numbers spelled as the engine spells them.
+        let spelled = tree.replace("2.50", "2.5");
+        assert_eq!(
+            translated(through, "json", None, None, tree).unwrap(),
+            format!("{tree}\n"),
+            "the part keeps a number's lexeme"
+        );
+        assert_eq!(
+            translated(&plain, "json", None, None, tree).unwrap(),
+            format!("{spelled}\n"),
+            "the walk spells a number as the engine does"
+        );
         let records = r#"[{"a":1,"b":"x"},{"a":2,"b":"y"}]"#;
         let echo = Some(("echo.alc", "def export [input] (events input)\n"));
         for (to, doc, program) in [
-            ("json", tree, None),
-            ("yaml", tree, None),
+            ("json", spelled.as_str(), None),
+            ("yaml", spelled.as_str(), None),
             ("csv", records, None),
-            ("json", tree, echo),
+            ("json", spelled.as_str(), echo),
             ("csv", records, echo),
         ] {
             let expected =

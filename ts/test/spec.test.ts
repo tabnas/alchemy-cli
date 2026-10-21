@@ -23,9 +23,8 @@ import assert from 'node:assert'
 import { join } from 'node:path'
 
 import { SpecRow, isErrorExpect, loadSpecDir, makeRunner } from '@tabnas/support'
-import { make as makeJson } from '@tabnas/json'
 import { BytesWriter } from '@tabnas/render'
-import { DatumBuilder, EventRecorder, ParserSource, Prune, SourceMode, walkDatum } from '@tabnas/transduce'
+import { DatumBuilder, EventRecorder, walkDatum } from '@tabnas/transduce'
 import type { Datum, Flow, JsonEvent, Sink } from '@tabnas/transduce'
 
 import { Format, format as formatNamed, parserNames } from '../dist/translate'
@@ -43,7 +42,7 @@ import {
 import { Limits, Metrics } from '@tabnas/alchemy/shared'
 import type { Duplicates } from '@tabnas/alchemy/shared'
 
-import { OWN_CODES, compile, compileWith, failCode, sibling } from './host'
+import { OWN_CODES, compile, compileWith, failCode, jsonInto, sibling } from './host'
 
 // alchemy's fixtures, in the checkout beside this one.
 const SPEC_DIR = sibling('alchemy', 'test', 'spec')
@@ -55,8 +54,7 @@ const runnerOptions = {
 }
 
 // Compile `program` and run it over `doc`, as `alchemy run` does: the
-// document read by the JSON grammar incrementally, pruned under the
-// program's row selector when it has one, with the default limits.
+// document read through JSON's transducer part, with the default limits.
 function runBoth(program: string, doc: string, render: Renderer | undefined, native: boolean): string {
   let compiled = compile(program, 'run')
   if (!native) compiled = compiled.withNative(false)
@@ -68,14 +66,7 @@ function drive(program: Program, doc: string, render: Renderer | undefined): str
   const metrics = new Metrics()
   const writer = new BytesWriter()
   const sink = program.sink(writer, render, limits, metrics)
-  const selector = program.rowSelector()
-  const prune = undefined === selector ? Prune.never() : Prune.under(selector)
-  new ParserSource(makeJson(), doc)
-    .grammar('json')
-    .mode(SourceMode.incremental(prune))
-    .limits(limits)
-    .metrics(metrics)
-    .run(sink)
+  jsonInto(doc, limits, metrics, sink)
   return writer.text()
 }
 
@@ -382,7 +373,7 @@ function differential(grammar: Format, doc: string, written: string): void {
   }
   const collect = new Collect(new DatumBuilder(Number.POSITIVE_INFINITY, 'max_capture_bytes', 'reject'))
   try {
-    new ParserSource(makeJson(), written).grammar('json').mode(SourceMode.incremental(Prune.never())).run(collect)
+    jsonInto(written, Limits.default(), new Metrics(), collect)
   } catch (err) {
     if (isFail(err) && 'DUPLICATE_MEMBER' === err.code) return
     throw new Error(`the output ${JSON.stringify(written)} does not read back as JSON: ${String(err)}`)

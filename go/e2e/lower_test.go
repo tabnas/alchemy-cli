@@ -13,7 +13,6 @@ import (
 	"testing"
 
 	. "github.com/tabnas/alchemy/go"
-	tabnasjson "github.com/tabnas/json/go"
 	tr "github.com/tabnas/render/go"
 	tt "github.com/tabnas/transduce/go"
 )
@@ -21,8 +20,7 @@ import (
 // lowerRun runs src over the JSON input as rs/src/lower.rs's tests do: a
 // runtime over the resolved program (no checker, so the lowering's own
 // refusals are seen), its export lowered to a sink over a writer, and the
-// input read incrementally with no pruning; through the materialized walk
-// in a build without the incremental adapter (see readRun).
+// input read as `alchemy run` reads it (jsonInto).
 func lowerRun(t testing.TB, src, input string, native bool, render Renderer) (string, *Fail) {
 	t.Helper()
 	rt := runtimeOf(t, src).WithNative(native)
@@ -36,17 +34,7 @@ func lowerRun(t testing.TB, src, input string, native bool, render Renderer) (st
 	if f != nil {
 		return "", f
 	}
-	if tt.AdapterBuilt() {
-		_, f = tt.NewParserSource(tabnasjson.Make(), input).
-			Grammar("json").
-			Mode(tt.IncrementalMode(tt.Prune{})).
-			Limits(limits).
-			Metrics(metrics).
-			Run(sink)
-	} else {
-		_, f = tt.Replay(mustEvents(t, input), sink)
-	}
-	if f != nil {
+	if f := jsonInto(input, limits, metrics, sink); f != nil {
 		return "", f
 	}
 	return buffer.String(), nil
@@ -74,7 +62,6 @@ func TestTheWorkedExampleThroughTheNativePath(t *testing.T) {
 }
 
 func TestJSONEchoesTheInputWithItsLexemes(t *testing.T) {
-	requireIncremental(t)
 	echo := "def export [input] (json input)"
 	if got := mustLower(t, echo, records, true, RenderDefault); got != records+"\n" {
 		t.Errorf("%q", got)
@@ -85,7 +72,6 @@ func TestJSONEchoesTheInputWithItsLexemes(t *testing.T) {
 }
 
 func TestSelectMapAndConcatMapStreamItems(t *testing.T) {
-	requireIncremental(t)
 	src := "def export [input]\n  pipe input\n    select (path \"a\" each-index)\n    map (fn [x] (get :n x))\n    concat-map (fn [n] (concat (scalar-text csv-options n) \";\"))"
 	if got := mustLower(t, src, `{"a":[{"n":1},{"n":2.50}],"b":3}`, false, RenderDefault); got != "1;2.50;" {
 		t.Errorf("%q", got)

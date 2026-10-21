@@ -672,7 +672,7 @@ describe('cli translate', () => {
       [['--from', 'csv', '--to', 'json', '-'], 'a,b\n1,x\n', '[{"a":"1","b":"x"}]\n'],
       [['--from', 'csv', '--to', 'markdown', '-'], 'a,b\n1,x\n', '| a | b |\n| --- | --- |\n| 1 | x |\n'],
       // A YAML stream of several documents is read whole, as the grammar's
-      // own value, which the incremental source cannot follow.
+      // own value, which YAML's transducer part cannot follow.
       [['--from', 'yaml', '--to', 'json', '-'], 'a: 1\n---\nb: 2\n', '[{"a":1},{"b":2}]\n'],
       // A byte order mark is the document's, and its grammar's to read.
       [['--from', 'csv', '--to', 'json', '-'], '\ufeffa\n1\n', '[{"\ufeffa":"1"}]\n'],

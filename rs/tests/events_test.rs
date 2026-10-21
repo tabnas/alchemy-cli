@@ -14,9 +14,9 @@ use std::sync::{Arc, Mutex};
 
 use tabnas_alchemy::shared::{Code, Fail, Limits, Metrics};
 use tabnas_alchemy::{Output, Program};
-use tabnas_transduce::{ParserSource, Prune, SourceMode};
+use tabnas_transduce::ParserSource;
 
-use common::compile;
+use common::{compile, json_into};
 
 /// A YAML-like block renderer over the events. The state is the stack of
 /// open containers, one marker each: `:object-open` and `:array-open` for
@@ -144,7 +144,7 @@ impl std::io::Write for Shared {
     }
 }
 
-/// Parse `text` with the json grammar incrementally and push its events
+/// Read `text` as `alchemy run` reads its input and push its events
 /// through the program's sink: the output, or the failure with what had
 /// been written.
 fn drive(program: &Program, text: &str, limits: &Limits) -> (Result<(), Fail>, String) {
@@ -154,16 +154,7 @@ fn drive(program: &Program, text: &str, limits: &Limits) -> (Result<(), Fail>, S
         Ok(sink) => sink,
         Err(f) => return (Err(f), String::new()),
     };
-    let prune = match program.row_selector() {
-        Some(selector) => Prune::Under(selector.clone()),
-        None => Prune::Never,
-    };
-    let (outcome, _) = ParserSource::new(tabnas_json::make(), text)
-        .grammar("json")
-        .mode(SourceMode::Incremental { prune })
-        .limits(limits.clone())
-        .metrics(metrics.clone())
-        .run_owned(sink);
+    let outcome = json_into(text, limits, metrics, sink);
     let bytes = buffer.0.lock().unwrap().clone();
     (
         outcome.map(|_| ()),

@@ -3,8 +3,8 @@
 // The `alchemy` command (alchemy's rs/src/bin/alchemy.rs), run by
 // `bin/alchemy`. It composes the language, `@tabnas/alchemy`, with the
 // stages it compiles onto: transduce's `routers` and render's `renderers`,
-// passed to `compile`, the tabnas JSON grammar, transduce's
-// `ParserSource`, and render's `FdWriter`.
+// passed to `compile`, the tabnas JSON grammar and its transducer part,
+// transduce's `ParserEventSource`, and render's `FdWriter`.
 //
 //   alchemy canon FILE       print the program in canonical form
 //   alchemy format FILE      print the program in layout form
@@ -38,13 +38,13 @@
 // `--max-output-bytes` sets the writer's limit; the others are transduce's
 // defaults.
 //
-// `run` parses `INPUT` with the tabnas JSON grammar through transduce's
-// `ParserSource`, incrementally, pruning the parsed tree under the
-// program's row selector when the plan knows one; with `--grammar FORMAT`
-// it parses `INPUT` with that format's grammar through transduce's
-// `ParserEventSource` and compiles the program over the parser's rule
-// passes, as a transducer part is compiled. Other input formats as
-// documents are aless's business. The output goes through a coalescing
+// `run` reads `INPUT` as JSON through JSON's own transducer part, the one
+// `translate` reads a JSON document through: the part makes the
+// document's events of the parser's rule passes, and the engine's arrays
+// are emptied behind them. With `--grammar FORMAT` it parses `INPUT` with
+// that format's grammar through transduce's `ParserEventSource` and
+// compiles the program over the parser's rule passes, as a transducer part
+// is compiled. Other input formats as documents are aless's business. The output goes through a coalescing
 // writer to standard output and is flushed once, at the end; a failure
 // found after bytes were written says so.
 //
@@ -62,7 +62,6 @@ import { readFileSync, readSync, writeSync } from 'node:fs'
 
 import {
   CompileOptions,
-  Program,
   Renderer,
   canonical,
   compile,
@@ -72,9 +71,8 @@ import {
   rendererNamed,
   translate as alchemyTranslate,
 } from '@tabnas/alchemy'
-import { make as makeJson } from '@tabnas/json'
 import { FdWriter, renderers } from '@tabnas/render'
-import { Fail, Limits, Metrics, ParserSource, Prune, SourceMode, routers } from '@tabnas/transduce'
+import { Fail, Limits, Metrics, routers } from '@tabnas/transduce'
 import type { ParserSink, Segment, Sink } from '@tabnas/transduce'
 
 import * as translate from './translate'
@@ -329,17 +327,16 @@ function parseTranslateOptions(args: ReadonlyArray<string>): TranslateOptions {
 }
 
 // Run the program over one JSON document, into the sink that writes its
-// output.
-function execute(program: Program, sink: Sink, metrics: Metrics, input: string, limits: Limits): void {
-  const selector = program.rowSelector()
-  const prune = undefined === selector ? Prune.never() : Prune.under(selector)
+// output. The document's events come from JSON's own transducer part over
+// the parser's rule passes, the engine's arrays emptied behind them.
+function execute(sink: Sink, metrics: Metrics, input: string, limits: Limits): void {
+  const json = translate.format('json')
+  if (undefined === json) throw Fail.input('no JSON grammar to read the input')
+  const part = json.transducerProgram()
+  if (undefined === part) throw Fail.input('the JSON grammar ships no transducer part')
+  const head = part.parserSinkInto(sink, limits, metrics)
   try {
-    new ParserSource(makeJson(), input)
-      .grammar('json')
-      .mode(SourceMode.incremental(prune))
-      .limits(limits)
-      .metrics(metrics)
-      .run(sink)
+    json.passes(input).grammar(json.id).prune().limits(limits).metrics(metrics).run(head)
   } catch (err) {
     throw committed(err, metrics)
   }
@@ -415,7 +412,7 @@ function command(args: ReadonlyArray<string>): string {
       if (undefined === grammar) {
         const sink = program.sink(new FdWriter(1), options.render, limits, metrics)
         const input = read(options.input)
-        execute(program, sink, metrics, input, limits)
+        execute(sink, metrics, input, limits)
       } else {
         const sink = program.parserSink(new FdWriter(1), options.render, limits, metrics)
         const input = read(options.input)
