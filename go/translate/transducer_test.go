@@ -143,6 +143,27 @@ func TestATransducerPartReadsTheFormatAndTheWalkStandsInWhereItRefuses(t *testin
 	}
 }
 
+// YAML is read through its part, and whole where the part streams a
+// repeated key, which the tree contract refuses: the grammar merges it, at
+// the root and in a sequence entry's mapping alike (tabnas/yaml 0.5.26
+// merges the entry's, which kept the later value before). A sequence
+// entry's keys stand at the column its content starts at, so a key with an
+// empty value before a sibling is null, and an entry with more than one
+// space after its dash reads (both 0.5.26).
+func TestYAMLReadsASequenceEntryAsItsGrammarDoes(t *testing.T) {
+	yaml := Named("yaml")
+	for _, c := range []struct{ doc, want string }{
+		{"a:\n  b: 1\na:\n  c: 2\n", "{\"a\":{\"b\":1,\"c\":2}}\n"},
+		{"- a:\n    b: 1\n  a:\n    c: 2\n", "[{\"a\":{\"b\":1,\"c\":2}}]\n"},
+		{"- a:\n  b: 1\n", "[{\"a\":null,\"b\":1}]\n"},
+		{"-   a: 1\n    b: 2\n", "[{\"a\":1,\"b\":2}]\n"},
+	} {
+		if got := mustTranslate(t, yaml, "json", "", nil, c.doc); got != c.want {
+			t.Errorf("%q: got %q, want %q", c.doc, got, c.want)
+		}
+	}
+}
+
 // Every format with a parser answers its rule passes; one read as a tree
 // has none and refuses; json5's check runs first.
 func TestAFormatWithAParserGivesItsRulePasses(t *testing.T) {

@@ -54,7 +54,7 @@ github.com/tabnas/transduce/go v0.2.11 h1:BAlQ/LIY1nAgmEHUiPohNgxdhM++1IJlT+DWv+
 github.com/tabnas/transduce/go v0.2.11/go.mod h1:FE+ZRWv/JN4ai3VRBD8PgaEaX+s4rSY6hbmfXzhQ7pc=
 github.com/tabnas/xml/go v0.7.19 h1:98iPXLqu1UzxpaC5DQvTSnciVv3TBNkMmH2D8QshhHI=
 github.com/tabnas/xml/go v0.7.19/go.mod h1:zzOXCvxiZY73WGtuyWVnAKFKZ8Bv0VRBTiLCVrrX+Io=
-github.com/tabnas/yaml/go v0.5.25 h1:PCnQ9+TMMKMOkcnMicNxi75HQg2P+zGGNTtee4xDUbo=
-github.com/tabnas/yaml/go v0.5.25/go.mod h1:/Gv0DRuVawHIADToeIUa1kqdEQOlxwdAZRtlI5Z3bws=
+github.com/tabnas/yaml/go v0.5.26 h1:5uqCkr65yMbKaYbGYXsiWexq2sSvGf4uvG7db2LD6Bo=
+github.com/tabnas/yaml/go v0.5.26/go.mod h1:/Gv0DRuVawHIADToeIUa1kqdEQOlxwdAZRtlI5Z3bws=
 github.com/tabnas/zon/go v0.5.18 h1:3v29aJpJdm1osBMK8R+DCcOsO0XSoRCC/Q1r0RHkMFg=
 github.com/tabnas/zon/go v0.5.18/go.mod h1:Cme1rKZD4UyzThYu6PjKu/BeU4YWFGi6olJ1y01ORio=
