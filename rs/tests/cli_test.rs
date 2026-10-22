@@ -15,7 +15,10 @@ fn run(args: &[&str], stdin: Option<&str>) -> Output {
     run_bytes(args, stdin.map(str::as_bytes))
 }
 
-/// `run` with standard input as bytes, which need not be UTF-8.
+/// `run` with standard input as bytes, which need not be UTF-8. They are
+/// written on a thread of their own while the output is read: `run` reads
+/// its input through a reader and writes as it goes, so a long input
+/// written whole first would wait on an output pipe nobody was reading.
 fn run_bytes(args: &[&str], stdin: Option<&[u8]>) -> Output {
     let mut child = Command::new(binary())
         .args(args)
@@ -28,15 +31,24 @@ fn run_bytes(args: &[&str], stdin: Option<&[u8]>) -> Output {
         .stderr(Stdio::piped())
         .spawn()
         .expect("the alchemy binary starts");
-    if let Some(text) = stdin {
-        // A command refused before standard input is read may have exited
-        // already, closing the pipe: that is the behaviour under test, not
-        // a failure to write.
-        if let Err(error) = child.stdin.take().expect("a piped stdin").write_all(text) {
-            assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe, "{error}");
-        }
+    let writer = stdin.map(|text| {
+        let mut pipe = child.stdin.take().expect("a piped stdin");
+        let text = text.to_vec();
+        std::thread::spawn(move || {
+            // A command refused before standard input is read, or one that
+            // fails part way through it, may have exited already, closing
+            // the pipe: that is the behaviour under test, not a failure to
+            // write.
+            if let Err(error) = pipe.write_all(&text) {
+                assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe, "{error}");
+            }
+        })
+    });
+    let output = child.wait_with_output().expect("the binary finishes");
+    if let Some(writer) = writer {
+        writer.join().expect("standard input is written");
     }
-    child.wait_with_output().expect("the binary finishes")
+    output
 }
 
 fn stdout(output: &Output) -> String {
@@ -1003,6 +1015,126 @@ fn translate_checks_what_a_packages_parse_checks_first() {
             "output": "none"
         })
     );
+}
+
+/// INPUT that cannot be read exits 2 as `cannot read`, on every route a
+/// command reads it by:
+/// - `run`, through a reader, a window at a time for JSON;
+/// - `run --grammar`, through a reader for a grammar that declares the
+///   window (json), whole first for one that does not (yaml), and whole
+///   for json5, whose check reads the document first;
+/// - `translate`, through a reader on the transducer part's route, and
+///   whole on the others (a path, a format whose package ships no part,
+///   standard input).
+///
+/// Bytes that are not UTF-8, a file that is not there and a directory are
+/// each refused as reading the file whole refuses them, before any
+/// output.
+#[test]
+fn an_input_that_cannot_be_read_exits_2_on_every_route() {
+    let echo = temp_file("unread-echo.alc", "def export [input] input\n");
+    let echo = echo.to_str().expect("a utf-8 path");
+    let transducer = temp_file("unread-transducer.alc", TRANSDUCER);
+    let transducer = transducer.to_str().expect("a utf-8 path");
+    let bytes = &b"[1, \"\xff\"]"[..];
+    let bad = std::env::temp_dir().join(format!("alchemy-cli-{}-bad-input", std::process::id()));
+    std::fs::write(&bad, bytes).expect("the file is written");
+    let bad = bad.to_str().expect("a utf-8 path");
+    let dir = std::env::temp_dir();
+    let dir = dir.to_str().expect("a utf-8 path");
+    let commands: [&[&str]; 9] = [
+        &["run", echo],
+        &["run", "--grammar", "json", transducer],
+        &["run", "--grammar", "yaml", transducer],
+        &["run", "--grammar", "json5", transducer],
+        &["translate", "--from", "json", "--to", "json"],
+        &["translate", "--from", "yaml", "--to", "json"],
+        &["translate", "--from", "json5", "--to", "json"],
+        &["translate", "--from", "toml", "--to", "json"],
+        &[
+            "translate",
+            "--from",
+            "json",
+            "--to",
+            "json",
+            "--path",
+            "[0]",
+        ],
+    ];
+    for command in commands {
+        for (input, stdin) in [
+            (bad, None),
+            ("-", Some(bytes)),
+            ("/nonexistent/input.json", None),
+            (dir, None),
+        ] {
+            let reason = match input {
+                "-" => "stream did not contain valid UTF-8".to_string(),
+                file => std::fs::read_to_string(file).unwrap_err().to_string(),
+            };
+            let output = run_bytes(&[command, &[input]].concat(), stdin);
+            let at = format!("{command:?} {input}");
+            assert_eq!(output.status.code(), Some(2), "{at}: {}", stderr(&output));
+            let fail = fail_json(&output);
+            assert_eq!(fail["code"], "INPUT_INVALID", "{at}");
+            assert_eq!(
+                fail["message"],
+                format!("cannot read {input}: {reason}"),
+                "{at}"
+            );
+            assert_eq!(fail["output"], "none", "{at}");
+            assert_eq!(stdout(&output), "", "{at}");
+        }
+    }
+}
+
+/// `run` reads INPUT through a reader, a window of it at a time, so a long
+/// document's output streams before the parse reaches its end. Bytes that
+/// are not UTF-8 near the end fail the run as a file that cannot be read,
+/// after the output of the document before them, and the failure says the
+/// output is partial: from a file and from standard input alike.
+#[test]
+fn run_streams_a_long_input_until_bytes_that_are_not_utf8() {
+    let echo = temp_file("stream-echo.alc", "def export [input] input\n");
+    let echo = echo.to_str().expect("a utf-8 path");
+    let records: Vec<String> = (0..20_000)
+        .map(|i| format!("{{\"id\":{i},\"name\":\"n{i}\"}}"))
+        .collect();
+    let records = records.join(",");
+    let good = temp_file("stream-good.json", &format!("[{records}]"));
+    let whole = run(&["run", echo, good.to_str().expect("a utf-8 path")], None);
+    assert_eq!(whole.status.code(), Some(0), "{}", stderr(&whole));
+    let whole = stdout(&whole);
+    let bytes = [b"[", records.as_bytes(), b",\"\xff\"]"].concat();
+    let bad = std::env::temp_dir().join(format!(
+        "alchemy-cli-{}-stream-bad.json",
+        std::process::id()
+    ));
+    std::fs::write(&bad, &bytes).expect("the file is written");
+    let bad = bad.to_str().expect("a utf-8 path");
+    for (input, stdin) in [(bad, None), ("-", Some(&bytes[..]))] {
+        let output = run_bytes(&["run", echo, input], stdin);
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "{input}: {}",
+            stderr(&output)
+        );
+        let fail = fail_json(&output);
+        assert_eq!(
+            fail["message"],
+            format!("cannot read {input}: stream did not contain valid UTF-8"),
+            "{input}"
+        );
+        assert_eq!(fail["output"], "partial", "{input}");
+        let written = stdout(&output);
+        assert!(
+            written.len() >= 32 * 1024,
+            "{input}: {} bytes",
+            written.len()
+        );
+        assert!(whole.starts_with(&written), "{input}");
+    }
 }
 
 /// The json transducer: the library's `transduce-tree` over the json

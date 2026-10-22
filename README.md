@@ -71,6 +71,20 @@ transducer part its documents are read through, null where it ships
 none), and its `loss` sentences: what a document written in it does not
 keep.
 
+The Rust command reads `INPUT` through a reader where the route allows
+it. `run` reads `INPUT`, a file or standard input, a window at a time,
+since the JSON grammar declares `lex.window` (tabnas/parser's admin
+ADR-30). The parser then holds a window of a long document rather than
+all of it, and the output streams as the parse goes. `run --grammar`
+reads `INPUT` the same way: a window at a time where the grammar declares
+it (JSON, JSONC, JSON Lines and CSV), and whole first otherwise.
+`translate` reads a file that way on the route through its format's
+transducer part, and whole on every other route. It reads standard input
+whole, since a stream the part refuses is read again. Bytes that are not
+UTF-8, met part way, fail as a file that cannot be read (status 2), after
+any output the document before them made. The TypeScript and Go commands
+read `INPUT` whole.
+
 ## Install
 
 Each runtime installs a command named `alchemy`:

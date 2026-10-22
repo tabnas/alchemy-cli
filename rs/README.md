@@ -6,7 +6,8 @@ documents. It compiles every program with
 [tabnas-transduce](https://github.com/tabnas/transduce)'s routers and
 [tabnas-render](https://github.com/tabnas/render)'s renderers, which
 alchemy's runtime takes by injection, and reads `run`'s input through
-transduce's parser source with the tabnas JSON grammar. See the
+transduce's parser source with the tabnas JSON grammar, from a reader a
+window at a time (the grammar declares `lex.window`). See the
 repository [README](../README.md) and [AGENTS.md](../AGENTS.md).
 
 ```text

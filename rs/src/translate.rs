@@ -29,8 +29,15 @@
 //! here knows a format by its name: a format is what its manifest says,
 //! and a package whose manifest names no parts this host can take is not
 //! a format here.
+//!
+//! A document may be a file ([`Document::File`]): the transducer part's
+//! route reads it through a reader (transduce's
+//! `ParserEventSource::from_reader`), a window of it at a time where the
+//! source's grammar declares `lex.window` (tabnas/parser's admin ADR-30),
+//! and every other route reads it whole.
 
-use std::io::Write;
+use std::io::{Read, Write};
+use std::path::Path;
 use std::sync::{Arc, OnceLock};
 
 use tabnas_alchemy::translate::{
@@ -43,16 +50,17 @@ use tabnas_transduce::{
     Limits, Metrics, ParserEventSource, ParserSource, Segment, Sink, TreeContract,
 };
 
-/// A format's grammar applied to a text, two ways, each over a fresh parser
-/// of the grammar under the format's own options, since a source owns its
-/// parser: as transduce's source of the document's events
+/// A format's grammar applied to a document, three ways, each over a
+/// fresh parser of the grammar under the format's own options, since a
+/// source owns its parser: as transduce's source of a text's events
 /// ([`ParserSource`]), and as its source of the parser's rule passes
-/// ([`ParserEventSource`]), which a program over parser events reads (a
-/// transducer part, `run --grammar`).
+/// ([`ParserEventSource`]) over a text or over what a reader gives, which a
+/// program over parser events reads (a transducer part, `run --grammar`).
 #[derive(Clone, Copy)]
 struct Parsing {
     events: for<'s> fn(&'s str) -> ParserSource<'s>,
     passes: for<'s> fn(&'s str) -> ParserEventSource<'s>,
+    reads: fn(Box<dyn Read + Send>) -> ParserEventSource<'static>,
 }
 
 /// How a format's documents are read.
@@ -114,11 +122,42 @@ impl Format {
         match self.reader {
             Reader::Parser(parsing) => Ok((parsing.passes)(text)),
             Reader::Checked(check, parsing) => check(text).map(|()| (parsing.passes)(text)),
-            Reader::Tree(_) => Err(Fail::input(format!(
-                "{} is read as a tree, not parsed: it has no rule passes for a program to read",
-                self.id()
-            ))),
+            Reader::Tree(_) => Err(self.no_passes()),
         }
+    }
+
+    /// The parser's rule passes over what `reader` gives, as
+    /// [`Format::passes`] answers them over the same text: read a window at
+    /// a time where the grammar declares `lex.window`, and whole first
+    /// otherwise. A reader that fails, or bytes that are not UTF-8, end the
+    /// run where the parser meets them, with the engine's `unreadable`
+    /// ([`unreadable`]). The check the package's parse makes first, where
+    /// it makes one, reads the document whole, and the parser then reads
+    /// the text it passed.
+    pub fn passes_from(
+        &self,
+        mut reader: Box<dyn Read + Send>,
+    ) -> Result<ParserEventSource<'static>, Fail> {
+        match self.reader {
+            Reader::Parser(parsing) => Ok((parsing.reads)(reader)),
+            Reader::Checked(check, parsing) => {
+                let mut text = String::new();
+                reader.read_to_string(&mut text).map_err(cannot_read)?;
+                check(&text)?;
+                Ok((parsing.reads)(Box::new(std::io::Cursor::new(
+                    text.into_bytes(),
+                ))))
+            }
+            Reader::Tree(_) => Err(self.no_passes()),
+        }
+    }
+
+    /// The refusal of a format read as a tree, which has no rule passes.
+    fn no_passes(&self) -> Fail {
+        Fail::input(format!(
+            "{} is read as a tree, not parsed: it has no rule passes for a program to read",
+            self.id()
+        ))
     }
 
     /// The transducer part compiled on its own, over the parser's rule
@@ -230,8 +269,9 @@ macro_rules! descriptor {
     };
 }
 
-/// The two sources of a grammar's parser, each over a fresh parser `$make`
-/// makes: the document's events and the parser's rule passes.
+/// The three sources of a grammar's parser, each over a fresh parser
+/// `$make` makes: a text's events, and the parser's rule passes over a text
+/// and over a reader.
 macro_rules! parsing {
     ($make:expr) => {{
         fn events(text: &str) -> ParserSource<'_> {
@@ -240,7 +280,14 @@ macro_rules! parsing {
         fn passes(text: &str) -> ParserEventSource<'_> {
             ParserEventSource::new($make, text)
         }
-        Parsing { events, passes }
+        fn reads(reader: Box<dyn Read + Send>) -> ParserEventSource<'static> {
+            ParserEventSource::from_reader($make, reader)
+        }
+        Parsing {
+            events,
+            passes,
+            reads,
+        }
     }};
 }
 
@@ -699,6 +746,29 @@ impl Write for Held {
     }
 }
 
+/// What a translation reads.
+#[derive(Clone, Copy)]
+pub enum Document<'a> {
+    /// A text, read whole.
+    Text(&'a str),
+    /// A file. The transducer part's route reads a regular file through a
+    /// reader ([`Format::passes_from`]), a window of it at a time where the
+    /// source's grammar declares `lex.window`, so that the run holds a
+    /// window of the document rather than all of it. Every other route
+    /// reads the file whole, and so does a stream the part refuses, which
+    /// reads it again. A file that is not a regular file, such as a pipe,
+    /// is read whole first, since it cannot be read twice.
+    File(&'a Path),
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The files the transducer part's route read through a reader on this
+    /// thread, for the tests that hold a file to that route.
+    static READ_THROUGH_A_READER: std::cell::RefCell<Vec<std::path::PathBuf>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
 /// Run a request over `input`, writing the document to `out` once the
 /// run has succeeded; `metrics` collects what the stages report, the
 /// output's bytes among it.
@@ -717,6 +787,19 @@ pub fn run_compiled(
     request: &Request<'_>,
     compiled: &Compiled,
     input: &str,
+    out: Box<dyn Write + Send>,
+    metrics: Arc<Metrics>,
+) -> Result<(), Fail> {
+    run_document(request, compiled, Document::Text(input), out, metrics)
+}
+
+/// [`run_compiled`] over a document, which may be a file ([`Document`]). A
+/// file that cannot be read fails as one a reader gives up on part way
+/// does, with the engine's `unreadable` ([`unreadable`]).
+pub fn run_document(
+    request: &Request<'_>,
+    compiled: &Compiled,
+    document: Document<'_>,
     mut out: Box<dyn Write + Send>,
     metrics: Arc<Metrics>,
 ) -> Result<(), Fail> {
@@ -725,7 +808,17 @@ pub fn run_compiled(
         program,
         parsed,
     } = compiled;
-    let attempt = |metrics: Arc<Metrics>| -> Result<Vec<u8>, Fail> {
+    // A file that is no regular file is read whole first: a stream the
+    // part refuses reads the file again, which a pipe could not give.
+    let piped;
+    let document = match document {
+        Document::File(path) if !std::fs::metadata(path).is_ok_and(|meta| meta.is_file()) => {
+            piped = read_file(path)?;
+            Document::Text(&piped)
+        }
+        document => document,
+    };
+    let attempt = |metrics: Arc<Metrics>, input: &str| -> Result<Vec<u8>, Fail> {
         let held = Held::default();
         let sink = program.sink(
             Box::new(held.clone()),
@@ -765,14 +858,25 @@ pub fn run_compiled(
     };
     // The transducer's route first, where the source ships a part and the
     // whole document is asked: its rule passes through the part into the
-    // program, streamed whatever the grammar. A document whose events are
-    // not what the grammar's value holds (a repeated member, streamed
-    // twice, which the composition's tree-contract refuses) is read again
-    // whole below: the grammar's own value is the document.
+    // program, streamed whatever the grammar, from a file through a
+    // reader. A document whose events are not what the grammar's value
+    // holds (a repeated member, streamed twice, which the composition's
+    // tree-contract refuses) is read again whole below: the grammar's own
+    // value is the document.
     let transduced = match parsed {
         Some((_, program)) => {
             let own = Metrics::new();
-            match attempt_parsed(request, program, input, own.clone()) {
+            let passes = || match document {
+                Document::Text(text) => request.from.passes(text),
+                Document::File(path) => {
+                    #[cfg(test)]
+                    READ_THROUGH_A_READER.with(|read| read.borrow_mut().push(path.into()));
+                    std::fs::File::open(path)
+                        .map_err(cannot_read)
+                        .and_then(|file| request.from.passes_from(Box::new(file)))
+                }
+            };
+            match attempt_parsed(request, program, passes, own.clone()) {
                 Err(fail) if unfollowed(&fail) => None,
                 outcome => {
                     let bytes = outcome?;
@@ -785,7 +889,10 @@ pub fn run_compiled(
     };
     let bytes = match transduced {
         Some(bytes) => bytes,
-        None => attempt(metrics)?,
+        None => match document {
+            Document::Text(text) => attempt(metrics, text)?,
+            Document::File(path) => attempt(metrics, &read_file(path)?)?,
+        },
     };
     let mut written = 0;
     write_out(&mut out, &bytes, &mut written).map_err(|e| {
@@ -802,14 +909,14 @@ pub fn run_compiled(
     })
 }
 
-/// One run of a request over its source's parser's rule passes, through
-/// the composition over the source's transducer part: what it wrote, held
-/// until the run has succeeded, as [`run_compiled`]'s other attempts hold
-/// it.
-fn attempt_parsed(
+/// One run of a request over its source's parser's rule passes, which
+/// `passes` makes once the program's sink is made, through the composition
+/// over the source's transducer part: what it wrote, held until the run
+/// has succeeded, as [`run_document`]'s other attempts hold it.
+fn attempt_parsed<'s>(
     request: &Request<'_>,
     program: &Program,
-    input: &str,
+    passes: impl FnOnce() -> Result<ParserEventSource<'s>, Fail>,
     metrics: Arc<Metrics>,
 ) -> Result<Vec<u8>, Fail> {
     let held = Held::default();
@@ -819,9 +926,7 @@ fn attempt_parsed(
         &request.limits,
         metrics.clone(),
     )?;
-    request
-        .from
-        .passes(input)?
+    passes()?
         .limits(request.limits.clone())
         .metrics(metrics)
         .run_boxed(sink)
@@ -833,6 +938,38 @@ fn attempt_parsed(
             .map_err(|_| Fail::new(Code::OutputFailed, "the held output's lock was poisoned"))?,
     );
     Ok(bytes)
+}
+
+/// A file's text, read whole. A file that cannot be read, or that holds
+/// bytes that are not UTF-8, fails as a reader that fails does
+/// ([`cannot_read`]).
+fn read_file(path: &Path) -> Result<String, Fail> {
+    std::fs::read_to_string(path).map_err(cannot_read)
+}
+
+/// A document that could not be read, failed as the engine's `unreadable`
+/// fails a parse from a reader once transduce reports it: `INPUT_INVALID`,
+/// the code and why ([`unreadable`] reads it back).
+fn cannot_read(error: std::io::Error) -> Fail {
+    Fail::input(format!("unreadable: {error}"))
+}
+
+/// Why a run's document could not be read, where that is why it failed: a
+/// read that failed, or bytes that are not UTF-8, which a parse from a
+/// reader meets where they are (the engine's `unreadable`, which transduce
+/// reports as `INPUT_INVALID`, the engine's code before its message), and
+/// a file read whole that could not be. A host reports such a document as
+/// a file it could not read, not as one that does not parse.
+pub fn unreadable(fail: &Fail) -> Option<&str> {
+    if fail.code != Code::InputInvalid {
+        return None;
+    }
+    let reason = fail.message.strip_prefix("unreadable: ")?;
+    Some(
+        reason
+            .strip_prefix("the source could not be read: ")
+            .unwrap_or(reason),
+    )
 }
 
 /// Write `bytes` to `out` and flush it, counting in `written` the bytes
@@ -1288,6 +1425,162 @@ mod tests {
                 "{doc:?}"
             );
         }
+    }
+
+    /// `bytes` in a file of its own in the temporary directory.
+    fn file_of(name: &str, bytes: &[u8]) -> std::path::PathBuf {
+        let file = std::env::temp_dir().join(format!(
+            "alchemy-cli-translate-{}-{name}",
+            std::process::id()
+        ));
+        std::fs::write(&file, bytes).expect("the file is written");
+        file
+    }
+
+    /// [`translated`], from a file ([`Document::File`]).
+    fn translated_file(
+        from: &Format,
+        to: &str,
+        path: Option<&str>,
+        file: &Path,
+    ) -> Result<String, Fail> {
+        let limits = Limits::default();
+        let request = Request {
+            from,
+            to: format(to).expect("a format"),
+            path: path.map(|p| parse_path(p, &limits).expect("a path")),
+            options: Options::default(),
+            program: None,
+            limits,
+        };
+        let held = Held::default();
+        run_document(
+            &request,
+            &compile(&request)?,
+            Document::File(file),
+            Box::new(held.clone()),
+            Metrics::new(),
+        )?;
+        let bytes = held.0.lock().unwrap().clone();
+        Ok(String::from_utf8(bytes).expect("the output is UTF-8"))
+    }
+
+    /// Whether the transducer part's route read `file` through a reader.
+    fn read_through_a_reader(file: &Path) -> bool {
+        READ_THROUGH_A_READER.with(|read| read.borrow().iter().any(|p| p == file))
+    }
+
+    /// A file translates as its text does. The transducer part's route
+    /// reads it through a reader where the source ships a part and the
+    /// whole document is asked: a document the part refuses is read again
+    /// whole (a repeated member), and so are a byte-order mark, a document
+    /// json5's check refuses and one that does not parse. A path, and a
+    /// format whose package ships no part, read the file whole.
+    #[test]
+    fn a_file_translates_as_its_text_does() {
+        let cases: &[(&str, &str, Option<&str>, &str)] = &[
+            (
+                "json",
+                "json",
+                None,
+                r#"{"a":[1,2.50,"x",{"b":null}],"c":{}}"#,
+            ),
+            ("json", "yaml", None, r#"[{"a":1},{"a":2}]"#),
+            ("json", "csv", None, r#"[{"a":1,"b":"x"},{"a":2,"b":"y"}]"#),
+            ("json", "json", None, r#"{"a":1,"a":2}"#),
+            ("json", "json", None, "\u{feff}[1, 2]"),
+            ("json", "json", None, "[1,"),
+            ("json", "json", Some("[\"a\",1]"), r#"{"a":[1,2.50]}"#),
+            (
+                "jsonc",
+                "json",
+                None,
+                "// rows\n[{\"a\": 1, /* c */ \"b\": 2,}]",
+            ),
+            ("jsonl", "json", None, "{\"a\":1}\n{\"a\":2}\n"),
+            ("csv", "json", None, "a,b\n1,\"x\"\n2,y\n"),
+            ("json5", "json", None, "{a: 1, b: [2,],}"),
+            ("json5", "json", None, "// only a comment"),
+            ("yaml", "json", None, "a:\n  b: 1\na:\n  c: 2\n"),
+            ("xml", "json", None, "<a><b>1</b></a>"),
+            ("toml", "json", None, "a = 1\n[b]\nc = 2\n"),
+        ];
+        for (index, (from, to, path, text)) in cases.iter().enumerate() {
+            let source = format(from).expect("a format");
+            let file = file_of(&format!("{index}.{from}"), text.as_bytes());
+            let whole = translated(source, to, *path, None, text);
+            let read = translated_file(source, to, *path, &file);
+            assert_eq!(
+                format!("{read:?}"),
+                format!("{whole:?}"),
+                "{from} {text:?} to {to} at {path:?}"
+            );
+            assert_eq!(
+                read_through_a_reader(&file),
+                path.is_none() && source.transducer().is_some(),
+                "{from} {text:?} at {path:?}: the route"
+            );
+            let _ = std::fs::remove_file(&file);
+        }
+    }
+
+    /// A file that cannot be read fails with the engine's `unreadable` on
+    /// every route: bytes that are not UTF-8, which the part's route meets
+    /// through a reader and every other route reading the file whole, and a
+    /// file that is not there. [`unreadable`] gives the reason as
+    /// `read_to_string` words it, and nothing for a document that does not
+    /// parse.
+    #[test]
+    fn a_file_that_cannot_be_read_is_unreadable_on_every_route() {
+        let bad = file_of("bad.json", b"[1, \"\xff\"]");
+        let json = format("json").expect("json is a format");
+        let toml = format("toml").expect("toml is a format");
+        for (from, path) in [(json, None), (json, Some("[0]")), (toml, None)] {
+            let fail = translated_file(from, "json", path, &bad).unwrap_err();
+            assert_eq!(fail.code, Code::InputInvalid, "{fail:?}");
+            assert_eq!(
+                unreadable(&fail),
+                Some("stream did not contain valid UTF-8"),
+                "{} at {path:?}: {fail:?}",
+                from.id()
+            );
+        }
+        assert!(read_through_a_reader(&bad));
+        let _ = std::fs::remove_file(&bad);
+        let missing = std::env::temp_dir().join("alchemy-cli-translate-no-such-file.json");
+        let fail = translated_file(json, "json", None, &missing).unwrap_err();
+        let reason = std::fs::read_to_string(&missing).unwrap_err().to_string();
+        assert_eq!(unreadable(&fail), Some(reason.as_str()), "{fail:?}");
+        let fail = translated(json, "json", None, None, "[1,").unwrap_err();
+        assert_eq!(unreadable(&fail), None, "{fail:?}");
+    }
+
+    /// A file that is not a regular file is read whole first, since a
+    /// stream the part refuses reads the file again: a pipe holding a
+    /// repeated member translates as its text does.
+    #[cfg(unix)]
+    #[test]
+    fn a_pipe_is_read_whole_first() {
+        let fifo = std::env::temp_dir().join(format!(
+            "alchemy-cli-translate-{}-pipe.json",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&fifo);
+        let made = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .expect("mkfifo runs");
+        assert!(made.success());
+        let writer = {
+            let fifo = fifo.clone();
+            std::thread::spawn(move || std::fs::write(&fifo, r#"{"a":1,"a":2}"#))
+        };
+        let json = format("json").expect("json is a format");
+        let read = translated_file(json, "json", None, &fifo);
+        writer.join().unwrap().expect("the pipe is written");
+        assert_eq!(read.unwrap(), "{\"a\":2}\n");
+        assert!(!read_through_a_reader(&fifo));
+        let _ = std::fs::remove_file(&fifo);
     }
 
     /// Every format with a parser answers its rule passes; one read as a
