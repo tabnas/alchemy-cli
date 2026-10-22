@@ -39,6 +39,15 @@
 //! flushed once, at the end; a failure found after bytes were written
 //! says so.
 //!
+//! `run` reads `INPUT`, a file or standard input, through a reader: the
+//! JSON grammar declares `lex.window` (tabnas/parser's admin ADR-30), so
+//! the parser holds a window of a long document rather than all of it.
+//! `run --grammar` reads it the same way, a window at a time where the
+//! grammar declares it and whole first otherwise. A read that fails, or
+//! bytes that are not UTF-8, are met where they are, after any output the
+//! document before them made, and fail as a file that cannot be read
+//! does.
+//!
 //! `translate` reads `INPUT` with the grammar of `--from` and writes it in
 //! `--to`, through the translation parts each format's package exports,
 //! as `tabnas_alchemy_cli::translate` composes them: any of the formats
@@ -47,19 +56,23 @@
 //! the document; `--key` names the member a root is wrapped under for a
 //! format whose document must be an object (`items` by default); `--with`
 //! runs a program over the input first, as `run` does, and writes its
-//! export's events or table in `--to`.
+//! export's events or table in `--to`. A file `INPUT` is read through a
+//! reader on the route through the source's transducer part, and whole
+//! on every other route ([`translate::Document`]); standard input is read
+//! whole, since a stream the part refuses is read again.
 //!
 //! The command is where alchemy, transduce and render meet: every program
 //! is compiled with transduce's routers and render's renderers, which make
 //! the stages its plan is lowered onto.
 
 use std::io::{self, Read, Write};
+use std::path::Path;
 use std::process::ExitCode;
 use std::sync::Arc;
 
 use tabnas_alchemy::translate::Options;
 use tabnas_alchemy::{canonical, format, parse_file, Input, Program, Renderer};
-use tabnas_alchemy_cli::translate::{self, Format};
+use tabnas_alchemy_cli::translate::{self, Document, Format};
 use tabnas_transduce::{Code, Fail, Limits, Metrics, ParserSink, Sink};
 
 /// This crate's version, read from `rs/Cargo.toml`. It MUST equal
@@ -191,6 +204,43 @@ fn read(file: &str) -> Result<String, Exit> {
     Ok(text)
 }
 
+/// `file`, or standard input for `-`, opened for a parse that reads it
+/// through a reader. A file that cannot be opened is refused as [`read`]
+/// refuses it; one that fails part way fails the run ([`unreadable`]).
+fn open(file: &str) -> Result<Box<dyn Read + Send>, Exit> {
+    if file == "-" {
+        return Ok(Box::new(io::stdin()));
+    }
+    match std::fs::File::open(file) {
+        Ok(opened) => Ok(Box::new(opened)),
+        Err(error) => Err(Exit {
+            fail: Fail::input(format!("cannot read {file}: {error}")),
+            status: 2,
+        }),
+    }
+}
+
+/// A run's failure, where `file` could not be read as [`read`] reports
+/// one: a read that failed, or bytes that are not UTF-8, which a parse
+/// from a reader meets part way ([`translate::unreadable`]). It exits 2
+/// and keeps the mark of any output written before it.
+fn unreadable(file: &str, fail: Fail) -> Exit {
+    match translate::unreadable(&fail) {
+        Some(reason) => {
+            let cannot = Fail::input(format!("cannot read {file}: {reason}"));
+            Exit {
+                fail: if fail.committed_output {
+                    cannot.committed()
+                } else {
+                    cannot
+                },
+                status: 2,
+            }
+        }
+        None => Exit::from(fail),
+    }
+}
+
 /// The text to print for the command line, or the failure. `run` writes
 /// its answer itself and answers nothing here.
 fn run(args: &[String]) -> Result<String, Exit> {
@@ -243,8 +293,9 @@ fn run(args: &[String]) -> Result<String, Exit> {
                         &limits,
                         metrics.clone(),
                     )?;
-                    let input = read(&options.input)?;
-                    execute(sink, metrics, &input, limits)?;
+                    let input = open(&options.input)?;
+                    execute(sink, metrics, input, limits)
+                        .map_err(|fail| unreadable(&options.input, fail))?;
                 }
                 Some(grammar) => {
                     let sink = program.parser_sink(
@@ -253,8 +304,9 @@ fn run(args: &[String]) -> Result<String, Exit> {
                         &limits,
                         metrics.clone(),
                     )?;
-                    let input = read(&options.input)?;
-                    execute_passes(grammar, sink, metrics, &input, limits)?;
+                    let input = open(&options.input)?;
+                    execute_passes(grammar, sink, metrics, input, limits)
+                        .map_err(|fail| unreadable(&options.input, fail))?;
                 }
             }
             Ok(String::new())
@@ -290,14 +342,21 @@ fn run(args: &[String]) -> Result<String, Exit> {
             // route that cannot be composed never waits on standard input,
             // and once.
             let compiled = translate::compile(&request)?;
-            let input = read(&options.input)?;
-            translate::run_compiled(
+            let text;
+            let document = if options.input == "-" {
+                text = read(&options.input)?;
+                Document::Text(&text)
+            } else {
+                Document::File(Path::new(&options.input))
+            };
+            translate::run_document(
                 &request,
                 &compiled,
-                &input,
+                document,
                 Box::new(io::stdout()),
                 Metrics::new(),
-            )?;
+            )
+            .map_err(|fail| unreadable(&options.input, fail))?;
             Ok(String::new())
         }
         "formats" => {
@@ -464,14 +523,14 @@ impl RunOptions {
     }
 }
 
-/// Run the program over one JSON document, into the sink that writes its
-/// output. The document's events come from JSON's own transducer part
-/// over the parser's rule passes, the engine's arrays emptied behind
-/// them.
+/// Run the program over one JSON document, which `input` gives, into the
+/// sink that writes its output. The document's events come from JSON's
+/// own transducer part over the parser's rule passes, the engine's arrays
+/// emptied behind them.
 fn execute(
     sink: Box<dyn Sink + Send>,
     metrics: Arc<Metrics>,
-    input: &str,
+    input: Box<dyn Read + Send>,
     limits: Limits,
 ) -> Result<(), Fail> {
     let json = translate::format("json")
@@ -480,7 +539,7 @@ fn execute(
         .transducer_program()?
         .ok_or_else(|| Fail::input("the JSON grammar ships no transducer part"))?;
     let head = part.parser_sink_into(sink, &limits, metrics.clone())?;
-    json.passes(input)
+    json.passes_from(input)
         .and_then(|source| {
             source
                 .grammar(json.id())
@@ -494,17 +553,17 @@ fn execute(
         .map_err(|fail| committed(fail, &metrics))
 }
 
-/// Run the program over the rule passes of one document, parsed with
-/// `grammar`, into the sink that writes its output.
+/// Run the program over the rule passes of one document, which `input`
+/// gives, parsed with `grammar`, into the sink that writes its output.
 fn execute_passes(
     grammar: &Format,
     sink: Box<dyn ParserSink + Send>,
     metrics: Arc<Metrics>,
-    input: &str,
+    input: Box<dyn Read + Send>,
     limits: Limits,
 ) -> Result<(), Fail> {
     grammar
-        .passes(input)
+        .passes_from(input)
         .and_then(|source| {
             source
                 .limits(limits)

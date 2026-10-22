@@ -30,13 +30,13 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use tabnas_alchemy::translate::Options;
-use tabnas_alchemy_cli::translate::{self, Format, Request};
+use tabnas_alchemy_cli::translate::{self, Document, Format, Request};
 use tabnas_transduce::{Code, Datum, Fail, Limits, Metrics};
 
 /// What a run wrote, shared with the test.
@@ -548,6 +548,16 @@ fn translate_text(
     text: &str,
     program: Option<(&str, &str)>,
 ) -> Result<String, Fail> {
+    translate_document(from, to, Document::Text(text), program)
+}
+
+/// [`translate_text`] over a document, which may be a file.
+fn translate_document(
+    from: &Format,
+    to: &Format,
+    document: Document<'_>,
+    program: Option<(&str, &str)>,
+) -> Result<String, Fail> {
     let request = Request {
         from,
         to,
@@ -570,10 +580,10 @@ fn translate_text(
         }
     };
     let out = Buffer::default();
-    translate::run_compiled(
+    translate::run_document(
         &request,
         &compiled,
-        text,
+        document,
         Box::new(out.clone()),
         Metrics::new(),
     )?;
@@ -2135,6 +2145,40 @@ fn every_fixture_of_every_format_translates_into_every_format() {
         every_otherwise_met: true,
     };
     on_stack(|| matrix(docs, bounds));
+}
+
+/// Every document of the corpora translates from its file as from its
+/// text, into JSON and into CSV, written or refused alike. A file is read
+/// through the transducer part's route where its format's package ships a
+/// part: through a reader, a window at a time where the grammar declares
+/// `lex.window` (JSON, JSONC, JSON Lines and CSV), and whole first
+/// otherwise. A stream the part refuses reads the file again whole, as
+/// every other route reads it.
+#[test]
+fn every_document_translates_from_its_file_as_from_its_text() {
+    let dir = std::env::temp_dir().join(format!("alchemy-cli-{}-files", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("the directory is made");
+    let docs = corpus();
+    let compared = on_stack(|| {
+        let mut compared = 0;
+        for (index, (name, id, text)) in docs.iter().enumerate() {
+            let from = format(id);
+            let file: &Path = &dir.join(format!("{index}.{id}"));
+            std::fs::write(file, text).expect("the file is written");
+            for to in ["json", "csv"] {
+                let to = format(to);
+                let whole = translate_text(from, to, text, None).map_err(|f| format!("{f:?}"));
+                let read = translate_document(from, to, Document::File(file), None)
+                    .map_err(|f| format!("{f:?}"));
+                assert_eq!(read, whole, "{name} into {}", to.id());
+                compared += 1;
+            }
+        }
+        compared
+    });
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(compared, 2 * docs.len());
+    assert!(docs.len() >= 132, "{}", docs.len());
 }
 
 /// A request from `from` to `to`, with no path and no program.
