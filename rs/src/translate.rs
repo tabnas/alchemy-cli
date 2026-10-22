@@ -15,7 +15,9 @@
 //! is read through it: the route is composed over the transducer
 //! (`compose_parsed`), and the input's rule passes stream through
 //! transduce's `ParserEventSource` into the program, whatever the grammar,
-//! with nothing held but what the part keeps. Any other format is parsed
+//! with nothing held but what the part keeps, and the engine's arrays
+//! emptied behind the stream where transduce verifies the grammar alike
+//! pruned and not ([`Format::pruned`]). Any other format is parsed
 //! whole and its value walked, and so is a document when a path selects a
 //! value below the root, and one whose events are not what the grammar's
 //! value holds, which the part refuses part way (a YAML stream of several
@@ -46,8 +48,8 @@ use tabnas_alchemy::translate::{
 };
 use tabnas_alchemy::{Input, Output, Program, Source};
 use tabnas_transduce::{
-    walk_datum, AbortFlag, Code, Datum, DatumBuilder, Duplicates, Fail, Flow, Guarded, JsonEvent,
-    Limits, Metrics, ParserEventSource, ParserSource, Segment, Sink, TreeContract,
+    capability, walk_datum, AbortFlag, Code, Datum, DatumBuilder, Duplicates, Fail, Flow, Guarded,
+    JsonEvent, Limits, Metrics, ParserEventSource, ParserSource, Segment, Sink, TreeContract,
 };
 
 /// A format's grammar applied to a document, three ways, each over a
@@ -149,6 +151,20 @@ impl Format {
                 ))))
             }
             Reader::Tree(_) => Err(self.no_passes()),
+        }
+    }
+
+    /// `source`, pruned where transduce verifies the format's grammar alike
+    /// pruned and not (`capability::prunable`, by the format's id): the
+    /// engine's arrays are emptied behind the stream, so its tree holds no
+    /// record the stream has passed. Any other grammar's source is left as
+    /// it is, since a run that prunes an unlisted grammar is refused before
+    /// the parse.
+    pub fn pruned<'s>(&self, source: ParserEventSource<'s>) -> ParserEventSource<'s> {
+        if capability::prunable(self.id()) {
+            source.grammar(self.id()).prune()
+        } else {
+            source
         }
     }
 
@@ -926,7 +942,9 @@ fn attempt_parsed<'s>(
         &request.limits,
         metrics.clone(),
     )?;
-    passes()?
+    request
+        .from
+        .pruned(passes()?)
         .limits(request.limits.clone())
         .metrics(metrics)
         .run_boxed(sink)
@@ -1581,6 +1599,78 @@ mod tests {
         assert_eq!(read.unwrap(), "{\"a\":2}\n");
         assert!(!read_through_a_reader(&fifo));
         let _ = std::fs::remove_file(&fifo);
+    }
+
+    /// Every element of every array, and every member of every map, in
+    /// `value`.
+    fn elements(value: &tabnas::Value) -> usize {
+        match value {
+            tabnas::Value::Array(items) => items.len() + items.iter().map(elements).sum::<usize>(),
+            tabnas::Value::ListRef(list) => {
+                list.value.len() + list.value.iter().map(elements).sum::<usize>()
+            }
+            tabnas::Value::Object(map) => map.len() + map.values().map(elements).sum::<usize>(),
+            tabnas::Value::MapRef(map) => {
+                map.value.len() + map.value.values().map(elements).sum::<usize>()
+            }
+            _ => 0,
+        }
+    }
+
+    /// What a run of `text`'s rule passes leaves of the engine's tree,
+    /// through [`Format::pruned`] or not.
+    fn left(format: &Format, text: &str, prune: bool) -> usize {
+        let source = format.passes(text).expect("the format is parsed");
+        let source = if prune { format.pruned(source) } else { source };
+        let (outcome, _, value) = source.run_owned_with_value(Vec::new());
+        outcome.expect("the passes stream");
+        elements(&value.expect("a parse that completed returns a value"))
+    }
+
+    /// A grammar transduce lists as prunable has the engine's arrays
+    /// emptied behind the stream: two thousand records leave the tree
+    /// holding what two hundred do, where a run that does not prune holds
+    /// every one. An unlisted grammar is left as it is, and runs.
+    #[test]
+    fn a_listed_grammars_tree_is_emptied_behind_the_stream() {
+        let csv = |n: usize| {
+            let mut text = String::from("a,b\n");
+            for i in 0..n {
+                text.push_str(&format!("{i},x{i}\n"));
+            }
+            text
+        };
+        let jsonl = |n: usize| {
+            let mut text = String::new();
+            for i in 0..n {
+                text.push_str(&format!("{{\"a\":{i}}}\n"));
+            }
+            text
+        };
+        let json = |n: usize| {
+            let items: Vec<String> = (0..n).map(|i| format!("{{\"a\":{i}}}")).collect();
+            format!("[{}]", items.join(","))
+        };
+        let docs: [(&str, &dyn Fn(usize) -> String); 3] =
+            [("csv", &csv), ("jsonl", &jsonl), ("json", &json)];
+        for (id, doc) in docs {
+            let listed = format(id).expect("a format");
+            assert!(capability::prunable(id), "{id}");
+            assert_eq!(
+                left(listed, &doc(200), true),
+                left(listed, &doc(2000), true),
+                "{id}: pruned"
+            );
+            assert!(
+                left(listed, &doc(2000), false) >= left(listed, &doc(200), false) + 1800,
+                "{id}: not pruned"
+            );
+        }
+        let toml = format("toml").expect("toml is a format");
+        assert!(!capability::prunable("toml"));
+        let text = "a = 1\n[b]\nc = [1, 2, 3]\n";
+        assert_eq!(left(toml, text, true), left(toml, text, false));
+        assert!(left(toml, text, true) > 0);
     }
 
     /// Every format with a parser answers its rule passes; one read as a

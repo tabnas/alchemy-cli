@@ -43,7 +43,9 @@
 //! JSON grammar declares `lex.window` (tabnas/parser's admin ADR-30), so
 //! the parser holds a window of a long document rather than all of it.
 //! `run --grammar` reads it the same way, a window at a time where the
-//! grammar declares it and whole first otherwise. A read that fails, or
+//! grammar declares it and whole first otherwise, and empties the
+//! engine's arrays behind the stream where transduce verifies the grammar
+//! alike pruned and not, as `run` does for JSON. A read that fails, or
 //! bytes that are not UTF-8, are met where they are, after any output the
 //! document before them made, and fail as a file that cannot be read
 //! does.
@@ -541,9 +543,7 @@ fn execute(
     let head = part.parser_sink_into(sink, &limits, metrics.clone())?;
     json.passes_from(input)
         .and_then(|source| {
-            source
-                .grammar(json.id())
-                .prune()
+            json.pruned(source)
                 .limits(limits)
                 .metrics(metrics.clone())
                 .run_boxed(head)
@@ -565,7 +565,8 @@ fn execute_passes(
     grammar
         .passes_from(input)
         .and_then(|source| {
-            source
+            grammar
+                .pruned(source)
                 .limits(limits)
                 .metrics(metrics.clone())
                 .run_boxed(sink)
