@@ -1085,14 +1085,12 @@ fn source<S: Sink + Send + 'static>(
 ) -> (Result<Flow, Fail>, S) {
     match format.reader {
         Reader::Parser(parsing) => (parsing.events)(input)
-            .grammar(format.id())
             .limits(limits.clone())
             .metrics(metrics)
             .run_owned(sink),
         Reader::Checked(check, parsing) => match check(input) {
             Err(refused) => (Err(refused), sink),
             Ok(()) => (parsing.events)(input)
-                .grammar(format.id())
                 .limits(limits.clone())
                 .metrics(metrics)
                 .run_owned(sink),

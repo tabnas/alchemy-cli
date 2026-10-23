@@ -702,7 +702,6 @@ fn a_scan_emit_state_is_measured_and_capped() {
         .unwrap();
     let doc = format!(r#"[{{"k":"{}"}},{{"k":"b"}}]"#, "a".repeat(500));
     let (outcome, _) = ParserSource::new(tabnas_json::make(), &doc)
-        .grammar("json")
         .metrics(metrics.clone())
         .run_owned(sink);
     outcome.unwrap();
@@ -771,7 +770,6 @@ fn a_scan_emit_initial_state_is_measured_and_capped() {
             )
             .unwrap();
         let (outcome, _) = ParserSource::new(tabnas_json::make(), input)
-            .grammar("json")
             .metrics(metrics.clone())
             .run_owned(sink);
         outcome.unwrap();
