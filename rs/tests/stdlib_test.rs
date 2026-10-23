@@ -1056,9 +1056,9 @@ fn numbers_are_read_and_written_as_the_renderers_do() {
     }
 }
 
-/// transduce's routers, counting the native transduce-trees they make (a
-/// spec they refuse makes none), so a test can tell the native path from
-/// the library's scan.
+/// transduce's routers, counting the native transduce-trees and
+/// transduce-records they make (a spec they refuse makes none), so a test
+/// can tell the native path from the library's scans.
 struct CountingRouters(Arc<std::sync::atomic::AtomicUsize>);
 
 impl tabnas_alchemy::shared::Routers<tabnas_alchemy::value::Val> for CountingRouters {
@@ -1144,6 +1144,22 @@ impl tabnas_alchemy::shared::Routers<tabnas_alchemy::value::Val> for CountingRou
         tabnas_alchemy::shared::Routers::<tabnas_alchemy::value::Val>::transduce_tree_reads_member_and_text(
             &tabnas_transduce::routers(),
         )
+    }
+
+    fn transduce_records(
+        &self,
+        spec: tabnas_alchemy::shared::RecordsSpec,
+        downstream: Box<dyn Sink + Send>,
+    ) -> Result<Box<dyn tabnas_alchemy::shared::ParserSink + Send>, Box<dyn Sink + Send>> {
+        let made = tabnas_alchemy::shared::Routers::<tabnas_alchemy::value::Val>::transduce_records(
+            &tabnas_transduce::routers(),
+            spec,
+            downstream,
+        );
+        if made.is_ok() {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        made
     }
 }
 
@@ -1392,4 +1408,167 @@ fn transduce_tree_texts_are_bounded_alike() {
     eprintln!(
         "transduce-tree: {compared} bounded runs agree both ways, {texts_refused} texts refused"
     );
+}
+
+/// tabnas-csv's own `test/spec` corpus, transduce's CSV fixtures, the
+/// generated records and the documents below: what the records tests
+/// read.
+fn csv_documents() -> Vec<(String, String)> {
+    let mut documents: Vec<(String, String)> = Vec::new();
+    let corpus = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../csv/test/spec");
+    let specs = tabnas_support::load_spec_dir(&corpus, &tabnas_support::SpecOptions::default())
+        .unwrap_or_else(|e| panic!("tabnas-csv's corpus is beside this checkout: {e}"));
+    for spec in &specs {
+        for row in &spec.rows {
+            documents.push((
+                format!("{}:{}", row.file, row.line),
+                row.unesc_named("input"),
+            ));
+        }
+    }
+    let mut entries: Vec<PathBuf> = std::fs::read_dir(fixtures_dir())
+        .expect("transduce's fixtures are beside this checkout")
+        .map(|e| e.expect("a directory entry").path())
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("csv"))
+        .collect();
+    entries.sort();
+    for path in entries {
+        let text = std::fs::read_to_string(&path).expect("a fixture reads");
+        documents.push((path.display().to_string(), text));
+    }
+    for n in [0, 1, 2, 50] {
+        documents.push((format!("records_csv({n})"), support::records_csv(n)));
+    }
+    for text in [
+        "",
+        "a,b\n",
+        "a,b,c\n1,,3\n,5,\n",
+        "a,b,c\n1,2\n4\n",
+        "a,b\n1,2,3,4\n",
+        "a,b\n\"x,y\",\"line\nbreak\"\n\"q\"\"q\",z\n",
+        "a,b\r\n1,2\r\n",
+        "a,a\n1,2\n",
+        " a , b \n 1 , 2 \n",
+        "a,b,\n1,2,\n",
+        "a,\"b\n",
+    ] {
+        documents.push((format!("{text:?}"), text.to_string()));
+    }
+    documents
+}
+
+/// The library's `transduce-records` and transduce's native one: over
+/// tabnas-csv's corpus, transduce's CSV fixtures, the generated records
+/// and documents that hold empty cells, short and long records, a header
+/// that repeats a name and documents the grammar refuses, for csv's part's
+/// spec and for specs without a header, without an empty group and with
+/// rules no pass names, the same bytes both ways, or the same code. The
+/// native ran each time the natives were on, and never when they were
+/// off.
+#[test]
+fn transduce_records_native_and_interpreted_agree() {
+    let specs = [
+        (
+            "csv's part",
+            "record\n    entry :document \"csv\"\n    entry :record \"record\"\n    entry :cell \"val\"\n    entry :empty \"empty\"\n    entry :header true\n    entry :unnamed \"field~\"",
+        ),
+        (
+            "no header, null for an empty cell",
+            "record\n    entry :document \"csv\"\n    entry :record \"record\"\n    entry :cell \"val\"\n    entry :empty \"empty\"\n    entry :fill null",
+        ),
+        (
+            "a header and no empty group",
+            "record\n    entry :document \"csv\"\n    entry :record \"record\"\n    entry :cell \"val\"\n    entry :header true",
+        ),
+        (
+            "rules no pass names",
+            "record\n    entry :document \"doc\"\n    entry :record \"rec\"\n    entry :cell \"cell\"\n    entry :header true",
+        ),
+    ];
+    let documents = csv_documents();
+    let made = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut compared = 0;
+    let mut failures = Vec::new();
+    for (spec_name, spec) in specs {
+        let src =
+            format!("def spec\n  {spec}\n\ndef export [input] (transduce-records spec input)\n");
+        let native = tabnas_alchemy::compile_with(
+            &src,
+            "records.alc",
+            tabnas_alchemy::Input::ParserEvents,
+            Arc::new(CountingRouters(made.clone())),
+            common::renderers(),
+        )
+        .expect("the program compiles");
+        let interpreted = native.with_native(false).unwrap();
+        for (name, text) in &documents {
+            let before = made.load(std::sync::atomic::Ordering::Relaxed);
+            let a = run_passes(&native, tabnas_csv::make, text);
+            let ran_native = made.load(std::sync::atomic::Ordering::Relaxed) - before;
+            let b = run_passes(&interpreted, tabnas_csv::make, text);
+            let after = made.load(std::sync::atomic::Ordering::Relaxed) - before;
+            assert_eq!(
+                (ran_native, after),
+                (1, 1),
+                "{spec_name}, {name}: the native ran once, the library's scans without it"
+            );
+            let name = format!("{spec_name}, {name}");
+            match (a, b) {
+                (Ok(a), Ok(b)) if a == b => {}
+                (Err(a), Err(b)) if a.code == b.code => {}
+                (a, b) => failures.push(format!(
+                    "{name}\n  native:      {a:?}\n  interpreted: {b:?}"
+                )),
+            }
+            compared += 1;
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+    assert!(compared > 200, "{compared} documents compared");
+    eprintln!("transduce-records: {compared} documents agree both ways");
+}
+
+/// The state under a small `max_metadata_bytes`: the native holds the
+/// header's names and a record's cells by the measure the library's scans
+/// hold their state to, so the two write the same bytes, or refuse with
+/// the same code, limit and message, at each bound from one that refuses
+/// the state before any pass to one that refuses none.
+#[test]
+fn transduce_records_state_is_bounded_alike() {
+    let src = "def spec\n  record\n    entry :document \"csv\"\n    entry :record \"record\"\n    entry :cell \"val\"\n    entry :empty \"empty\"\n    entry :header true\n    entry :unnamed \"field~\"\n\ndef export [input] (transduce-records spec input)\n";
+    let native = tabnas_alchemy::compile_with(
+        src,
+        "records.alc",
+        tabnas_alchemy::Input::ParserEvents,
+        Arc::new(CountingRouters(Arc::default())),
+        common::renderers(),
+    )
+    .expect("the program compiles");
+    let interpreted = native.with_native(false).unwrap();
+    let text = "identifier,full name,balance\n1,Ann,2.50\n2,,\n3,Bob,7,extra\n";
+    let mut refused = 0;
+    for max in (8..=220).step_by(4) {
+        let limits = Limits {
+            max_metadata_bytes: max,
+            ..Limits::default()
+        };
+        let (a_out, a) = run_passes_under(&native, tabnas_csv::make, text, &limits);
+        let (b_out, b) = run_passes_under(&interpreted, tabnas_csv::make, text, &limits);
+        match (&a, &b) {
+            (Ok(()), Ok(())) => assert_eq!(a_out, b_out, "max_metadata_bytes {max}"),
+            (Err(a), Err(b)) => {
+                assert_eq!(a.code, b.code, "max_metadata_bytes {max}");
+                assert_eq!(a.limit, b.limit, "max_metadata_bytes {max}");
+                assert_eq!(
+                    without_library_position(&a.message),
+                    without_library_position(&b.message),
+                    "max_metadata_bytes {max}"
+                );
+                assert_eq!(a_out, b_out, "max_metadata_bytes {max}: what each wrote");
+                refused += 1;
+            }
+            _ => panic!("max_metadata_bytes {max}:\n  native:      {a:?}\n  interpreted: {b:?}"),
+        }
+    }
+    assert!(refused > 10, "{refused} bounds refused");
 }
