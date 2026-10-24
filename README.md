@@ -35,7 +35,11 @@ alchemy formats          print the formats translate reads and writes, as JSON
 ```
 
 `FILE`, `PROGRAM` and `INPUT` may be `-` for standard input (one of them
-per run). A failure is the `Fail` as one JSON object on standard error,
+per run). The worked example of the transducer's design is under
+[`examples/`](examples/): `alchemy run examples/export.alc
+examples/records.json` renders a table bound by the document's own
+metadata as CSV, and `alchemy run --render json examples/table.alc
+examples/records.json` writes the same rows as JSON records. A failure is the `Fail` as one JSON object on standard error,
 and standard output carries nothing but the answer. The language
 reference, [`docs/language.md`](https://github.com/tabnas/alchemy/blob/main/docs/language.md)
 in alchemy, describes each command, the `run` options and the exit
@@ -112,6 +116,7 @@ build without it does.
 | `ts/` | `@tabnas/alchemy-cli`, the `alchemy` bin |
 | `go/` | `github.com/tabnas/alchemy-cli/go`, the `alchemy` command |
 | `rs/` | `tabnas-alchemy-cli`, the `alchemy` binary |
+| `examples/` | the worked example: `export.alc` renders its table as CSV, `table.alc` leaves the rendering to the command, `records.json` is the document they read |
 
 ## Build and test
 
