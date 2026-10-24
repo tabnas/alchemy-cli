@@ -17,7 +17,9 @@
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use tabnas_alchemy::translate::Options;
 use tabnas_alchemy_cli::translate::{self, Request};
@@ -207,13 +209,25 @@ fn every_yaml_fixture_written_as_yaml_reads_back_as_the_same_value() {
     assert!(total > 600, "only {total} inputs under {}", root.display());
     // The inputs are shared out over a few threads, each with the
     // translation compiled once, so the run takes seconds in a debug build.
+    // A line every 100 inputs, and at least every 25 seconds, says how far
+    // the sweep is, as every transient task reports.
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get().clamp(2, 8));
     let chunks: Vec<&[(String, String)]> = inputs.chunks(total.div_ceil(threads)).collect();
+    let started = Instant::now();
+    let done = AtomicUsize::new(0);
+    let reported = Mutex::new(Instant::now());
+    let progress = |n: usize| {
+        eprintln!(
+            "round trip: {n} of {total} inputs ({}%), {}s",
+            n * 100 / total,
+            started.elapsed().as_secs()
+        );
+    };
     let results: Vec<(usize, usize, Vec<String>)> = std::thread::scope(|scope| {
         let handles: Vec<_> = chunks
             .iter()
             .map(|chunk| {
-                let request = &request;
+                let (request, done, reported, progress) = (&request, &done, &reported, &progress);
                 scope.spawn(move || {
                     let compiled = translate::compile(request).unwrap_or_else(|f| panic!("{f}"));
                     let (mut same, mut unread) = (0, 0);
@@ -222,28 +236,35 @@ fn every_yaml_fixture_written_as_yaml_reads_back_as_the_same_value() {
                         // The reader refuses some inputs the suite holds
                         // valid; its own ledger records them. They have
                         // nothing to write.
-                        let Some(value) = read(text) else {
-                            unread += 1;
-                            continue;
-                        };
-                        let written = render(request, &compiled, text)
-                            .unwrap_or_else(|e| panic!("{name}: {e}"));
-                        match read(&written) {
-                            Some(back) if back == value => same += 1,
-                            back => differ.push(format!(
-                                "{name}\n  in:   {text:?}\n  out:  {written:?}\n  read: {}\n  back: {}",
-                                value,
-                                back.as_deref().unwrap_or("(does not parse)")
-                            )),
+                        match read(text) {
+                            None => unread += 1,
+                            Some(value) => {
+                                let written = render(request, &compiled, text)
+                                    .unwrap_or_else(|e| panic!("{name}: {e}"));
+                                match read(&written) {
+                                    Some(back) if back == value => same += 1,
+                                    back => differ.push(format!(
+                                        "{name}\n  in:   {text:?}\n  out:  {written:?}\n  read: {}\n  back: {}",
+                                        value,
+                                        back.as_deref().unwrap_or("(does not parse)")
+                                    )),
+                                }
+                            }
+                        }
+                        let n = done.fetch_add(1, Ordering::Relaxed) + 1;
+                        let mut last = reported.lock().unwrap();
+                        if n % 100 == 0 || last.elapsed() >= Duration::from_secs(25) {
+                            progress(n);
+                            *last = Instant::now();
                         }
                     }
-                    eprintln!("round trip: {} inputs done", chunk.len());
                     (same, unread, differ)
                 })
             })
             .collect();
         handles.into_iter().map(|h| h.join().unwrap()).collect()
     });
+    progress(done.load(Ordering::Relaxed));
     let same: usize = results.iter().map(|r| r.0).sum();
     let unread: usize = results.iter().map(|r| r.1).sum();
     let differ: Vec<String> = results.into_iter().flat_map(|r| r.2).collect();
