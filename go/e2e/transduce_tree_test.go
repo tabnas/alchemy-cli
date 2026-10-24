@@ -2,10 +2,14 @@
 
 package e2e
 
-// transduce_tree_test.go: the library's `transduce-tree` against
-// transduce's native one (decision 3 of alchemy's streaming plan), as
-// rs/tests/stdlib_test.rs's transduce_tree_native_and_interpreted_agree
-// runs them.
+// transduce_tree_test.go: the library's transduce-tree and
+// transduce-records, each part's one implementation
+// (rs/tests/stdlib_test.rs): over transduce's fixtures, the generated
+// documents, tabnas-csv's corpus and the documents below, a part whose
+// spec is the grammar's part's writes the walk of the grammar's own value
+// (transduce.tsv's rule, transduceDifferential), every part fails as the
+// grammar refuses a document, and a :text rule's text and a records state
+// are held to the limits.
 
 import (
 	"bytes"
@@ -16,36 +20,15 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tabnas/alchemy-cli/go/translate"
 	. "github.com/tabnas/alchemy/go"
 	"github.com/tabnas/alchemy/go/shared"
-	tabnasjson "github.com/tabnas/json/go"
+	tabnas "github.com/tabnas/parser/go"
+	support "github.com/tabnas/support/go"
 	tt "github.com/tabnas/transduce/go"
 )
 
-// countingRouters is transduce's routers, counting the native
-// transduce-trees they make (a spec they refuse makes none), so a test can
-// tell the native path from the library's scan.
-type countingRouters struct {
-	shared.Routers
-	made *int
-}
-
-func (r countingRouters) TransduceTree(spec shared.TreeSpec, downstream shared.Sink) shared.ParserSink {
-	sink := r.Routers.(shared.TreeRouters).TransduceTree(spec, downstream)
-	if sink != nil {
-		*r.made++
-	}
-	return sink
-}
-
-// TransduceTreeReadsMemberAndText is transduce's answer: the embedded
-// Routers carries only the interface's own methods.
-func (r countingRouters) TransduceTreeReadsMemberAndText() bool {
-	texts, ok := r.Routers.(shared.TreeTextRouters)
-	return ok && texts.TransduceTreeReadsMemberAndText()
-}
-
-// treeSpecs are the specs the comparison runs: the json part's, and specs
+// treeSpecs are the specs the tree sweep runs: the json part's, and specs
 // that take a close pass's value, hand a container on through a replaced
 // rule, refuse a key that is not a string, announce a named key, yield a
 // rule's text and name a member inside a rule's own container.
@@ -59,31 +42,86 @@ var treeSpecs = [][2]string{
 	{"a container's own member and its text", "record\n    entry :list (record (entry :container :object) (entry :member \"items\") (entry :text true))\n    entry :pair (record (entry :member 0))"},
 }
 
-// runPasses drives one document's rule passes into program, its output
-// rendered as JSON: the output, or the failure.
-func runPasses(program *Program, text string) (string, *Fail) {
-	return runPassesUnder(program, text, tt.DefaultLimits())
+// partProgram compiles a part over the parser's rule passes: native is
+// the library definition it runs, spec its spec.
+func partProgram(t testing.TB, native, spec string) *Program {
+	t.Helper()
+	src := "def spec\n  " + spec + "\n\ndef export [input] (" + native + " spec input)\n"
+	program, f := CompileWith(src, native+".alc", InputParserEvents, routers, renderers)
+	if f != nil {
+		t.Fatal(f)
+	}
+	return program
+}
+
+// runPasses drives one document's rule passes, parsed with make, into
+// program, its output rendered as JSON: the output, or the failure.
+func runPasses(program *Program, make func() *tabnas.Tabnas, text string) (string, *Fail) {
+	return runPassesUnder(program, make, text, tt.DefaultLimits())
 }
 
 // runPassesUnder is runPasses under limits: what the program wrote, and
 // the failure.
-func runPassesUnder(program *Program, text string, limits tt.Limits) (string, *Fail) {
+func runPassesUnder(program *Program, make func() *tabnas.Tabnas, text string, limits tt.Limits) (string, *Fail) {
 	var out bytes.Buffer
 	sink, f := program.ParserSink(&out, RenderJSON, limits, nil)
 	if f != nil {
 		return "", f
 	}
-	if _, f := tt.NewParserEventSource(tabnasjson.Make(), text).Run(sink); f != nil {
+	if _, f := tt.NewParserEventSource(make(), text).Run(sink); f != nil {
 		return out.String(), f
 	}
 	return out.String(), nil
 }
 
-// Over every JSON fixture of transduce's, the generated documents and the
-// documents below: the same bytes both ways, or the same code. The native
-// ran each time the natives were on, and never when they were off.
-func TestTheNativeAndTheInterpretedTransduceTreeAgree(t *testing.T) {
-	var documents [][2]string
+// isCatalogueCode is whether code is one of the shared codes.
+func isCatalogueCode(code Code) bool {
+	for _, c := range shared.AllCodes {
+		if c == code {
+			return true
+		}
+	}
+	return false
+}
+
+// partOver runs a part over every document: where the grammar accepts the
+// document and oracle says the part writes its tree, the output is the
+// walk of the grammar's value (transduceDifferential, transduce.tsv's
+// rule); where the grammar refuses it, the part fails, with the grammar's
+// refusal or with a reason of its own it met first; and any other failure
+// is one of the catalogue's, the part's own reason. The failures, for the
+// test to report.
+func partOver(t testing.TB, specName string, program *Program, format *translate.Format, make func() *tabnas.Tabnas, documents [][2]string, oracle bool) []string {
+	t.Helper()
+	var failures []string
+	for _, doc := range documents {
+		name := specName + ", " + doc[0]
+		out, f := runPasses(program, make, doc[1])
+		_, refusal := format.Read(doc[1], tt.DefaultLimits())
+		refused := refusal != nil
+		switch {
+		case f != nil && refused:
+			if !isCatalogueCode(f.Code) {
+				failures = append(failures, fmt.Sprintf("%s: the grammar refuses the document, the part fails outside the catalogue: %v", name, f))
+			}
+		case f != nil:
+			if oracle || !isCatalogueCode(f.Code) {
+				failures = append(failures, fmt.Sprintf("%s: %v", name, f))
+			}
+		case refused:
+			failures = append(failures, fmt.Sprintf("%s: wrote %q of a document the grammar refuses", name, out))
+		case oracle:
+			if err := transduceDifferential(t, format, doc[1], out); err != nil {
+				failures = append(failures, fmt.Sprintf("%s: %v", name, err))
+			}
+		}
+	}
+	return failures
+}
+
+// fixtureDocuments is every transduce fixture with the extension, by name.
+func fixtureDocuments(t testing.TB, ext string) [][2]string {
+	t.Helper()
 	dir := transduceFixtures(t)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -91,11 +129,12 @@ func TestTheNativeAndTheInterpretedTransduceTreeAgree(t *testing.T) {
 	}
 	var names []string
 	for _, e := range entries {
-		if filepath.Ext(e.Name()) == ".json" {
+		if filepath.Ext(e.Name()) == ext {
 			names = append(names, e.Name())
 		}
 	}
 	sort.Strings(names)
+	var documents [][2]string
 	for _, name := range names {
 		text, err := os.ReadFile(filepath.Join(dir, name))
 		if err != nil {
@@ -103,6 +142,18 @@ func TestTheNativeAndTheInterpretedTransduceTreeAgree(t *testing.T) {
 		}
 		documents = append(documents, [2]string{name, string(text)})
 	}
+	return documents
+}
+
+// The library's transduce-tree: over every JSON fixture of transduce's,
+// the generated documents and the documents below, for the json part's
+// spec and for specs that announce a named key, take a close pass's value,
+// hand a container on through a replaced rule, name a member inside a
+// rule's own container and yield a rule's text. The json part writes the
+// walk of the grammar's value, and a document the grammar refuses fails as
+// the grammar refuses it, for every spec.
+func TestTheLibrarysTransduceTreeWritesEachDocumentsTree(t *testing.T) {
+	documents := fixtureDocuments(t, ".json")
 	for _, n := range []int{0, 1, 2, 50} {
 		documents = append(documents, [2]string{fmt.Sprintf("recordsJSON(%d)", n), recordsJSON(n)})
 	}
@@ -116,34 +167,13 @@ func TestTheNativeAndTheInterpretedTransduceTreeAgree(t *testing.T) {
 	} {
 		documents = append(documents, [2]string{fmt.Sprintf("%q", text), text})
 	}
-	made := 0
-	counting := countingRouters{Routers: routers, made: &made}
+	json := translate.Named("json")
 	var failures []string
 	compared := 0
 	for _, spec := range treeSpecs {
-		src := "def spec\n  " + spec[1] + "\n\ndef export [input] (transduce-tree spec input)\n"
-		native, f := CompileWith(src, "tree.alc", InputParserEvents, counting, renderers)
-		if f != nil {
-			t.Fatal(f)
-		}
-		slow := interpreted(t, native)
-		for _, doc := range documents {
-			before := made
-			a, fa := runPasses(native, doc[1])
-			ranNative := made - before
-			b, fb := runPasses(slow, doc[1])
-			if ranNative != 1 || made-before != 1 {
-				t.Errorf("%s, %s: the native ran %d times, %d in all", spec[0], doc[0], ranNative, made-before)
-			}
-			label := spec[0] + ", " + doc[0]
-			switch {
-			case fa == nil && fb == nil && a == b:
-			case fa != nil && fb != nil && fa.Code == fb.Code:
-			default:
-				failures = append(failures, fmt.Sprintf("%s\n  native:      %q %v\n  interpreted: %q %v", label, a, fa, b, fb))
-			}
-			compared++
-		}
+		program := partProgram(t, "transduce-tree", spec[1])
+		failures = append(failures, partOver(t, spec[0], program, json, jsonGrammar, documents, spec[0] == "the json part's spec")...)
+		compared += len(documents)
 	}
 	if len(failures) > 0 {
 		t.Error(strings.Join(failures, "\n"))
@@ -151,72 +181,75 @@ func TestTheNativeAndTheInterpretedTransduceTreeAgree(t *testing.T) {
 	if compared <= 100 {
 		t.Errorf("%d documents compared", compared)
 	}
-	t.Logf("transduce-tree: %d documents agree both ways", compared)
+	t.Logf("transduce-tree: %d documents written as their trees", compared)
 }
 
-// A :text rule's text under a small max_scalar_bytes: the native holds it
-// where the library's `string-join` does, so the two write the same bytes,
-// or refuse with the same code, limit and message (the message's byte
-// count names the join), at each bound from one that refuses every text to
-// one that refuses none; and some of the refusals are the texts' own, not
-// the guard's. The interpreter ends a failure inside the standard library
-// with the library's position, which the native, running none of its
-// text, does not (rs/tests/stdlib_test.rs).
-func TestTransduceTreesTextsAreBoundedAlike(t *testing.T) {
-	var specs [][2]string
-	for _, spec := range treeSpecs {
-		if strings.Contains(spec[1], ":text") {
-			specs = append(specs, spec)
+// A :text rule's text under a small max_scalar_bytes: the library's
+// string-join holds it at each of its joins (a pass's tokens together, the
+// innermost text with them, a closed text with the text around it), so at
+// each bound from one that refuses every text to one that refuses none the
+// part writes the document (one its spec is sound for) or refuses it
+// naming max_scalar_bytes, some of the refusals the texts' own, not the
+// guard's; the widest bound refuses none.
+func TestATextRulesTextIsHeldToMaxScalarBytes(t *testing.T) {
+	textSpec := func(name string) string {
+		for _, spec := range treeSpecs {
+			if spec[0] == name && strings.Contains(spec[1], ":text") {
+				return spec[1]
+			}
 		}
+		t.Fatalf("no text spec %q", name)
+		return ""
 	}
-	if len(specs) != 2 {
-		t.Fatalf("%d specs with a text", len(specs))
+	// Each spec over documents it is sound for: a pair's text is a scalar
+	// after the pair's key, so no value may be an object (whose own
+	// container would stand where the text goes), and a list's member and
+	// text are announced inside the list's own object, so no pair, and no
+	// list, may lie outside a flat array.
+	specs := []struct {
+		name, spec string
+		documents  []string
+	}{
+		{"a pair's value as its text", textSpec("a pair's value as its text"), []string{
+			`{"a":[10,20]}`,
+			`{"a":"xyz","bb":[1,[22,333],"x"]}`,
+			`{"a":1e21,"b":true,"c":null,"d":[]}`,
+			`{"é":"日本"}`,
+			`[1,[22,333],"x",{"é":"日本"}]`,
+			`{"a":[1,2.50,"x"],"c":[],"e":1e21,"f":true}`,
+		}},
+		{"a container's own member and its text", textSpec("a container's own member and its text"), []string{
+			`[1,2]`,
+			`[]`,
+			`[1,"x",true,null,2.50]`,
+			`["日本","é"]`,
+			`[1,2,3,4,5,6,7,8,9,10,11,12]`,
+			`[-0,1E+2,"a,b"]`,
+		}},
 	}
-	documents := []string{
-		`{"a":{"ab":1}}`,
-		`{"a":{"b":1,"c":2222}}`,
-		`{"a":{"b":123}}`,
-		`{"a":[10,20]}`,
-		`[1,[22,333],"x",{"é":"日本"}]`,
-		`{"a":[1,2.50,"x",{"b":null}],"c":{},"d":[],"e":1e21,"f":true}`,
-	}
-	ending := func(f *Fail) string {
-		if f == nil {
-			return "ok"
-		}
-		limit := ""
-		if f.Limit != nil {
-			limit = fmt.Sprintf("%s %d", f.Limit.Name, f.Limit.Value)
-		}
-		message, _, _ := strings.Cut(f.Message, " (at stdlib/")
-		return fmt.Sprintf("%s [%s] %s", f.Code, limit, message)
-	}
-	made := 0
-	counting := countingRouters{Routers: routers, made: &made}
 	var failures []string
 	textsRefused := 0
-	for _, spec := range specs {
-		src := "def spec\n  " + spec[1] + "\n\ndef export [input] (transduce-tree spec input)\n"
-		native, f := CompileWith(src, "tree.alc", InputParserEvents, counting, renderers)
-		if f != nil {
-			t.Fatal(f)
-		}
-		slow := interpreted(t, native)
-		for _, text := range documents {
+	for _, s := range specs {
+		program := partProgram(t, "transduce-tree", s.spec)
+		for _, text := range s.documents {
 			for _, max := range []int{1, 3, 4, 5, 7, 8, 11, 16, 64} {
 				limits := tt.DefaultLimits()
 				limits.MaxScalarBytes = max
-				before := made
-				a, fa := runPassesUnder(native, text, limits)
-				b, fb := runPassesUnder(slow, text, limits)
-				if made-before != 1 {
-					t.Errorf("%s, %s, %d: the native ran %d times", spec[0], text, max, made-before)
-				}
-				if a != b || ending(fa) != ending(fb) {
-					failures = append(failures, fmt.Sprintf("%s, %s, max_scalar_bytes %d\n  native:      %q %s\n  interpreted: %q %s", spec[0], text, max, a, ending(fa), b, ending(fb)))
-				}
-				if fa != nil && strings.HasPrefix(fa.Message, "string-join:") {
-					textsRefused++
+				out, f := runPassesUnder(program, jsonGrammar, text, limits)
+				switch {
+				case f == nil:
+					if out == "" {
+						t.Errorf("%s, %s, %d: wrote nothing", s.name, text, max)
+					}
+				case f.Code == CodeResourceLimitExceeded && f.Limit != nil && f.Limit.Name == "max_scalar_bytes":
+					if max == 64 {
+						t.Errorf("%s, %s: refused at the widest bound: %v", s.name, text, f)
+					}
+					if strings.HasPrefix(f.Message, "string-join:") {
+						textsRefused++
+					}
+				default:
+					failures = append(failures, fmt.Sprintf("%s, %s, max_scalar_bytes %d: %v", s.name, text, max, f))
 				}
 			}
 		}
@@ -226,5 +259,112 @@ func TestTransduceTreesTextsAreBoundedAlike(t *testing.T) {
 	}
 	if textsRefused <= 10 {
 		t.Errorf("%d texts refused at the bound", textsRefused)
+	}
+}
+
+// csvDocuments is tabnas-csv's own test/spec corpus, transduce's CSV
+// fixtures, the generated records and the documents below: what the
+// records tests read.
+func csvDocuments(t testing.TB) [][2]string {
+	t.Helper()
+	corpus := filepath.Join(repoRoot(t), "..", "csv", "test", "spec")
+	files, err := support.LoadSpecDir(corpus, nil)
+	if err != nil {
+		t.Fatalf("tabnas-csv's corpus is beside this checkout, at %s: %v", corpus, err)
+	}
+	var documents [][2]string
+	for _, file := range files {
+		for _, row := range file.Rows {
+			documents = append(documents, [2]string{fmt.Sprintf("%s:%d", row.File, row.Line), row.UnescNamed("input")})
+		}
+	}
+	documents = append(documents, fixtureDocuments(t, ".csv")...)
+	for _, n := range []int{0, 1, 2, 50} {
+		documents = append(documents, [2]string{fmt.Sprintf("recordsCSV(%d)", n), recordsCSV(n)})
+	}
+	for _, text := range []string{
+		"",
+		"a,b\n",
+		"a,b,c\n1,,3\n,5,\n",
+		"a,b,c\n1,2\n4\n",
+		"a,b\n1,2,3,4\n",
+		"a,b\n\"x,y\",\"line\nbreak\"\n\"q\"\"q\",z\n",
+		"a,b\r\n1,2\r\n",
+		"a,a\n1,2\n",
+		" a , b \n 1 , 2 \n",
+		"a,b,\n1,2,\n",
+		"a,\"b\n",
+	} {
+		documents = append(documents, [2]string{fmt.Sprintf("%q", text), text})
+	}
+	return documents
+}
+
+// The library's transduce-records: over tabnas-csv's corpus, transduce's
+// CSV fixtures, the generated records and documents that hold empty cells,
+// short and long records, a header that repeats a name and documents the
+// grammar refuses, for csv's part's spec and for specs without a header,
+// without an empty group and with rules no pass names. csv's part writes
+// the walk of the grammar's value (a header that names a column twice
+// streams both cells, where the value keeps the last: no oracle there),
+// and a document the grammar refuses fails as the grammar refuses it, for
+// every spec.
+func TestTheLibrarysTransduceRecordsWritesEachDocumentsRecords(t *testing.T) {
+	specs := [][2]string{
+		{"csv's part", "record\n    entry :document \"csv\"\n    entry :record \"record\"\n    entry :cell \"val\"\n    entry :empty \"empty\"\n    entry :header true\n    entry :unnamed \"field~\""},
+		{"no header, null for an empty cell", "record\n    entry :document \"csv\"\n    entry :record \"record\"\n    entry :cell \"val\"\n    entry :empty \"empty\"\n    entry :fill null"},
+		{"a header and no empty group", "record\n    entry :document \"csv\"\n    entry :record \"record\"\n    entry :cell \"val\"\n    entry :header true"},
+		{"rules no pass names", "record\n    entry :document \"doc\"\n    entry :record \"rec\"\n    entry :cell \"cell\"\n    entry :header true"},
+	}
+	documents := csvDocuments(t)
+	csvFormat := translate.Named("csv")
+	var failures []string
+	compared := 0
+	for _, spec := range specs {
+		program := partProgram(t, "transduce-records", spec[1])
+		failures = append(failures, partOver(t, spec[0], program, csvFormat, csvGrammar, documents, spec[0] == "csv's part")...)
+		compared += len(documents)
+	}
+	if len(failures) > 0 {
+		t.Error(strings.Join(failures, "\n"))
+	}
+	if compared <= 200 {
+		t.Errorf("%d documents compared", compared)
+	}
+	t.Logf("transduce-records: %d documents written as their records", compared)
+}
+
+// The state under a small max_metadata_bytes: the library's scans hold the
+// header's names and a record's cells by the transduce measure, so at each
+// bound from one that refuses the state before any pass to one that
+// refuses none the part writes the document, the same bytes at every bound
+// that lets it through, or refuses it naming max_metadata_bytes.
+func TestTransduceRecordsStateIsHeldToMaxMetadataBytes(t *testing.T) {
+	program := partProgram(t, "transduce-records", "record\n    entry :document \"csv\"\n    entry :record \"record\"\n    entry :cell \"val\"\n    entry :empty \"empty\"\n    entry :header true\n    entry :unnamed \"field~\"")
+	text := "identifier,full name,balance\n1,Ann,2.50\n2,,\n3,Bob,7,extra\n"
+	refused := 0
+	written := ""
+	for max := 8; max <= 220; max += 4 {
+		limits := tt.DefaultLimits()
+		limits.MaxMetadataBytes = max
+		out, f := runPassesUnder(program, csvGrammar, text, limits)
+		switch {
+		case f == nil:
+			if written == "" {
+				written = out
+			} else if out != written {
+				t.Errorf("max_metadata_bytes %d: %q, where %q was written before", max, out, written)
+			}
+		case f.Code != CodeResourceLimitExceeded || f.Limit == nil || f.Limit.Name != "max_metadata_bytes":
+			t.Errorf("max_metadata_bytes %d: %v", max, f)
+		default:
+			refused++
+		}
+	}
+	if refused <= 10 {
+		t.Errorf("%d bounds refused", refused)
+	}
+	if written == "" {
+		t.Error("no bound let the document through")
 	}
 }

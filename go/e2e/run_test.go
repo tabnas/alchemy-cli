@@ -4,7 +4,7 @@ package e2e
 
 // run_test.go: the public API end to end (rs/tests/run_test.rs): the
 // spec's worked example (section 5) run through the spec's program
-// (sections 12.1 and 13.4), natively and interpreted, byte for byte; the
+// (sections 12.1 and 13.4), byte for byte; the
 // streaming behaviours of the spec's section 19.5 that apply to a run over
 // one document; the json echo of every fixture against the walk's own
 // rendering; and records of a table round-tripping through JSON. From
@@ -49,7 +49,7 @@ func hostOK(t testing.TB, program *Program, text string, render Renderer) string
 	t.Helper()
 	out, f := hostRun(t, program, text, render, tt.DefaultLimits())
 	if f != nil {
-		t.Fatalf("native %v: %v", program.Native(), f)
+		t.Fatalf("%v", f)
 	}
 	return out
 }
@@ -58,27 +58,25 @@ func hostErr(t testing.TB, program *Program, text string, limits tt.Limits) (*Fa
 	t.Helper()
 	out, f := hostRun(t, program, text, RenderDefault, limits)
 	if f == nil {
-		t.Fatalf("native %v: the run succeeded: %q", program.Native(), out)
+		t.Fatalf("the run succeeded: %q", out)
 	}
 	return f, out
 }
 
-// both is the spec's program, native and interpreted.
-func both(t testing.TB) []*Program {
+// workedProgram is the spec's program, compiled.
+func workedProgram(t testing.TB) *Program {
 	t.Helper()
-	native := mustCompile(t, workedExample, "export.alc")
-	return []*Program{native, interpreted(t, native)}
+	return mustCompile(t, workedExample, "export.alc")
 }
 
-// Acceptance 3: the worked example prints the spec's bytes, both ways.
-func TestTheWorkedExamplePrintsTheSpecCsvBothWays(t *testing.T) {
-	for _, program := range both(t) {
-		if program.Output() != OutputText || rowSelectorText(program) != ".response.payload.deep.records[*]" {
-			t.Errorf("%s %s", program.Output(), rowSelectorText(program))
-		}
-		if got := hostOK(t, program, records, RenderDefault); got != expectedCSV {
-			t.Errorf("native %v: %q", program.Native(), got)
-		}
+// Acceptance 3: the worked example prints the spec's bytes.
+func TestTheWorkedExamplePrintsTheSpecCsv(t *testing.T) {
+	program := workedProgram(t)
+	if program.Output() != OutputText || rowSelectorText(program) != ".response.payload.deep.records[*]" {
+		t.Errorf("%s %s", program.Output(), rowSelectorText(program))
+	}
+	if got := hostOK(t, program, records, RenderDefault); got != expectedCSV {
+		t.Errorf("%q", got)
 	}
 }
 
@@ -86,31 +84,28 @@ func TestTheWorkedExamplePrintsTheSpecCsvBothWays(t *testing.T) {
 // policy, before any row is retained, and no CSV is written.
 func TestMetadataAfterRowsIsAnInputOrderViolation(t *testing.T) {
 	doc := `{"response":{"payload":{"deep":{"records":[` + record(1) + `]}},"metadata":` + metadata + `}}`
-	for _, program := range both(t) {
-		f, out := hostErr(t, program, doc, tt.DefaultLimits())
-		if f.Code != CodeInputOrderViolation || f.CommittedOutput || out != "" {
-			t.Errorf("native %v: %v %q", program.Native(), f, out)
-		}
+	program := workedProgram(t)
+	f, out := hostErr(t, program, doc, tt.DefaultLimits())
+	if f.Code != CodeInputOrderViolation || f.CommittedOutput || out != "" {
+		t.Errorf("%v %q", f, out)
 	}
 }
 
 // Spec 19.5: cells follow the schema's order whatever the row's.
 func TestCellsFollowSchemaOrderNotMemberOrder(t *testing.T) {
 	doc := shaped(`{"account":{"balance":1},"person":{"name":"z"},"id":2}`)
-	for _, program := range both(t) {
-		if got := hostOK(t, program, doc, RenderDefault); got != "\"Identifier\",\"Full name\",\"Balance\"\r\n\"2\",\"z\",\"1\"\r\n" {
-			t.Errorf("native %v: %q", program.Native(), got)
-		}
+	program := workedProgram(t)
+	if got := hostOK(t, program, doc, RenderDefault); got != "\"Identifier\",\"Full name\",\"Balance\"\r\n\"2\",\"z\",\"1\"\r\n" {
+		t.Errorf("%q", got)
 	}
 }
 
 // Spec 19.5: no matching rows is a valid empty table: the header alone.
 func TestNoMatchingRowsPrintsTheHeaderOnly(t *testing.T) {
+	program := workedProgram(t)
 	for _, doc := range []string{shaped(""), `{"response":{"metadata":` + metadata + `}}`} {
-		for _, program := range both(t) {
-			if got := hostOK(t, program, doc, RenderDefault); got != "\"Identifier\",\"Full name\",\"Balance\"\r\n" {
-				t.Errorf("native %v: %q", program.Native(), got)
-			}
+		if got := hostOK(t, program, doc, RenderDefault); got != "\"Identifier\",\"Full name\",\"Balance\"\r\n" {
+			t.Errorf("%q", got)
 		}
 	}
 }
@@ -121,57 +116,51 @@ func TestNoMatchingRowsPrintsTheHeaderOnly(t *testing.T) {
 func TestInvalidTrailingInputFailsAfterRowsWereExported(t *testing.T) {
 	whole := recordsJSON(2000)
 	doc := whole + " x"
-	for _, program := range both(t) {
-		full := hostOK(t, program, whole, RenderDefault)
-		f, out := hostErr(t, program, doc, tt.DefaultLimits())
-		if f.Code != CodeInputInvalid || !f.CommittedOutput {
-			t.Errorf("native %v: %v", program.Native(), f)
-		}
-		if !strings.HasPrefix(out, "\"Identifier\",\"Full name\",\"Balance\"\r\n") || len(out) <= 32*1024 {
-			t.Errorf("native %v: %d bytes", program.Native(), len(out))
-		}
-		// The CSV renderer marks the end of each row, and the writer holds
-		// a row until its end (tabnas/alchemy#29), where it once drained
-		// wherever its budget fell (spec 17.4): what was committed is a
-		// prefix of the whole output, and ends with a whole row.
-		if !strings.HasPrefix(full, out) || len(out) >= len(full) {
-			t.Errorf("native %v: %d of %d bytes", program.Native(), len(out), len(full))
-		}
-		if !strings.HasSuffix(out, "\r\n") {
-			t.Errorf("native %v: the output ends inside a row", program.Native())
-		}
+	program := workedProgram(t)
+	full := hostOK(t, program, whole, RenderDefault)
+	f, out := hostErr(t, program, doc, tt.DefaultLimits())
+	if f.Code != CodeInputInvalid || !f.CommittedOutput {
+		t.Errorf("%v", f)
+	}
+	if !strings.HasPrefix(out, "\"Identifier\",\"Full name\",\"Balance\"\r\n") || len(out) <= 32*1024 {
+		t.Errorf("%d bytes", len(out))
+	}
+	// The CSV renderer marks the end of each row, and the writer holds
+	// a row until its end (tabnas/alchemy#29), where it once drained
+	// wherever its budget fell (spec 17.4): what was committed is a
+	// prefix of the whole output, and ends with a whole row.
+	if !strings.HasPrefix(full, out) || len(out) >= len(full) {
+		t.Errorf("%d of %d bytes", len(out), len(full))
+	}
+	if !strings.HasSuffix(out, "\r\n") {
+		t.Errorf("the output ends inside a row")
 	}
 	// A small document: the rows were buffered, not committed, so nothing
 	// reached the writer and the failure says so.
-	f, out := hostErr(t, both(t)[0], records+" x", tt.DefaultLimits())
+	f, out = hostErr(t, program, records+" x", tt.DefaultLimits())
 	if f.Code != CodeInputInvalid || f.CommittedOutput || out != "" {
 		t.Errorf("%v %q", f, out)
 	}
 }
 
 // Spec 19.5: a very large selected row fails clearly under the limit that
-// bounds it, the same one both ways: the native transducer materializes
-// rows under max_record_bytes, and the library's table-from-json captures
-// its rows under the same limit, so the generic max_capture_bytes does
-// not decide either.
+// bounds it: the library's table-from-json captures its rows under
+// max_record_bytes, so the generic max_capture_bytes does not decide.
 func TestAVeryLargeSelectedRowNamesTheLimit(t *testing.T) {
 	big := fmt.Sprintf(`{"id":1,"person":{"name":"%s"},"account":{"balance":2}}`, strings.Repeat("x", 4096))
 	doc := shaped(record(0) + "," + big)
 	limits := tt.DefaultLimits()
 	limits.MaxRecordBytes = 1024
-	for _, program := range both(t) {
-		f, _ := hostErr(t, program, doc, limits)
-		if f.Code != CodeResourceLimitExceeded || f.Limit.Name != "max_record_bytes" || f.Path != ".response.payload.deep.records[1]" {
-			t.Errorf("native %v: %v", program.Native(), f)
-		}
+	program := workedProgram(t)
+	f, _ := hostErr(t, program, doc, limits)
+	if f.Code != CodeResourceLimitExceeded || f.Limit.Name != "max_record_bytes" || f.Path != ".response.payload.deep.records[1]" {
+		t.Errorf("%v", f)
 	}
-	// A small generic capture limit decides neither: both print the rows.
+	// A small generic capture limit does not decide: the rows print.
 	capture := tt.DefaultLimits()
 	capture.MaxCaptureBytes = 64
-	for _, program := range both(t) {
-		if out, f := hostRun(t, program, records, RenderDefault, capture); f != nil || out != expectedCSV {
-			t.Errorf("native %v: %q %v", program.Native(), out, f)
-		}
+	if out, f := hostRun(t, program, records, RenderDefault, capture); f != nil || out != expectedCSV {
+		t.Errorf("%q %v", out, f)
 	}
 }
 
@@ -205,16 +194,15 @@ func TestStringJoinBuildsOneStringFromSeveral(t *testing.T) {
 }
 
 // A missing cell under the standard options is MISSING_VALUE, and a null
-// is the empty string, both ways.
+// is the empty string.
 func TestMissingAndNullCellsFollowTheOptions(t *testing.T) {
-	for _, program := range both(t) {
-		f, _ := hostErr(t, program, shaped(`{"id":1,"person":{},"account":{"balance":2}}`), tt.DefaultLimits())
-		if f.Code != CodeMissingValue {
-			t.Errorf("native %v: %v", program.Native(), f)
-		}
-		if out := hostOK(t, program, shaped(`{"id":null,"person":{"name":"n"},"account":{"balance":null}}`), RenderDefault); out != "\"Identifier\",\"Full name\",\"Balance\"\r\n\"\",\"n\",\"\"\r\n" {
-			t.Errorf("native %v: %q", program.Native(), out)
-		}
+	program := workedProgram(t)
+	f, _ := hostErr(t, program, shaped(`{"id":1,"person":{},"account":{"balance":2}}`), tt.DefaultLimits())
+	if f.Code != CodeMissingValue {
+		t.Errorf("%v", f)
+	}
+	if out := hostOK(t, program, shaped(`{"id":null,"person":{"name":"n"},"account":{"balance":null}}`), RenderDefault); out != "\"Identifier\",\"Full name\",\"Balance\"\r\n\"\",\"n\",\"\"\r\n" {
+		t.Errorf("%q", out)
 	}
 }
 
@@ -305,15 +293,13 @@ func TestRecordsOfATableRoundTrips(t *testing.T) {
 	if program.Output() != OutputText {
 		t.Errorf("%s", program.Output())
 	}
-	for _, p := range []*Program{program, interpreted(t, program)} {
-		out := hostOK(t, p, records, RenderDefault)
-		if out != recordsJSONOut+"\n" {
-			t.Errorf("native %v: %q", p.Native(), out)
-		}
-		var parsed []map[string]any
-		if err := json.Unmarshal([]byte(out), &parsed); err != nil || parsed[1]["Full name"] != "Bob" || parsed[0]["Balance"] != 50.25 {
-			t.Errorf("%v %v", parsed, err)
-		}
+	out := hostOK(t, program, records, RenderDefault)
+	if out != recordsJSONOut+"\n" {
+		t.Errorf("%q", out)
+	}
+	var parsed []map[string]any
+	if err := json.Unmarshal([]byte(out), &parsed); err != nil || parsed[1]["Full name"] != "Bob" || parsed[0]["Balance"] != 50.25 {
+		t.Errorf("%v %v", parsed, err)
 	}
 	// The table result rendered by the host as JSON is the same document,
 	// and as CSV the spec's bytes.
@@ -342,7 +328,7 @@ func TestTheOutputLimitIsEnforcedByTheWriter(t *testing.T) {
 	limits := tt.DefaultLimits()
 	max := uint64(200)
 	limits.MaxOutputBytes = &max
-	f, _ := hostErr(t, both(t)[0], recordsJSON(50), limits)
+	f, _ := hostErr(t, workedProgram(t), recordsJSON(50), limits)
 	if f.Code != CodeResourceLimitExceeded || f.Limit.Name != "max_output_bytes" {
 		t.Errorf("%v", f)
 	}
@@ -618,7 +604,7 @@ func TestAFailedJSONRunLeavesWholeValues(t *testing.T) {
 // tabnas/alchemy#29: a step of scan-emit answers :record-end where a
 // record of its text ends, join writes it as no item, and the writer
 // holds a record until its end, so a run that fails inside one leaves the
-// records before it whole, natively and interpreted.
+// records before it whole.
 func TestAFailedScanEmitRunLeavesWholeRecords(t *testing.T) {
 	source := `def step [s event]
   match event
@@ -636,30 +622,24 @@ def export [input]
   join ""
     scan-emit [] step (fn [s] []) (events input)
 `
-	native := mustCompile(t, source, "lines.alc")
-	interpreted, f := native.WithNative(false)
-	if f != nil {
-		t.Fatal(f)
+	program := mustCompile(t, source, "lines.alc")
+	f, out := hostErr(t, program, cutArray(4000), tt.DefaultLimits())
+	if f.Code != CodeInputInvalid || !f.CommittedOutput {
+		t.Fatalf("%v", f)
 	}
-	for _, program := range []*Program{native, interpreted} {
-		f, out := hostErr(t, program, cutArray(4000), tt.DefaultLimits())
-		if f.Code != CodeInputInvalid || !f.CommittedOutput {
-			t.Fatalf("native %v: %v", program.Native(), f)
-		}
-		n := strings.Count(out, `"id": `)
-		if n == 0 || n >= 4000 {
-			t.Fatalf("native %v: %d records written", program.Native(), n)
-		}
-		var whole strings.Builder
-		for i := 0; i < n; i++ {
-			fmt.Fprintf(&whole, "\"id\": %d\n\"name\": item %d\n", i, i)
-		}
-		if out != whole.String() {
-			t.Errorf("native %v: %d bytes written, not %d whole records", program.Native(), len(out), n)
-		}
+	n := strings.Count(out, `"id": `)
+	if n == 0 || n >= 4000 {
+		t.Fatalf("%d records written", n)
+	}
+	var whole strings.Builder
+	for i := 0; i < n; i++ {
+		fmt.Fprintf(&whole, "\"id\": %d\n\"name\": item %d\n", i, i)
+	}
+	if out != whole.String() {
+		t.Errorf("%d bytes written, not %d whole records", len(out), n)
 	}
 	// A run that does not fail writes the same text as one without marks.
-	if out := hostOK(t, native, `[{"a":1},{"b":"x"}]`, RenderDefault); out != "\"a\": 1\n\"b\": x\n" {
+	if out := hostOK(t, program, `[{"a":1},{"b":"x"}]`, RenderDefault); out != "\"a\": 1\n\"b\": x\n" {
 		t.Errorf("%q", out)
 	}
 }

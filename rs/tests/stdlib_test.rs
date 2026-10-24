@@ -1,13 +1,15 @@
-// The differential test: tabnas-alchemy's standard library's own text,
-// interpreted, against the native compositions the runtime substitutes
-// for it. Over every transduce fixture a grammar these tests can read,
-// and the generated documents transduce's tests and benches share, the
-// spec's worked-example program produces the same bytes both ways, or
-// fails with the same code. The library text is the reference; the native
-// path is the optimization, and this is what makes it one. Moved here from
-// alchemy's tests, since every run is on transduce's routers and render's
-// renderers; that the library loads, which runs nothing, stays in
-// alchemy's stdlib_test.rs.
+// The standard library's text, run on transduce's routers and render's
+// renderers: the one implementation of `table-from-json`, `csv`,
+// `transduce-tree` and `transduce-records` (the ruling of 2026-10-24:
+// nothing native stands in for the text), over every transduce fixture a
+// grammar these tests can read, the generated documents transduce's tests
+// and benches share, and the documents below. Where an oracle exists the
+// text is held to it: the spec's worked-example program writes the bytes
+// transduce's table transducer and render's CSV renderer write for the
+// same binding, or fails with their code; a tree-shaped part writes the
+// walk of the grammar's own value, as `transduce.tsv`'s rule says; and the
+// library's `csv` refuses what the renderer refuses. That the library
+// loads, which runs nothing, stays in alchemy's stdlib_test.rs.
 
 mod common;
 #[path = "../../../transduce/rs/tests/support/mod.rs"]
@@ -18,12 +20,18 @@ use std::sync::{Arc, Mutex};
 
 use tabnas::Tabnas;
 use tabnas_alchemy::shared::{
-    replay, Code, Fail, JsonEvent, JsonOptions, Limits, Metrics, Number, OwnedJsonEvent, Sink,
+    replay, walk_datum, Code, Datum, DatumBuilder, Duplicates, Fail, Flow, JsonEvent, JsonOptions,
+    Limits, Metrics, Number, OwnedJsonEvent, Sink,
 };
 use tabnas_alchemy::stdlib::registry::shortest_number;
 use tabnas_alchemy::{Program, Renderer};
-use tabnas_render::{JsonRenderer, StringOut};
-use tabnas_transduce::ParserSource;
+use tabnas_render::{CsvOptions, CsvRenderer, JsonRenderer, StringOut, WriteOut};
+use tabnas_transduce::{
+    column_from_meta, AbortFlag, Guarded, ParserSource, Schema, Selector, TableBinding,
+    TableFromJson,
+};
+
+use common::json_into;
 
 use common::compile;
 
@@ -110,26 +118,76 @@ fn run_under(
     Ok(String::from_utf8(bytes).expect("utf-8 output"))
 }
 
-/// One document, both ways: the same bytes, or the same code.
-fn differential(name: &str, program: &Program, events: &[OwnedJsonEvent]) -> Result<(), String> {
-    let interpreted = program
-        .with_native(false)
-        .expect("the program compiles without the fast paths");
-    assert!(program.native() && !interpreted.native());
-    match (run(program, events, None), run(&interpreted, events, None)) {
+/// Where the worked example's records are.
+fn records_selector() -> Selector {
+    Selector::root()
+        .property("response")
+        .property("payload")
+        .property("deep")
+        .property("records")
+        .each_index()
+}
+
+/// The components the library's text is held to: transduce's table
+/// transducer over the worked example's binding (its columns from the
+/// metadata, or inferred from the first row) and render's CSV renderer in
+/// its default dialect, the events replayed through the source's guard;
+/// the bytes, or the failure.
+fn components(events: &[OwnedJsonEvent], limits: &Limits, infer: bool) -> Result<String, Fail> {
+    let buffer = Shared::default();
+    let csv = CsvRenderer::new(WriteOut::new(buffer.clone()), CsvOptions::default())?;
+    let schema = if infer {
+        Schema::Infer
+    } else {
+        Schema::FromMetadata {
+            columns: Selector::root()
+                .property("response")
+                .property("metadata")
+                .property("fields"),
+            column: Box::new(column_from_meta),
+        }
+    };
+    let table = TableFromJson::new(
+        TableBinding {
+            schema,
+            rows: records_selector(),
+        },
+        limits,
+        Duplicates::Reject,
+        Metrics::new(),
+        csv,
+    )?;
+    let mut guarded = Guarded::new(table, limits, AbortFlag::new(), Metrics::new());
+    replay(events, &mut guarded)?;
+    let bytes = buffer.0.lock().unwrap().clone();
+    Ok(String::from_utf8(bytes).expect("utf-8 output"))
+}
+
+/// One document through the library's text and through the components:
+/// the same bytes, or the same code.
+fn agrees_with_components(
+    name: &str,
+    program: &Program,
+    events: &[OwnedJsonEvent],
+    infer: bool,
+) -> Result<(), String> {
+    match (
+        run(program, events, None),
+        components(events, &Limits::default(), infer),
+    ) {
         (Ok(a), Ok(b)) if a == b => Ok(()),
         (Ok(a), Ok(b)) => Err(format!(
-            "{name}: the bytes differ\n  native:      {a:?}\n  interpreted: {b:?}"
+            "{name}: the bytes differ\n  text:       {a:?}\n  components: {b:?}"
         )),
         (Err(a), Err(b)) if a.code == b.code => Ok(()),
         (Err(a), Err(b)) => Err(format!(
-            "{name}: the codes differ\n  native:      {a}\n  interpreted: {b}"
+            "{name}: the codes differ\n  text:       {a}\n  components: {b}"
         )),
         (Ok(a), Err(b)) => Err(format!(
-            "{name}: native produced {a:?}, interpreted failed: {b}"
+            "{name}: the text produced {a:?}, the components failed: {b}"
         )),
         (Err(a), Ok(b)) => Err(format!(
-            "{name}: interpreted produced {b:?}, native failed: {a}"
+            "{name}: the components produced {b:?}, the text failed: {a}"
         )),
     }
 }
@@ -142,9 +200,10 @@ fn fixtures_dir() -> PathBuf {
 }
 
 /// Every transduce fixture a grammar here reads, plus the generated
-/// documents in every shape: identical bytes or identical codes.
+/// documents in every shape: the text writes the components' bytes, or
+/// fails with their code.
 #[test]
-fn interpreted_and_native_agree_on_every_fixture_and_generated_document() {
+fn the_library_writes_what_the_components_write_for_every_fixture_and_generated_document() {
     let program = compile(PROGRAM, "export.alc").expect("the spec's program compiles");
     let mut documents: Vec<Document> = Vec::new();
     let dir = fixtures_dir();
@@ -261,11 +320,6 @@ fn interpreted_and_native_agree_on_every_fixture_and_generated_document() {
         r#"{"response":{"metadata":{"fields":{}}}}"#.into(),
     ));
     documents.push((
-        "descriptor without title".into(),
-        tabnas_json::make,
-        r#"{"response":{"metadata":{"fields":[{"path":["a"]}]}}}"#.into(),
-    ));
-    documents.push((
         "descriptor with a bad segment".into(),
         tabnas_json::make,
         r#"{"response":{"metadata":{"fields":[{"title":"a","path":[true]}]}}}"#.into(),
@@ -281,7 +335,7 @@ fn interpreted_and_native_agree_on_every_fixture_and_generated_document() {
     let mut skipped = 0;
     for (i, (name, make, text)) in documents.iter().enumerate() {
         if i % 10 == 0 {
-            println!("differential: {i} of {total} ({}%)", i * 100 / total);
+            println!("sweep: {i} of {total} ({}%)", i * 100 / total);
         }
         let events = match events(*make, text) {
             Ok(events) => events,
@@ -292,11 +346,11 @@ fn interpreted_and_native_agree_on_every_fixture_and_generated_document() {
                 continue;
             }
         };
-        if let Err(report) = differential(name, &program, &events) {
+        if let Err(report) = agrees_with_components(name, &program, &events, false) {
             failures.push(report);
         }
     }
-    println!("differential: {total} of {total} (100%), {skipped} unreadable");
+    println!("sweep: {total} of {total} (100%), {skipped} unreadable");
     assert!(total - skipped > 20, "enough documents were read");
     assert!(
         failures.is_empty(),
@@ -306,11 +360,11 @@ fn interpreted_and_native_agree_on_every_fixture_and_generated_document() {
     );
 }
 
-/// The same, with the JSON renderer over the table both ways (`records`
-/// then `json`), and with a program whose options record changes the
-/// dialect the native renderer takes.
+/// The other renderings the text offers: the table as records, rendered
+/// as JSON (`records` then `json`), and a `csv` whose options record
+/// names another dialect, which the text writes as named.
 #[test]
-fn interpreted_and_native_agree_on_other_renderings() {
+fn the_other_renderings_write_as_their_programs_say() {
     let records = PROGRAM.replace("    csv csv-options\n", "    records\n    json\n");
     let program = compile(&records, "records.alc").unwrap();
     let dialect = PROGRAM.replace(
@@ -319,21 +373,30 @@ fn interpreted_and_native_agree_on_other_renderings() {
     );
     let dialect = compile(&dialect, "dialect.alc").unwrap();
     let meta = support::METADATA;
-    let docs = [
-        support::records_json(3),
-        format!(
+    let three = events(tabnas_json::make, &support::records_json(3)).unwrap();
+    let out = run(&program, &three, None).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&out).expect("records render as JSON");
+    let rows = parsed.as_array().expect("an array of records");
+    assert_eq!(rows.len(), 3);
+    assert_eq!(rows[2]["Full name"], "Person number 2");
+    let csv = run(&dialect, &three, None).unwrap();
+    assert_eq!(csv.lines().count(), 3, "{csv}");
+    assert!(csv.lines().all(|l| l.matches(';').count() == 2), "{csv}");
+    let sparse = events(
+        tabnas_json::make,
+        &format!(
             r#"{{"response":{{"metadata":{meta},"payload":{{"deep":{{"records":[{{"id":null,"person":{{}},"account":{{"balance":"a;b"}}}}]}}}}}}}}"#
         ),
-    ];
-    for (i, doc) in docs.iter().enumerate() {
-        let events = events(tabnas_json::make, doc).unwrap();
-        differential(&format!("records/json {i}"), &program, &events).unwrap();
-        differential(&format!("dialect {i}"), &dialect, &events).unwrap();
-    }
-    let events = events(tabnas_json::make, &docs[1]).unwrap();
+    )
+    .unwrap();
     assert_eq!(
-        run(&dialect, &events, None).unwrap(),
+        run(&dialect, &sparse, None).unwrap(),
         "\"NULL\";\"-\";\"a;b\"\n"
+    );
+    // A missing cell is no member of the record.
+    assert_eq!(
+        run(&program, &sparse, None).unwrap(),
+        "[{\"Identifier\":null,\"Balance\":\"a;b\"}]\n"
     );
 }
 
@@ -343,51 +406,27 @@ const RECORDS: &str = r#"{"response":{"metadata":{"fields":[{"title":"Identifier
 const EXPECTED_CSV: &str =
     "\"Identifier\",\"Full name\",\"Balance\"\r\n\"123\",\"Alice\",\"50.25\"\r\n\"456\",\"Bob\",\"72\"\r\n";
 
-/// Both ways, one outcome: the same bytes, or the same code and the same
-/// limit named; `expected` is that outcome.
-fn agree(
+/// One outcome: the bytes, or the code; `expected` is that outcome.
+fn expect(
     name: &str,
     program: &Program,
     events: &[OwnedJsonEvent],
     limits: &Limits,
     expected: Result<&str, Code>,
 ) {
-    let interpreted = program.with_native(false).unwrap();
-    let native_rows = Metrics::new();
-    let interpreted_rows = Metrics::new();
-    let a = run_under(program, events, None, limits, native_rows.clone());
-    let b = run_under(&interpreted, events, None, limits, interpreted_rows.clone());
-    match (&a, &b, expected) {
-        (Ok(a), Ok(b), Ok(want)) => {
-            assert_eq!(a, want, "{name}: native");
-            assert_eq!(b, want, "{name}: interpreted");
-            assert_eq!(
-                Metrics::get(&native_rows.rows),
-                Metrics::get(&interpreted_rows.rows),
-                "{name}: rows counted"
-            );
-        }
-        (Err(a), Err(b), Err(code)) => {
-            assert_eq!(
-                (a.code, b.code),
-                (code, code),
-                "{name}:\n  native: {a}\n  interpreted: {b}"
-            );
-            assert_eq!(
-                a.limit.as_ref().map(|l| l.name),
-                b.limit.as_ref().map(|l| l.name),
-                "{name}: the limit named"
-            );
-        }
-        _ => panic!("{name}: expected {expected:?}\n  native: {a:?}\n  interpreted: {b:?}"),
+    let got = run_under(program, events, None, limits, Metrics::new());
+    match (&got, expected) {
+        (Ok(a), Ok(want)) => assert_eq!(a, want, "{name}"),
+        (Err(a), Err(code)) => assert_eq!(a.code, code, "{name}: {a}"),
+        _ => panic!("{name}: expected {expected:?}, got {got:?}"),
     }
 }
 
-/// The library's `csv` validates the table events it renders as the
-/// native renderer does (spec 13.2: the protocol validator is not
-/// omitted), so a program that produces its own table events, or a
-/// document or an options record the renderer refuses, fails with the
-/// same code both ways, and a sound one prints the same bytes.
+/// The library's `csv` validates the table events it renders as render's
+/// CSV renderer does (spec 13.2: the protocol validator is not omitted),
+/// so a program that produces its own table events, or a document or an
+/// options record the renderer refuses, fails with the renderer's code,
+/// and a sound one prints the renderer's bytes.
 #[test]
 fn the_library_csv_validates_what_the_renderer_validates() {
     let items = events(
@@ -469,18 +508,18 @@ fn the_library_csv_validates_what_the_renderer_validates() {
     ];
     for (name, src, expected) in cases {
         let program = compile(&src, "table.alc").unwrap_or_else(|f| panic!("{name}: {f}"));
-        agree(name, &program, &items, &limits, expected);
+        expect(name, &program, &items, &limits, expected);
     }
 
     // The worked example over a document whose metadata is empty: a table
-    // of no columns has no CSV form, whichever path renders it.
+    // of no columns has no CSV form.
     let program = compile(PROGRAM, "export.alc").unwrap();
     let empty = events(
         tabnas_json::make,
         r#"{"response":{"metadata":{"fields":[]},"payload":{"deep":{"records":[{"id":1}]}}}}"#,
     )
     .unwrap();
-    agree(
+    expect(
         "no columns",
         &program,
         &empty,
@@ -489,7 +528,7 @@ fn the_library_csv_validates_what_the_renderer_validates() {
     );
 
     // A delimiter no CSV reader could take is refused before anything
-    // runs, natively (the renderer) and interpreted (`csv-table`).
+    // runs (`csv-table`, as the renderer refuses it).
     let records = events(tabnas_json::make, RECORDS).unwrap();
     for delimiter in ["\\\"", "\\n", "\\r"] {
         let src = PROGRAM.replace(
@@ -497,7 +536,7 @@ fn the_library_csv_validates_what_the_renderer_validates() {
             &format!("    csv (record (entry :delimiter \"{delimiter}\") (entry :newline \"\\r\\n\") (entry :header true) (entry :null-text \"\") (entry :missing :error))\n"),
         );
         let program = compile(&src, "delimiter.alc").unwrap();
-        agree(
+        expect(
             &format!("delimiter {delimiter}"),
             &program,
             &records,
@@ -507,7 +546,7 @@ fn the_library_csv_validates_what_the_renderer_validates() {
     }
 
     // A column function that answers something other than a record fails
-    // as `get` does, both ways.
+    // as `get` does.
     let keyword = compile(
         "def b (record (entry :columns (path \"m\")) (entry :rows (path \"r\" each-index)) (entry :column (fn [d] :oops)))\ndef export [input] (csv csv-options (table-from-json b input))",
         "keyword.alc",
@@ -518,7 +557,7 @@ fn the_library_csv_validates_what_the_renderer_validates() {
         r#"{"m":[{"title":"t","path":["a"]}],"r":[{"a":"x"}]}"#,
     )
     .unwrap();
-    agree(
+    expect(
         "a column that is a keyword",
         &keyword,
         &doc,
@@ -527,13 +566,12 @@ fn the_library_csv_validates_what_the_renderer_validates() {
     );
 }
 
-/// The library's table holds the scopes it captures to the limits the
-/// native table does (the metadata under `max_metadata_bytes`, each row
-/// under `max_record_bytes`, at most `max_columns` columns), so under the
-/// host's own limits both ways fail alike or print alike, and count the
-/// same rows.
+/// The library's table holds the scopes it captures to the host's limits
+/// (the metadata under `max_metadata_bytes`, each row under
+/// `max_record_bytes`, at most `max_columns` columns), so under the host's
+/// own limits it fails naming the limit, or prints, and counts its rows.
 #[test]
-fn the_limits_hold_alike_both_ways() {
+fn the_limits_hold() {
     let program = compile(PROGRAM, "export.alc").unwrap();
     let records = events(tabnas_json::make, RECORDS).unwrap();
     let cases: Vec<(&str, Limits, Result<&str, Code>)> = vec![
@@ -572,16 +610,16 @@ fn the_limits_hold_alike_both_ways() {
         ),
     ];
     for (name, limits, expected) in cases {
-        agree(name, &program, &records, &limits, expected);
+        expect(name, &program, &records, &limits, expected);
     }
     // A cell that is a vector is its compact JSON text, one scalar of the
-    // output, held to max_scalar_bytes both ways.
+    // output, held to max_scalar_bytes.
     let containers = events(
         tabnas_json::make,
         &RECORDS.replace(r#""id":123"#, r#""id":[1,2,3,4,5,6]"#),
     )
     .unwrap();
-    agree(
+    expect(
         "a container cell under max_scalar_bytes",
         &program,
         &containers,
@@ -591,7 +629,7 @@ fn the_limits_hold_alike_both_ways() {
         },
         Err(Code::ResourceLimitExceeded),
     );
-    agree(
+    expect(
         "a container cell within it",
         &program,
         &containers,
@@ -600,7 +638,7 @@ fn the_limits_hold_alike_both_ways() {
     );
     let metrics = Metrics::new();
     run_under(
-        &program.with_native(false).unwrap(),
+        &program,
         &records,
         None,
         &Limits::default(),
@@ -632,19 +670,19 @@ def export [input]
 ";
 
 /// The inferred binding: the columns are the first row's keys, in its
-/// order, each reading its own key. Natively it is transduce's
-/// `Schema::Infer`; the library's text infers them with `keys`. Both ways
-/// write the same bytes, fail with the same code, and hold the same
-/// limits, over every shape a first row and a later row can take.
+/// order, each reading its own key; the library's text infers them with
+/// `keys`, over every shape a first row and a later row can take, and
+/// holds them to the limits. Over the worked example's documents it writes
+/// what transduce's `Schema::Infer` and render's CSV renderer write.
 #[test]
-fn an_inferred_binding_agrees_both_ways() {
+fn an_inferred_binding_infers_the_first_rows_columns() {
     let program = compile(INFERRED, "inferred.alc").expect("the inferred program compiles");
     let json = |text: &str| events(tabnas_json::make, text).unwrap();
     let ok = |name: &str, text: &str, want: &str| {
-        agree(name, &program, &json(text), &Limits::default(), Ok(want))
+        expect(name, &program, &json(text), &Limits::default(), Ok(want))
     };
     let err = |name: &str, text: &str, code: Code| {
-        agree(name, &program, &json(text), &Limits::default(), Err(code))
+        expect(name, &program, &json(text), &Limits::default(), Err(code))
     };
     ok(
         "the first row's keys, in its order",
@@ -700,7 +738,7 @@ fn an_inferred_binding_agrees_both_ways() {
         Code::TargetValueUnrepresentable,
     );
     let three = json(r#"[{"a":1,"b":2,"c":3}]"#);
-    agree(
+    expect(
         "max_columns holds the inferred columns",
         &program,
         &three,
@@ -710,9 +748,9 @@ fn an_inferred_binding_agrees_both_ways() {
         },
         Err(Code::ResourceLimitExceeded),
     );
-    // Three one-byte names take 16 + 3 * (16 + 1) = 67 bytes natively; the
-    // library's state holding them is larger still.
-    agree(
+    // Three one-byte names take 16 + 3 * (16 + 1) = 67 bytes as the
+    // labels' array; the library's state holding them is larger still.
+    expect(
         "max_metadata_bytes holds the inferred columns",
         &program,
         &three,
@@ -722,7 +760,7 @@ fn an_inferred_binding_agrees_both_ways() {
         },
         Err(Code::ResourceLimitExceeded),
     );
-    agree(
+    expect(
         "max_record_bytes holds each row",
         &program,
         &three,
@@ -748,7 +786,7 @@ fn an_inferred_binding_agrees_both_ways() {
         } else {
             json(r#"{"m":["a","b","c"],"r":[{"a":1,"b":2,"c":3}]}"#)
         };
-        agree(
+        expect(
             name,
             &items,
             &events,
@@ -758,7 +796,7 @@ fn an_inferred_binding_agrees_both_ways() {
             },
             Err(Code::ResourceLimitExceeded),
         );
-        agree(name, &items, &events, &Limits::default(), Ok("xxx"));
+        expect(name, &items, &events, &Limits::default(), Ok("xxx"));
     }
     // The worked example's documents, bound by inference from their rows.
     let api = INFERRED.replace(
@@ -769,7 +807,9 @@ fn an_inferred_binding_agrees_both_ways() {
     let mut failures = Vec::new();
     for n in [0, 1, 2, 3, 50] {
         let events = events(tabnas_json::make, &support::records_json(n)).unwrap();
-        if let Err(report) = differential(&format!("records_json({n})"), &api, &events) {
+        if let Err(report) =
+            agrees_with_components(&format!("records_json({n})"), &api, &events, true)
+        {
             failures.push(report);
         }
     }
@@ -777,12 +817,11 @@ fn an_inferred_binding_agrees_both_ways() {
 }
 
 /// Each row counts once in `metrics.rows`, by the last table stage it
-/// passes: the adapter to a renderer, a `csv-table` whose rows reach no
-/// later table stage, or the native table when it hands its rows straight
-/// to a renderer. A `map`, a `filter` or a `scan-emit` between two table
+/// passes: the adapter to a renderer, or a `csv-table` whose rows reach
+/// no later table stage. A `map`, a `filter` or a `scan-emit` between two table
 /// stages hands the count on, so a row a filter drops is never counted,
 /// and rows that only ever become a text of items are not rows of any
-/// table; natively and interpreted alike, with the same bytes.
+/// table.
 #[test]
 fn each_row_counts_once_across_composed_table_stages() {
     let tail = |t: &str| PROGRAM.replace("    csv csv-options\n", t);
@@ -823,7 +862,7 @@ fn each_row_counts_once_across_composed_table_stages() {
             2,
         ),
         (
-            "the library csv over the native table",
+            "the library csv with its own dialect",
             tail("    csv opts\n\ndef opts\n  record\n    entry :delimiter \"||\"\n    entry :newline \"\\r\\n\"\n    entry :header true\n    entry :null-text \"\"\n    entry :missing :error\n"),
             None,
             2,
@@ -898,36 +937,30 @@ fn each_row_counts_once_across_composed_table_stages() {
     let records = events(tabnas_json::make, RECORDS).unwrap();
     for (name, src, render, rows) in cases {
         let program = compile(&src, "rows.alc").unwrap();
-        let mut outputs = Vec::new();
-        for native in [true, false] {
-            let program = program.with_native(native).unwrap();
-            let metrics = Metrics::new();
-            let out = run_under(
-                &program,
-                &records,
-                render,
-                &Limits::default(),
-                metrics.clone(),
-            )
-            .unwrap_or_else(|f| panic!("{name} (native: {native}): {f}"));
-            assert_eq!(
-                Metrics::get(&metrics.rows),
-                rows,
-                "{name} (native: {native})"
-            );
-            outputs.push(out);
-        }
-        assert_eq!(outputs[0], outputs[1], "{name}: the bytes differ");
+        let metrics = Metrics::new();
+        run_under(
+            &program,
+            &records,
+            render,
+            &Limits::default(),
+            metrics.clone(),
+        )
+        .unwrap_or_else(|f| panic!("{name}: {f}"));
+        assert_eq!(Metrics::get(&metrics.rows), rows, "{name}");
     }
 }
 
-/// The two paths differ, knowingly, in one place the standard shapes
-/// never reach; pinned so a change to either is seen.
+/// Where the text and the components answer apart, pinned so a change to
+/// either is seen. Metadata selected twice is the text's own refusal,
+/// `fail`, which is INPUT_INVALID, where transduce's table transducer
+/// calls the same document an order violation, a table having one schema.
+/// A descriptor without a title is a column without a label to the text's
+/// `column-from-meta`, which the table refuses as a missing value, where
+/// transduce's `column_from_meta` refuses the descriptor itself. The
+/// standard shapes reach neither. And a numeric title renders by its
+/// lexeme, one label policy serving every table.
 #[test]
-fn the_known_differences_are_pinned() {
-    // Metadata selected twice: the native transducer calls it an order
-    // violation (a table has one schema); the library text says `fail`,
-    // which is INPUT_INVALID.
+fn where_the_text_and_the_components_answer_apart() {
     let twice = PROGRAM.replace(
         "      path \"response\" \"metadata\" \"fields\"\n",
         "      path \"response\" \"metadata\" each-index\n",
@@ -940,26 +973,37 @@ fn the_known_differences_are_pinned() {
         support::record(1)
     );
     let twice = events(tabnas_json::make, &doc).unwrap();
+    let fail = run(&program, &twice, None).unwrap_err();
+    assert_eq!(fail.code, Code::InputInvalid, "{fail}");
     assert_eq!(
-        run(&program, &twice, None).unwrap_err().code,
+        components(&twice, &Limits::default(), false)
+            .unwrap_err()
+            .code,
         Code::InputOrderViolation
     );
+    let program = compile(PROGRAM, "export.alc").unwrap();
+    // A descriptor without a title: the text's column-from-meta makes a
+    // column whose label is missing, which the table refuses as a missing
+    // value; transduce's column_from_meta refuses the descriptor itself.
+    let untitled = events(
+        tabnas_json::make,
+        r#"{"response":{"metadata":{"fields":[{"path":["a"]}]}}}"#,
+    )
+    .unwrap();
+    let fail = run(&program, &untitled, None).unwrap_err();
+    assert_eq!(fail.code, Code::MissingValue, "{fail}");
     assert_eq!(
-        run(&program.with_native(false).unwrap(), &twice, None)
+        components(&untitled, &Limits::default(), false)
             .unwrap_err()
             .code,
         Code::InputInvalid
     );
-    // A numeric title was a second difference; one label policy now
-    // serves every table (a string as it is, a number by its lexeme, a
-    // boolean by its name), so both ways render the lexeme.
-    let program = compile(PROGRAM, "export.alc").unwrap();
     let doc = format!(
         r#"{{"response":{{"metadata":{{"fields":[{{"title":42,"path":["id"]}}]}},"payload":{{"deep":{{"records":[{}]}}}}}}}}"#,
         support::record(1)
     );
     let numeric = events(tabnas_json::make, &doc).unwrap();
-    agree(
+    expect(
         "a numeric title",
         &program,
         &numeric,
@@ -976,23 +1020,20 @@ fn a_stream_without_end_writes_nothing() {
     let program = compile(PROGRAM, "export.alc").unwrap();
     let mut events = events(tabnas_json::make, &support::records_json(2)).unwrap();
     assert_eq!(events.pop(), Some(OwnedJsonEvent::End));
-    for native in [true, false] {
-        let program = program.with_native(native).unwrap();
-        let buffer = Shared::default();
-        let mut sink = program
-            .sink(
-                Box::new(buffer.clone()),
-                None,
-                &Limits::default(),
-                Metrics::new(),
-            )
-            .unwrap();
-        replay(&events, &mut sink).unwrap();
-        assert!(buffer.0.lock().unwrap().is_empty(), "native={native}");
-        // And the End then completes it.
-        sink.event(JsonEvent::End).unwrap();
-        assert!(!buffer.0.lock().unwrap().is_empty(), "native={native}");
-    }
+    let buffer = Shared::default();
+    let mut sink = program
+        .sink(
+            Box::new(buffer.clone()),
+            None,
+            &Limits::default(),
+            Metrics::new(),
+        )
+        .unwrap();
+    replay(&events, &mut sink).unwrap();
+    assert!(buffer.0.lock().unwrap().is_empty());
+    // And the End then completes it.
+    sink.event(JsonEvent::End).unwrap();
+    assert!(!buffer.0.lock().unwrap().is_empty());
 }
 
 /// A number is read and written as the renderers read and write it: the
@@ -1001,7 +1042,7 @@ fn a_stream_without_end_writes_nothing() {
 /// what the renderers' (render's `is_json_number`) does, and writes a
 /// number without one as `shortest_number` lays it out, which is what
 /// render writes for one (its `number::write_value`). That is what lets
-/// the interpreted `csv` and the native renderer agree byte for byte.
+/// the library's `csv` and the host's CSV renderer agree byte for byte.
 #[test]
 fn numbers_are_read_and_written_as_the_renderers_do() {
     // Every text of up to five characters over what a JSON number is
@@ -1056,111 +1097,109 @@ fn numbers_are_read_and_written_as_the_renderers_do() {
     }
 }
 
-/// transduce's routers, counting the native transduce-trees and
-/// transduce-records they make (a spec they refuse makes none), so a test
-/// can tell the native path from the library's scans.
-struct CountingRouters(Arc<std::sync::atomic::AtomicUsize>);
+/// The events of a document, collected into a value under a duplicate
+/// policy, where the run that fed them leaves it.
+#[derive(Clone)]
+struct Collect(Arc<Mutex<DatumBuilder>>);
 
-impl tabnas_alchemy::shared::Routers<tabnas_alchemy::value::Val> for CountingRouters {
-    fn router(
-        &self,
-        specs: Vec<tabnas_alchemy::shared::CaptureSpec>,
-        limits: &Limits,
-        duplicates: tabnas_alchemy::shared::Duplicates,
-        metrics: Arc<Metrics>,
-        downstream: Box<dyn tabnas_alchemy::shared::RouteSink + Send>,
-    ) -> Result<Box<dyn Sink + Send>, Fail> {
-        tabnas_alchemy::shared::Routers::<tabnas_alchemy::value::Val>::router(
-            &tabnas_transduce::routers(),
-            specs,
-            limits,
-            duplicates,
-            metrics,
-            downstream,
-        )
-    }
-
-    fn table_from_json(
-        &self,
-        binding: tabnas_alchemy::shared::TableBinding,
-        limits: &Limits,
-        duplicates: tabnas_alchemy::shared::Duplicates,
-        metrics: Arc<Metrics>,
-        sink: Box<dyn tabnas_alchemy::shared::TableSink + Send>,
-    ) -> Result<Box<dyn Sink + Send>, Fail> {
-        tabnas_alchemy::shared::Routers::<tabnas_alchemy::value::Val>::table_from_json(
-            &tabnas_transduce::routers(),
-            binding,
-            limits,
-            duplicates,
-            metrics,
-            sink,
-        )
-    }
-
-    fn scan_emit(
-        &self,
-        initial: tabnas_alchemy::value::Val,
-        step: tabnas_alchemy::shared::ScanStep<tabnas_alchemy::value::Val>,
-        finish: tabnas_alchemy::shared::ScanFinish<tabnas_alchemy::value::Val>,
-        out: tabnas_alchemy::shared::ScanOut<tabnas_alchemy::value::Val>,
-    ) -> Box<dyn tabnas_alchemy::shared::ScanEmitter<tabnas_alchemy::value::Val>> {
-        tabnas_transduce::routers().scan_emit(initial, step, finish, out)
-    }
-
-    fn guarded(
-        &self,
-        inner: Box<dyn Sink + Send>,
-        limits: &Limits,
-        abort: tabnas_alchemy::shared::AbortFlag,
-        metrics: Arc<Metrics>,
-    ) -> Box<dyn Sink + Send> {
-        tabnas_alchemy::shared::Routers::<tabnas_alchemy::value::Val>::guarded(
-            &tabnas_transduce::routers(),
-            inner,
-            limits,
-            abort,
-            metrics,
-        )
-    }
-
-    fn transduce_tree(
-        &self,
-        spec: tabnas_alchemy::shared::TreeSpec,
-        downstream: Box<dyn Sink + Send>,
-    ) -> Result<Box<dyn tabnas_alchemy::shared::ParserSink + Send>, Box<dyn Sink + Send>> {
-        let made = tabnas_alchemy::shared::Routers::<tabnas_alchemy::value::Val>::transduce_tree(
-            &tabnas_transduce::routers(),
-            spec,
-            downstream,
-        );
-        if made.is_ok() {
-            self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+impl Sink for Collect {
+    fn event(&mut self, ev: JsonEvent<'_>) -> Result<Flow, Fail> {
+        if !matches!(ev, JsonEvent::End) {
+            self.0.lock().unwrap().event(ev)?;
         }
-        made
+        Ok(Flow::Continue)
     }
+}
 
-    fn transduce_tree_reads_member_and_text(&self) -> bool {
-        tabnas_alchemy::shared::Routers::<tabnas_alchemy::value::Val>::transduce_tree_reads_member_and_text(
-            &tabnas_transduce::routers(),
-        )
-    }
-
-    fn transduce_records(
-        &self,
-        spec: tabnas_alchemy::shared::RecordsSpec,
-        downstream: Box<dyn Sink + Send>,
-    ) -> Result<Box<dyn tabnas_alchemy::shared::ParserSink + Send>, Box<dyn Sink + Send>> {
-        let made = tabnas_alchemy::shared::Routers::<tabnas_alchemy::value::Val>::transduce_records(
-            &tabnas_transduce::routers(),
-            spec,
-            downstream,
-        );
-        if made.is_ok() {
-            self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+/// A value's events, a number's lexeme dropped.
+fn plain_events(value: &Datum) -> Vec<OwnedJsonEvent> {
+    let mut events: Vec<OwnedJsonEvent> = Vec::new();
+    walk_datum(value, &mut events).expect("a value walks");
+    for event in &mut events {
+        if let OwnedJsonEvent::Number { lexeme, .. } = event {
+            *lexeme = None;
         }
-        made
     }
+    events
+}
+
+/// The rule of `transduce.tsv`, the oracle a part has: what a part wrote,
+/// read back from its JSON, is the walk of the grammar's own value of the
+/// document, a number's lexeme aside. A member the part streamed twice is
+/// kept once by the value, so such an output has no oracle and passes.
+fn is_the_walk(written: &str, value: &tabnas::Value) -> Result<(), String> {
+    let collect = Collect(Arc::new(Mutex::new(DatumBuilder::new(
+        usize::MAX,
+        "max_capture_bytes",
+        Duplicates::Reject,
+    ))));
+    let outcome = json_into(
+        written,
+        &Limits::default(),
+        Metrics::new(),
+        Box::new(collect.clone()),
+    );
+    let read = match outcome {
+        Err(fail) if fail.code == Code::DuplicateMember => return Ok(()),
+        Err(fail) => {
+            return Err(format!(
+                "the output {written:?} does not read back as JSON: {fail}"
+            ))
+        }
+        Ok(_) => collect
+            .0
+            .lock()
+            .unwrap()
+            .take()
+            .ok_or_else(|| format!("the output {written:?} holds no value"))?,
+    };
+    let (written, walked) = (
+        plain_events(&read),
+        plain_events(&Datum::from_tabnas(value)),
+    );
+    if written == walked {
+        Ok(())
+    } else {
+        Err(format!(
+            "the part's events are not the walk of the grammar's value\n  written: {written:?}\n  walked:  {walked:?}"
+        ))
+    }
+}
+
+/// A part over every document: where the grammar accepts the document and
+/// `oracle` says the part writes its tree, the output is the walk of the
+/// grammar's value; where the grammar refuses it, the part fails, with the
+/// grammar's refusal or with a reason of its own it met first; and any
+/// other failure is the part's own reason (a catalogue code, as every
+/// failure's is). The failures, for the test to report.
+fn part_over(
+    spec_name: &str,
+    program: &Program,
+    make: fn() -> Tabnas,
+    documents: &[(String, String)],
+    oracle: bool,
+) -> Vec<String> {
+    let mut failures = Vec::new();
+    for (name, text) in documents {
+        let name = format!("{spec_name}, {name}");
+        match (run_passes(program, make, text), make().parse(text)) {
+            // The part fails: with the grammar's refusal, or with a reason of
+            // its own it met before the refusal arrived.
+            (Err(_), Err(_)) => {}
+            (Err(fail), Ok(_)) if oracle => failures.push(format!("{name}: {fail}")),
+            (Err(_), Ok(_)) => {}
+            (Ok(written), Err(_)) => failures.push(format!(
+                "{name}: wrote {written:?} of a document the grammar refuses"
+            )),
+            (Ok(written), Ok(value)) if oracle => {
+                if let Err(report) = is_the_walk(&written, &value) {
+                    failures.push(format!("{name}: {report}"));
+                }
+            }
+            (Ok(_), Ok(_)) => {}
+        }
+    }
+    failures
 }
 
 /// One document's rule passes into a program over parser events, its
@@ -1168,12 +1207,6 @@ impl tabnas_alchemy::shared::Routers<tabnas_alchemy::value::Val> for CountingRou
 fn run_passes(program: &Program, make: fn() -> Tabnas, text: &str) -> Result<String, Fail> {
     let (out, outcome) = run_passes_under(program, make, text, &Limits::default());
     outcome.map(|()| out)
-}
-
-/// A failure's message without the position the interpreter ends it with
-/// when the failure is inside the standard library, ` (at stdlib/…)`.
-fn without_library_position(message: &str) -> &str {
-    message.split(" (at stdlib/").next().unwrap_or(message)
 }
 
 /// One document's rule passes into a program over parser events under
@@ -1201,16 +1234,15 @@ fn run_passes_under(
     (String::from_utf8(bytes).expect("utf-8 output"), outcome)
 }
 
-/// The library's `transduce-tree` and transduce's native one (decision 3
-/// of alchemy's streaming plan): over every JSON fixture of transduce's,
+/// The library's `transduce-tree`: over every JSON fixture of transduce's,
 /// the generated documents and the documents below, for the json part's
 /// spec and for specs that announce a named key, take a close pass's
 /// value, hand a container on through a replaced rule, name a member
-/// inside a rule's own container and yield a rule's text, the same bytes
-/// both ways, or the same code. The native ran each time the natives
-/// were on, and never when they were off.
+/// inside a rule's own container and yield a rule's text. The json part
+/// writes the walk of the grammar's value, and a document the grammar
+/// refuses fails as the grammar refuses it, for every spec.
 #[test]
-fn transduce_tree_native_and_interpreted_agree() {
+fn the_librarys_transduce_tree_writes_each_documents_tree() {
     let specs = [
         (
             "the json part's spec",
@@ -1279,122 +1311,96 @@ fn transduce_tree_native_and_interpreted_agree() {
     ] {
         documents.push((format!("{text:?}"), text.to_string()));
     }
-    let made = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let mut compared = 0;
     let mut failures = Vec::new();
     for (spec_name, spec) in specs {
         let src = format!("def spec\n  {spec}\n\ndef export [input] (transduce-tree spec input)\n");
-        let native = tabnas_alchemy::compile_with(
-            &src,
-            "tree.alc",
-            tabnas_alchemy::Input::ParserEvents,
-            Arc::new(CountingRouters(made.clone())),
-            common::renderers(),
-        )
-        .expect("the program compiles");
-        let interpreted = native.with_native(false).unwrap();
-        for (name, text) in &documents {
-            let before = made.load(std::sync::atomic::Ordering::Relaxed);
-            let a = run_passes(&native, tabnas_json::make, text);
-            let ran_native = made.load(std::sync::atomic::Ordering::Relaxed) - before;
-            let b = run_passes(&interpreted, tabnas_json::make, text);
-            let after = made.load(std::sync::atomic::Ordering::Relaxed) - before;
-            assert_eq!(
-                (ran_native, after),
-                (1, 1),
-                "{spec_name}, {name}: the native ran once, the library's scan without it"
-            );
-            let name = format!("{spec_name}, {name}");
-            match (a, b) {
-                (Ok(a), Ok(b)) if a == b => {}
-                (Err(a), Err(b)) if a.code == b.code => {}
-                (a, b) => failures.push(format!(
-                    "{name}\n  native:      {a:?}\n  interpreted: {b:?}"
-                )),
-            }
-            compared += 1;
-        }
+        let program = common::compile_with(&src, "tree.alc", tabnas_alchemy::Input::ParserEvents)
+            .expect("the program compiles");
+        failures.extend(part_over(
+            spec_name,
+            &program,
+            tabnas_json::make,
+            &documents,
+            spec_name == "the json part's spec",
+        ));
+        compared += documents.len();
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
     assert!(compared > 100, "{compared} documents compared");
-    eprintln!("transduce-tree: {compared} documents agree both ways");
+    eprintln!("transduce-tree: {compared} documents written as their trees");
 }
 
-/// A `:text` rule's text under a small `max_scalar_bytes`: the native holds
-/// it where the library's `string-join` does, so the two write the same
-/// bytes, or refuse with the same code, limit and message (the message's
-/// byte count names the join), at each bound from one that refuses every
-/// text to one that refuses none; and some of the refusals are the texts'
-/// own, not the guard's. The interpreter ends a failure inside the
-/// standard library with the library's position, which the native, running
-/// none of its text, does not.
+/// A `:text` rule's text under a small `max_scalar_bytes`: the library's
+/// `string-join` holds it at each of its joins (a pass's tokens together,
+/// the innermost text with them, a closed text with the text around it),
+/// so at each bound from one that refuses every text to one that refuses
+/// none the part writes the document (one its spec is sound for) or
+/// refuses it naming `max_scalar_bytes`, some of the refusals the texts'
+/// own, not the guard's; the widest bound refuses none.
 #[test]
-fn transduce_tree_texts_are_bounded_alike() {
+fn a_text_rules_text_is_held_to_max_scalar_bytes() {
+    // Each spec over documents it is sound for: a pair's text is a scalar
+    // after the pair's key, so no value may be an object (whose own
+    // container would stand where the text goes), and a list's member and
+    // text are announced inside the list's own object, so no pair, and no
+    // list, may lie outside a flat array.
     let specs = [
         (
             "a pair's value as its text",
             "record\n    entry :map (record (entry :container :object))\n    entry :pair (record (entry :key 0) (entry :text true))",
+            &[
+                r#"{"a":[10,20]}"#,
+                r#"{"a":"xyz","bb":[1,[22,333],"x"]}"#,
+                r#"{"a":1e21,"b":true,"c":null,"d":[]}"#,
+                r#"{"é":"日本"}"#,
+                r#"[1,[22,333],"x",{"é":"日本"}]"#,
+                r#"{"a":[1,2.50,"x"],"c":[],"e":1e21,"f":true}"#,
+            ][..],
         ),
         (
             "a container's own member and its text",
             "record\n    entry :list (record (entry :container :object) (entry :member \"items\") (entry :text true))\n    entry :pair (record (entry :member 0))",
+            &[
+                "[1,2]",
+                "[]",
+                r#"[1,"x",true,null,2.50]"#,
+                r#"["日本","é"]"#,
+                "[1,2,3,4,5,6,7,8,9,10,11,12]",
+                r#"[-0,1E+2,"a,b"]"#,
+            ][..],
         ),
     ];
-    let documents = [
-        r#"{"a":{"ab":1}}"#,
-        r#"{"a":{"b":1,"c":2222}}"#,
-        r#"{"a":{"b":123}}"#,
-        r#"{"a":[10,20]}"#,
-        r#"[1,[22,333],"x",{"é":"日本"}]"#,
-        r#"{"a":[1,2.50,"x",{"b":null}],"c":{},"d":[],"e":1e21,"f":true}"#,
-    ];
-    let made = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let mut failures = Vec::new();
     let (mut compared, mut texts_refused) = (0, 0);
-    for (spec_name, spec) in specs {
+    for (spec_name, spec, documents) in specs {
         let src = format!("def spec\n  {spec}\n\ndef export [input] (transduce-tree spec input)\n");
-        let native = tabnas_alchemy::compile_with(
-            &src,
-            "tree.alc",
-            tabnas_alchemy::Input::ParserEvents,
-            Arc::new(CountingRouters(made.clone())),
-            common::renderers(),
-        )
-        .expect("the program compiles");
-        let interpreted = native.with_native(false).unwrap();
+        let program = common::compile_with(&src, "tree.alc", tabnas_alchemy::Input::ParserEvents)
+            .expect("the program compiles");
         for text in documents {
             for max in [1, 3, 4, 5, 7, 8, 11, 16, 64] {
                 let limits = Limits {
                     max_scalar_bytes: max,
                     ..Limits::default()
                 };
-                let before = made.load(std::sync::atomic::Ordering::Relaxed);
-                let a = run_passes_under(&native, tabnas_json::make, text, &limits);
-                let b = run_passes_under(&interpreted, tabnas_json::make, text, &limits);
-                assert_eq!(
-                    made.load(std::sync::atomic::Ordering::Relaxed) - before,
-                    1,
-                    "{spec_name}, {text}, {max}: the native ran once"
-                );
-                let same = a.0 == b.0
-                    && match (&a.1, &b.1) {
-                        (Ok(()), Ok(())) => true,
-                        (Err(x), Err(y)) => {
-                            x.code == y.code
-                                && x.limit == y.limit
-                                && x.message == without_library_position(&y.message)
+                let (out, outcome) = run_passes_under(&program, tabnas_json::make, text, &limits);
+                match outcome {
+                    Ok(()) => assert!(!out.is_empty(), "{spec_name}, {text}, {max}: wrote nothing"),
+                    Err(fail)
+                        if fail.code == Code::ResourceLimitExceeded
+                            && fail.limit.as_ref().map(|l| l.name) == Some("max_scalar_bytes") =>
+                    {
+                        assert_ne!(
+                            max, 64,
+                            "{spec_name}, {text}: refused at the widest bound: {fail}"
+                        );
+                        if fail.message.starts_with("string-join:") {
+                            texts_refused += 1;
                         }
-                        _ => false,
-                    };
-                if !same {
-                    failures.push(format!(
-                        "{spec_name}, {text}, max_scalar_bytes {max}\n  native:      {a:?}\n  interpreted: {b:?}"
-                    ));
-                }
-                if let Err(fail) = &a.1 {
-                    if fail.message.starts_with("string-join:") {
-                        texts_refused += 1;
                     }
+                    Err(fail) => failures.push(format!(
+                        "{spec_name}, {text}, max_scalar_bytes {max}: {fail}"
+                    )),
                 }
                 compared += 1;
             }
@@ -1405,9 +1411,7 @@ fn transduce_tree_texts_are_bounded_alike() {
         texts_refused > 10,
         "{texts_refused} texts refused at the bound"
     );
-    eprintln!(
-        "transduce-tree: {compared} bounded runs agree both ways, {texts_refused} texts refused"
-    );
+    eprintln!("transduce-tree: {compared} bounded runs, {texts_refused} texts refused");
 }
 
 /// tabnas-csv's own `test/spec` corpus, transduce's CSV fixtures, the
@@ -1457,16 +1461,17 @@ fn csv_documents() -> Vec<(String, String)> {
     documents
 }
 
-/// The library's `transduce-records` and transduce's native one: over
-/// tabnas-csv's corpus, transduce's CSV fixtures, the generated records
-/// and documents that hold empty cells, short and long records, a header
-/// that repeats a name and documents the grammar refuses, for csv's part's
-/// spec and for specs without a header, without an empty group and with
-/// rules no pass names, the same bytes both ways, or the same code. The
-/// native ran each time the natives were on, and never when they were
-/// off.
+/// The library's `transduce-records`: over tabnas-csv's corpus, transduce's
+/// CSV fixtures, the generated records and documents that hold empty cells,
+/// short and long records, a header that repeats a name and documents the
+/// grammar refuses, for csv's part's spec and for specs without a header,
+/// without an empty group and with rules no pass names. csv's part writes
+/// the walk of the grammar's value (a header that names a column twice
+/// streams both cells, where the value keeps the last: no oracle there),
+/// and a document the grammar refuses fails as the grammar refuses it, for
+/// every spec.
 #[test]
-fn transduce_records_native_and_interpreted_agree() {
+fn the_librarys_transduce_records_writes_each_documents_records() {
     let specs = [
         (
             "csv's part",
@@ -1486,89 +1491,67 @@ fn transduce_records_native_and_interpreted_agree() {
         ),
     ];
     let documents = csv_documents();
-    let made = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let mut compared = 0;
     let mut failures = Vec::new();
     for (spec_name, spec) in specs {
         let src =
             format!("def spec\n  {spec}\n\ndef export [input] (transduce-records spec input)\n");
-        let native = tabnas_alchemy::compile_with(
-            &src,
-            "records.alc",
-            tabnas_alchemy::Input::ParserEvents,
-            Arc::new(CountingRouters(made.clone())),
-            common::renderers(),
-        )
-        .expect("the program compiles");
-        let interpreted = native.with_native(false).unwrap();
-        for (name, text) in &documents {
-            let before = made.load(std::sync::atomic::Ordering::Relaxed);
-            let a = run_passes(&native, tabnas_csv::make, text);
-            let ran_native = made.load(std::sync::atomic::Ordering::Relaxed) - before;
-            let b = run_passes(&interpreted, tabnas_csv::make, text);
-            let after = made.load(std::sync::atomic::Ordering::Relaxed) - before;
-            assert_eq!(
-                (ran_native, after),
-                (1, 1),
-                "{spec_name}, {name}: the native ran once, the library's scans without it"
-            );
-            let name = format!("{spec_name}, {name}");
-            match (a, b) {
-                (Ok(a), Ok(b)) if a == b => {}
-                (Err(a), Err(b)) if a.code == b.code => {}
-                (a, b) => failures.push(format!(
-                    "{name}\n  native:      {a:?}\n  interpreted: {b:?}"
-                )),
-            }
-            compared += 1;
-        }
+        let program =
+            common::compile_with(&src, "records.alc", tabnas_alchemy::Input::ParserEvents)
+                .expect("the program compiles");
+        failures.extend(part_over(
+            spec_name,
+            &program,
+            tabnas_csv::make,
+            &documents,
+            spec_name == "csv's part",
+        ));
+        compared += documents.len();
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
     assert!(compared > 200, "{compared} documents compared");
-    eprintln!("transduce-records: {compared} documents agree both ways");
+    eprintln!("transduce-records: {compared} documents written as their records");
 }
 
-/// The state under a small `max_metadata_bytes`: the native holds the
-/// header's names and a record's cells by the measure the library's scans
-/// hold their state to, so the two write the same bytes, or refuse with
-/// the same code, limit and message, at each bound from one that refuses
-/// the state before any pass to one that refuses none.
+/// The state under a small `max_metadata_bytes`: the library's scans hold
+/// the header's names and a record's cells by the transduce measure, so at
+/// each bound from one that refuses the state before any pass to one that
+/// refuses none the part writes the document, the same bytes at every
+/// bound that lets it through, or refuses it naming `max_metadata_bytes`.
 #[test]
-fn transduce_records_state_is_bounded_alike() {
+fn transduce_records_state_is_held_to_max_metadata_bytes() {
     let src = "def spec\n  record\n    entry :document \"csv\"\n    entry :record \"record\"\n    entry :cell \"val\"\n    entry :empty \"empty\"\n    entry :header true\n    entry :unnamed \"field~\"\n\ndef export [input] (transduce-records spec input)\n";
-    let native = tabnas_alchemy::compile_with(
-        src,
-        "records.alc",
-        tabnas_alchemy::Input::ParserEvents,
-        Arc::new(CountingRouters(Arc::default())),
-        common::renderers(),
-    )
-    .expect("the program compiles");
-    let interpreted = native.with_native(false).unwrap();
+    let program = common::compile_with(src, "records.alc", tabnas_alchemy::Input::ParserEvents)
+        .expect("the program compiles");
     let text = "identifier,full name,balance\n1,Ann,2.50\n2,,\n3,Bob,7,extra\n";
     let mut refused = 0;
+    let mut written: Option<String> = None;
     for max in (8..=220).step_by(4) {
         let limits = Limits {
             max_metadata_bytes: max,
             ..Limits::default()
         };
-        let (a_out, a) = run_passes_under(&native, tabnas_csv::make, text, &limits);
-        let (b_out, b) = run_passes_under(&interpreted, tabnas_csv::make, text, &limits);
-        match (&a, &b) {
-            (Ok(()), Ok(())) => assert_eq!(a_out, b_out, "max_metadata_bytes {max}"),
-            (Err(a), Err(b)) => {
-                assert_eq!(a.code, b.code, "max_metadata_bytes {max}");
-                assert_eq!(a.limit, b.limit, "max_metadata_bytes {max}");
+        let (out, outcome) = run_passes_under(&program, tabnas_csv::make, text, &limits);
+        match outcome {
+            Ok(()) => {
+                let whole = written.get_or_insert_with(|| out.clone());
+                assert_eq!(*whole, out, "max_metadata_bytes {max}");
+            }
+            Err(fail) => {
                 assert_eq!(
-                    without_library_position(&a.message),
-                    without_library_position(&b.message),
-                    "max_metadata_bytes {max}"
+                    fail.code,
+                    Code::ResourceLimitExceeded,
+                    "max_metadata_bytes {max}: {fail}"
                 );
-                assert_eq!(a_out, b_out, "max_metadata_bytes {max}: what each wrote");
+                assert_eq!(
+                    fail.limit.as_ref().map(|l| l.name),
+                    Some("max_metadata_bytes"),
+                    "max_metadata_bytes {max}: {fail}"
+                );
                 refused += 1;
             }
-            _ => panic!("max_metadata_bytes {max}:\n  native:      {a:?}\n  interpreted: {b:?}"),
         }
     }
     assert!(refused > 10, "{refused} bounds refused");
+    assert!(written.is_some(), "no bound let the document through");
 }

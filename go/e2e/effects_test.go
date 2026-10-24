@@ -29,17 +29,6 @@ func mustCompile(t testing.TB, src, file string) *Program {
 	return p
 }
 
-// interpreted is p with the standard compositions run through the
-// library's text.
-func interpreted(t testing.TB, p *Program) *Program {
-	t.Helper()
-	q, f := p.WithNative(false)
-	if f != nil {
-		t.Fatal(f)
-	}
-	return q
-}
-
 func jsonMember(t testing.TB, o *JSONObject, path ...string) string {
 	t.Helper()
 	var v any = o
@@ -55,24 +44,22 @@ func jsonMember(t testing.TB, o *JSONObject, path ...string) string {
 	return EncodeJSON(v)
 }
 
-// The CSV renderer is reported with the dialect it is built with: the
-// program's own options when its csv runs natively, the defaults when the
-// host renders a table; and what it reports is what it writes.
-func TestACustomCsvDialectIsReportedAsItRuns(t *testing.T) {
+// A program's own csv is the library's text, and the report says so: the
+// renderer is the text's own, and what the text writes is the dialect its
+// options record names. The host's renderer, for a table result, is
+// reported with the defaults it is built with.
+func TestAProgramsOwnCsvRendersAsTextAndTheHostsRendererReportsTheDefaults(t *testing.T) {
 	lf := strings.Replace(workedExample, "    csv csv-options\n", "    csv lf\n", 1) +
 		"\ndef lf (record (entry :delimiter \";\") (entry :newline \"\\n\") (entry :header false) (entry :null-text \"NULL\") (entry :missing \"-\"))\n"
 	program := mustCompile(t, lf, "lf.alc")
-	if !program.Native() {
-		t.Fatal("not native")
-	}
-	if got := jsonMember(t, program.ExplainJSON(), "renderer"); got != `{"name":"csv","quoting":"always","delimiter":";","newline":"\n","header":false,"null_text":"NULL","missing":"text","missing_text":"-","host":false}` {
+	if got := jsonMember(t, program.ExplainJSON(), "renderer", "name"); got != `"text"` {
 		t.Errorf("%s", got)
 	}
 	if out, f := replayRun(t, program, records, RenderDefault, tt.DefaultLimits(), nil); f != nil || out != "\"123\";\"Alice\";\"50.25\"\n\"456\";\"Bob\";\"72\"\n" {
 		t.Errorf("%q %v", out, f)
 	}
-	// The null and missing texts reach the output as reported: a record
-	// with a null name and no balance.
+	// The null and missing texts reach the output as the options say: a
+	// record with a null name and no balance.
 	sparse := strings.Replace(records, `{"account":{"balance":72},"person":{"name":"Bob"},"id":456}`, `{"person":{"name":null},"id":456}`, 1)
 	if sparse == records {
 		t.Fatal("the document did not change")
@@ -80,19 +67,14 @@ func TestACustomCsvDialectIsReportedAsItRuns(t *testing.T) {
 	if out, f := replayRun(t, program, sparse, RenderDefault, tt.DefaultLimits(), nil); f != nil || out != "\"123\";\"Alice\";\"50.25\"\n\"456\";\"NULL\";\"-\"\n" {
 		t.Errorf("%q %v", out, f)
 	}
-	// The default dialect, and the host's renderer, report the defaults.
-	for _, c := range []struct {
-		name string
-		src  string
-		host string
-	}{
-		{"default", workedExample, "false"},
-		{"host", strings.Replace(workedExample, "    csv csv-options\n", "", 1), "true"},
-	} {
-		got := jsonMember(t, mustCompile(t, c.src, c.name+".alc").ExplainJSON(), "renderer")
-		want := `{"name":"csv","quoting":"always","delimiter":",","newline":"\r\n","header":true,"null_text":"","missing":"error","missing_text":null,"host":` + c.host + `}`
-		if got != want {
-			t.Errorf("%s: %s", c.name, got)
-		}
+	// The default dialect is the text's too; the host's renderer reports
+	// the defaults it is built with.
+	if got := jsonMember(t, mustCompile(t, workedExample, "export.alc").ExplainJSON(), "renderer", "name"); got != `"text"` {
+		t.Errorf("%s", got)
+	}
+	host := mustCompile(t, strings.Replace(workedExample, "    csv csv-options\n", "", 1), "host.alc")
+	want := `{"name":"csv","quoting":"always","delimiter":",","newline":"\r\n","header":true,"null_text":"","missing":"error","missing_text":null,"host":true}`
+	if got := jsonMember(t, host.ExplainJSON(), "renderer"); got != want {
+		t.Errorf("%s", got)
 	}
 }

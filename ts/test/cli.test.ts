@@ -167,7 +167,7 @@ describe('cli', () => {
     assert.equal(out.status, 0, out.stderr)
     const text = out.stdout
     assert.ok(text.startsWith('export: api-table → csv\n\nSource reads:          1\n'), text)
-    assert.ok(text.includes('Protocol:              JsonEvents/1 → TableRows/1 → Text\n'), text)
+    assert.ok(text.includes('Protocol:              JsonEvents/1 → Stream<Selected> → Stream<Value> → TableRows/1 → Text\n'), text)
     assert.ok(
       text.includes('Row capture:           one .response.payload.deep.records[*], capped at max_record_bytes\n'),
       text,
@@ -179,16 +179,15 @@ describe('cli', () => {
     assert.ok(failJson(out).message.startsWith('no_export: '), out.stderr)
   })
 
-  it('run prints the worked example csv both ways', () => {
+  it('run prints the worked example csv', () => {
     const program = tempFile('export.alc', PROGRAM)
     const input = tempFile('records.json', RECORDS)
     for (const args of [
       ['run', program, input],
-      ['run', '--no-native', program, input],
       ['run', program, '-'],
-      ['run', '--no-native', '-', input],
+      ['run', '-', input],
     ]) {
-      const stdin = '-' === args[args.length - 1] ? RECORDS : '-' === args[2] ? PROGRAM : undefined
+      const stdin = '-' === args[args.length - 1] ? RECORDS : '-' === args[1] ? PROGRAM : undefined
       const out = alchemy(args, stdin)
       assert.equal(out.status, 0, `${args}: ${out.stderr}`)
       assert.equal(out.stdout, EXPECTED_CSV, String(args))
@@ -245,7 +244,9 @@ describe('cli', () => {
     let fail = failJson(out)
     assert.equal(fail.code, 'INPUT_ORDER_VIOLATION')
     assert.equal(fail.output, 'none')
-    assert.ok(String(fail.path).startsWith('.response.payload'), JSON.stringify(fail))
+    // The library's text refuses it, so the failure names the library's
+    // position rather than the row's path.
+    assert.ok(String(fail.message).includes('rows must follow their metadata'), JSON.stringify(fail))
     // Invalid JSON after the rows: INPUT_INVALID, status 1; the rows were
     // buffered, not committed, so nothing reached standard output.
     out = alchemy(['run', program, '-'], `${RECORDS} x`)
@@ -412,7 +413,7 @@ describe('cli', () => {
     mkdirSync(join(dir, 'stdlib'), { recursive: true })
     for (const name of ['export.alc', 'stdlib/table.alc']) {
       writeFileSync(join(dir, name), PROGRAM)
-      const out = alchemy(['run', '--no-native', name, '-'], '{}', dir)
+      const out = alchemy(['run', name, '-'], '{}', dir)
       assert.equal(out.status, 1, `${name}: ${out.stderr}`)
       const fail = failJson(out)
       assert.equal(fail.code, 'INPUT_INVALID', name)
@@ -448,8 +449,8 @@ describe('cli', () => {
   })
 
   // `run --grammar FORMAT` parses INPUT with that format's grammar and runs
-  // the program over its rule passes, natively and interpreted: a
-  // transducer over json's writes the document, a number's lexeme kept; a
+  // the program over its rule passes: a transducer over json's writes the
+  // document, a number's lexeme kept; a
   // document the grammar refuses is INPUT_INVALID; a format that is not
   // parsed, or is unknown, is refused with status 2, naming the formats
   // that are; a program over JSON events, compiled over parser events, is
@@ -457,15 +458,10 @@ describe('cli', () => {
   it('run takes a grammar whose rule passes the program reads', () => {
     const program = tempFile('transducer.alc', TRANSDUCER)
     const doc = '{"a":[1,2.50,"x",{"b":null}],"c":{},"d":[],"e":1e21,"f":true}'
-    for (const args of [
-      ['run', '--grammar', 'json', program, '-'],
-      ['run', '--grammar', 'json', '--no-native', program, '-'],
-    ]) {
-      const out = alchemy(args, doc)
-      assert.equal(out.status, 0, out.stderr)
-      assert.equal(out.stdout, `${doc}\n`)
-    }
-    let out = alchemy(['run', '--grammar', 'json', program, '-'], '[1,')
+    let out = alchemy(['run', '--grammar', 'json', program, '-'], doc)
+    assert.equal(out.status, 0, out.stderr)
+    assert.equal(out.stdout, `${doc}\n`)
+    out = alchemy(['run', '--grammar', 'json', program, '-'], '[1,')
     assert.equal(out.status, 1, out.stderr)
     assert.equal(out.stdout, '')
     assert.equal(failJson(out).code, 'INPUT_INVALID')

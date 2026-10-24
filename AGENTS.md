@@ -107,13 +107,16 @@ alchemy depends on neither transduce nor render (the maintainer's ruling
 of 2026-10-08), so its releases and theirs never leave a requirement a
 release behind. Its tests that run programs need all three, so they are
 here, in every runtime:
-- `run.tsv`, natively and interpreted;
+- `run.tsv`;
 - the catalogue test over every error row of alchemy's four fixture files;
 - the lowering;
 - events;
 - linked sources;
 - the translation parts;
-- the standard library's differential test.
+- the standard library's text over the fixtures and the generated
+  documents: what its compositions and the parts write, held to
+  transduce's table transducer with render's CSV renderer, and to the
+  grammars' own values.
 
 They read alchemy's `test/spec/` and transduce's `rs/tests/` from the
 sibling checkouts, and fail, naming the path, when either is missing.

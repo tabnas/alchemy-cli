@@ -79,10 +79,8 @@ func TestEvaluationMeetsItsBoundBeforeTheStacksEnd(t *testing.T) {
 	// same text again recurses while it is written, at run time.
 	text := "def g [h x] (concat-map (partial h h) [x])\ndef export [input] (concat (g g 1) (json input))\n"
 	program := mustCompile(t, text, "text.alc")
-	for _, p := range []*Program{program, interpreted(t, program)} {
-		if _, f := replayRun(t, p, "[1]", RenderDefault, tt.DefaultLimits(), nil); !isRecursion(f) {
-			t.Errorf("native %v: %v", p.Native(), f)
-		}
+	if _, f := replayRun(t, program, "[1]", RenderDefault, tt.DefaultLimits(), nil); !isRecursion(f) {
+		t.Errorf("%v", f)
 	}
 	// A function applied to itself per item, at run time.
 	omega := mustCompile(t, "def w [f] (f f)\ndef export [input]\n  pipe input\n    select (path each-index)\n    map (fn [x] (w w))\n    join \",\"\n", "omega.alc")
