@@ -280,6 +280,34 @@ fn run_prints_the_worked_example_csv() {
     }
 }
 
+/// The example programs under `examples/` run as the README says: the
+/// worked example renders its table as CSV, and the table alone leaves the
+/// rendering to the command.
+#[test]
+fn the_examples_run_as_the_readme_says() {
+    let examples = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../examples");
+    let examples = examples.to_str().expect("a utf-8 path");
+    let records = format!("{examples}/records.json");
+    assert_eq!(
+        std::fs::read_to_string(&records).unwrap().trim_end(),
+        RECORDS,
+        "the example document is the worked example's"
+    );
+    let output = run(&["run", &format!("{examples}/export.alc"), &records], None);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(stdout(&output), EXPECTED_CSV);
+    let table = format!("{examples}/table.alc");
+    let output = run(&["run", &table, &records], None);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(stdout(&output), EXPECTED_CSV);
+    let output = run(&["run", "--render", "json", &table, &records], None);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(
+        stdout(&output),
+        "[{\"Identifier\":123,\"Full name\":\"Alice\",\"Balance\":50.25},{\"Identifier\":456,\"Full name\":\"Bob\",\"Balance\":72}]\n"
+    );
+}
+
 #[test]
 fn run_renders_a_table_result_as_csv_or_json() {
     let table = PROGRAM.replace("    csv csv-options\n", "");

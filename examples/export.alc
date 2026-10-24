@@ -1,0 +1,24 @@
+; The worked example of the transducer's design: a table bound by the
+; document's own metadata, rendered as the always-quoted CSV the spec fixes.
+def column-from-meta [source]
+  record
+    entry :label (get "title" source)
+    entry :source
+      as-path
+        get "path" source
+
+def api-binding
+  record
+    entry :columns
+      path "response" "metadata" "fields"
+    entry :rows
+      path "response" "payload" "deep" "records" each-index
+    entry :column column-from-meta
+
+def api-table [input]
+  table-from-json api-binding input
+
+def export [input]
+  pipe input
+    api-table
+    csv csv-options

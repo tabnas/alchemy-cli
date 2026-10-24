@@ -97,6 +97,7 @@ that one alone.
 | `go/` | `github.com/tabnas/alchemy-cli/go`: the `alchemy` command and its tests |
 | `go/e2e/` | the tests of alchemy's programs in Go: test files only, alchemy's exported API composed with transduce and render |
 | `rs/` | `tabnas-alchemy-cli`: the `alchemy` binary and its tests, and the tests of alchemy's programs (`rs/tests/common/` composes the three) |
+| `examples/` | the worked example of the transducer's design (`export.alc`, `table.alc`, `records.json`), which `rs/tests/cli_test.rs` runs as the README says |
 | `ci/rust/run.sh` | the Rust gate `.github/workflows/rust.yml` runs |
 | `ci/polyglot/run.sh` | the TypeScript and Go gate the same workflow runs |
 | `ci/phase.sh` | `phase`, which both gates run each step through: a line every 25 seconds while it runs |
@@ -124,6 +125,20 @@ alchemy's `.github/workflows/downstream.yml` runs this repository's two
 gates against each change there, so a change to alchemy meets them before
 it merges. A behaviour of alchemy's that a row can express is pinned in
 alchemy's `test/spec/`, not here.
+
+## YAML's round trip
+
+`rs/tests/yaml_roundtrip_test.rs` holds YAML's render to YAML's own
+reader: every YAML input of the sibling tabnas/yaml checkout's fixtures
+(the `test/spec/*.tsv` rows that parse, and every case of its vendored
+YAML Test Suite that is not an error case) is read, written through
+`translate` as YAML, and read back, and must come back as the same value.
+The inputs the reader misreads are a ledger, `READER_DEFECT`, each with
+its issue: an input in it must still come back different, so a fix to the
+reader fails the test until its line is deleted. It lives here because
+tabnas/yaml does not depend on alchemy, and this crate composes the
+three components; the fixtures are the sibling checkout's, the same one
+`rs/Cargo.toml` takes tabnas-yaml from, so they are the reader's own.
 
 ## The translation matrix
 
