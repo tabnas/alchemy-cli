@@ -1,6 +1,6 @@
 // tabnas-alchemy's public API end to end: the spec's worked example
 // (section 5) run through the spec's program (sections 12.1 and 13.4),
-// natively and interpreted, byte for byte; the streaming behaviours of the
+// byte for byte; the streaming behaviours of the
 // spec's section 19.5 that apply to a run over one document; the `json`
 // echo of every fixture against the walk's own rendering; and `records` of
 // a table round-tripping through JSON. Moved here from alchemy's tests:
@@ -109,27 +109,21 @@ fn err(program: &Program, text: &str, limits: &Limits) -> (Fail, String) {
     (outcome.expect_err("the run fails"), out)
 }
 
-fn both() -> [Program; 2] {
-    let native = compile(PROGRAM, "export.alc").expect("the spec's program compiles");
-    let interpreted = native.with_native(false).unwrap();
-    [native, interpreted]
+fn spec_program() -> Program {
+    compile(PROGRAM, "export.alc").expect("the spec's program compiles")
 }
 
-/// Acceptance 3: the worked example prints the spec's bytes, both ways.
+/// Acceptance 3: the worked example prints the spec's bytes.
 #[test]
-fn the_worked_example_prints_the_spec_csv_both_ways() {
-    for program in both() {
+fn the_worked_example_prints_the_spec_csv() {
+    {
+        let program = spec_program();
         assert_eq!(program.output(), Output::Text);
         assert_eq!(
             program.row_selector().unwrap().to_string(),
             ".response.payload.deep.records[*]"
         );
-        assert_eq!(
-            ok(&program, RECORDS, None),
-            EXPECTED_CSV,
-            "native={}",
-            program.native()
-        );
+        assert_eq!(ok(&program, RECORDS, None), EXPECTED_CSV);
     }
 }
 
@@ -149,14 +143,10 @@ fn metadata_after_rows_is_an_input_order_violation() {
         r#"{{"response":{{"payload":{{"deep":{{"records":[{}]}}}},"metadata":{meta}}}}}"#,
         support::record(1)
     );
-    for program in both() {
+    {
+        let program = spec_program();
         let (fail, out) = err(&program, &doc, &Limits::default());
-        assert_eq!(
-            fail.code,
-            Code::InputOrderViolation,
-            "native={}",
-            program.native()
-        );
+        assert_eq!(fail.code, Code::InputOrderViolation);
         assert!(!fail.committed_output);
         assert_eq!(out, "");
     }
@@ -166,7 +156,8 @@ fn metadata_after_rows_is_an_input_order_violation() {
 #[test]
 fn cells_follow_schema_order_not_member_order() {
     let doc = shaped(r#"{"account":{"balance":1},"person":{"name":"z"},"id":2}"#);
-    for program in both() {
+    {
+        let program = spec_program();
         assert_eq!(
             ok(&program, &doc, None),
             "\"Identifier\",\"Full name\",\"Balance\"\r\n\"2\",\"z\",\"1\"\r\n"
@@ -182,12 +173,11 @@ fn no_matching_rows_prints_the_header_only() {
         shaped(""),
         format!(r#"{{"response":{{"metadata":{meta}}}}}"#),
     ] {
-        for program in both() {
+        {
+            let program = spec_program();
             assert_eq!(
                 ok(&program, &doc, None),
-                "\"Identifier\",\"Full name\",\"Balance\"\r\n",
-                "native={}",
-                program.native()
+                "\"Identifier\",\"Full name\",\"Balance\"\r\n"
             );
         }
     }
@@ -200,35 +190,34 @@ fn no_matching_rows_prints_the_header_only() {
 fn invalid_trailing_input_fails_after_rows_were_exported() {
     let whole = support::records_json(2000);
     let doc = format!("{whole} x");
-    for program in both() {
+    {
+        let program = spec_program();
         let full = ok(&program, &whole, None);
         let (fail, out) = err(&program, &doc, &Limits::default());
-        assert_eq!(fail.code, Code::InputInvalid, "native={}", program.native());
-        assert!(fail.committed_output, "native={}", program.native());
+        assert_eq!(fail.code, Code::InputInvalid);
+        assert!(fail.committed_output);
         assert!(out.starts_with("\"Identifier\",\"Full name\",\"Balance\"\r\n"));
         assert!(out.len() > 32 * 1024);
         // The CSV renderer marks the end of each row, and the writer holds
         // a row until its end (tabnas/alchemy#29), where it once drained
         // wherever its budget fell (spec 17.4): what was committed is a
         // prefix of the whole output, and ends with a whole row.
-        assert!(full.starts_with(&out), "native={}", program.native());
+        assert!(full.starts_with(&out));
         assert!(out.len() < full.len());
-        assert!(out.ends_with("\r\n"), "native={}", program.native());
+        assert!(out.ends_with("\r\n"));
     }
     // A small document: the rows were buffered, not committed, so nothing
     // reached the writer and the failure says so.
-    let (fail, out) = err(&both()[0], &format!("{RECORDS} x"), &Limits::default());
+    let (fail, out) = err(&spec_program(), &format!("{RECORDS} x"), &Limits::default());
     assert_eq!(fail.code, Code::InputInvalid);
     assert!(!fail.committed_output);
     assert_eq!(out, "");
 }
 
 /// Spec 19.5: a very large selected row fails clearly under the limit
-/// that bounds it, the same one both ways: the native transducer
-/// materializes rows under `max_record_bytes`, and the library's
-/// `table-from-json` captures its rows under the same limit
-/// (`capture :row ... :max_record_bytes`), so the generic
-/// `max_capture_bytes` does not decide either.
+/// that bounds it: the library's `table-from-json` captures its rows
+/// under `max_record_bytes` (`capture :row ... :max_record_bytes`), so the
+/// generic `max_capture_bytes` does not decide.
 #[test]
 fn a_very_large_selected_row_names_the_limit() {
     let big = format!(
@@ -240,28 +229,25 @@ fn a_very_large_selected_row_names_the_limit() {
         max_record_bytes: 1024,
         ..Limits::default()
     };
-    for program in both() {
+    {
+        let program = spec_program();
         let (fail, _) = err(&program, &doc, &limits);
         assert_eq!(fail.code, Code::ResourceLimitExceeded);
-        assert_eq!(
-            fail.limit.as_ref().unwrap().name,
-            "max_record_bytes",
-            "native={}",
-            program.native()
-        );
+        assert_eq!(fail.limit.as_ref().unwrap().name, "max_record_bytes");
         assert_eq!(
             fail.path.as_deref(),
             Some(".response.payload.deep.records[1]")
         );
     }
-    // A small generic capture limit decides neither: both print the rows.
+    // A small generic capture limit does not decide: the rows print.
     let capture = Limits {
         max_capture_bytes: 64,
         ..Limits::default()
     };
-    for program in both() {
+    {
+        let program = spec_program();
         let (outcome, out) = drive(&program, RECORDS, None, &capture);
-        outcome.unwrap_or_else(|f| panic!("native={}: {f}", program.native()));
+        outcome.unwrap_or_else(|f| panic!("{f}"));
         assert_eq!(out, EXPECTED_CSV);
     }
 }
@@ -309,16 +295,17 @@ fn string_join_builds_one_string_from_several() {
 }
 
 /// A missing cell under the standard options is `MISSING_VALUE`, and a
-/// null is the empty string, both ways.
+/// null is the empty string.
 #[test]
 fn missing_and_null_cells_follow_the_options() {
-    for program in both() {
+    {
+        let program = spec_program();
         let (fail, _) = err(
             &program,
             &shaped(r#"{"id":1,"person":{},"account":{"balance":2}}"#),
             &Limits::default(),
         );
-        assert_eq!(fail.code, Code::MissingValue, "native={}", program.native());
+        assert_eq!(fail.code, Code::MissingValue);
         assert_eq!(
             ok(
                 &program,
@@ -422,7 +409,7 @@ fn records_of_a_table_round_trips() {
     .unwrap();
     assert_eq!(program.output(), Output::Text);
     let expected = r#"[{"Identifier":123,"Full name":"Alice","Balance":50.25},{"Identifier":456,"Full name":"Bob","Balance":72}]"#;
-    for program in [program.clone(), program.with_native(false).unwrap()] {
+    {
         let out = ok(&program, RECORDS, None);
         assert_eq!(out, format!("{expected}\n"));
         let parsed: serde_json::Value = serde_json::from_str(&out).unwrap();
@@ -454,7 +441,7 @@ fn the_output_limit_is_enforced_by_the_writer() {
         max_output_bytes: Some(200),
         ..Limits::default()
     };
-    let (fail, _) = err(&both()[0], &support::records_json(50), &limits);
+    let (fail, _) = err(&spec_program(), &support::records_json(50), &limits);
     assert_eq!(fail.code, Code::ResourceLimitExceeded);
     assert_eq!(fail.limit.as_ref().unwrap().name, "max_output_bytes");
 }
@@ -818,7 +805,7 @@ fn a_failed_json_run_leaves_whole_values() {
 /// tabnas/alchemy#29: a step of `scan-emit` answers `:record-end` where a
 /// record of its text ends, `join` writes it as no item, and the writer
 /// holds a record until its end, so a run that fails inside one leaves the
-/// records before it whole, natively and interpreted. Without the marks
+/// records before it whole. Without the marks
 /// the writer drains at its budget, wherever that falls.
 #[test]
 fn a_failed_scan_emit_run_leaves_whole_records() {
@@ -838,9 +825,8 @@ def export [input]
   join ""
     scan-emit [] step (fn [s] []) (events input)
 "#;
-    let native = compile(source, "lines.alc").unwrap();
-    let interpreted = native.with_native(false).unwrap();
-    for program in [native, interpreted] {
+    let program = compile(source, "lines.alc").unwrap();
+    {
         let (outcome, out) = drive(&program, &cut_array(4000), None, &Limits::default());
         let fail = outcome.expect_err("the source fails");
         assert_eq!(fail.code, Code::InputInvalid, "{fail}");

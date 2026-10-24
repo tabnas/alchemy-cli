@@ -29,16 +29,16 @@ import { Ev, Limits, Metrics, fromJSON, walkDatum } from '@tabnas/alchemy/shared
 import { EXPECTED_CSV, PROGRAM, RECORDS } from './common'
 import { OPTIONS, compile, jsonInto, thrown } from './host'
 
-function runtime(src: string, native: boolean): Runtime {
+function runtime(src: string): Runtime {
   const forms = desugarProgram(parseFile(src, 't.alc'), src)
   const sources = Sources.one('t.alc', src)
-  return new Runtime(resolve(forms, sources, outer), sources, OPTIONS).withNative(native)
+  return new Runtime(resolve(forms, sources, outer), sources, OPTIONS)
 }
 
 // Run `src` over the JSON `input`, read as `alchemy run` reads its input;
 // the output, or the failure thrown.
-function runSrc(src: string, input: string, native: boolean, render?: Renderer): string {
-  const rt = runtime(src, native)
+function runSrc(src: string, input: string, render?: Renderer): string {
+  const rt = runtime(src)
   const result = run(rt.export())
   const limits = Limits.default()
   const metrics = new Metrics()
@@ -49,34 +49,29 @@ function runSrc(src: string, input: string, native: boolean, render?: Renderer):
 }
 
 describe('lower', () => {
-  it('the worked example through the interpreted library', () => {
-    assert.equal(runSrc(PROGRAM, RECORDS, false), EXPECTED_CSV)
-  })
-
-  it('the worked example through the native path', () => {
-    assert.equal(runSrc(PROGRAM, RECORDS, true), EXPECTED_CSV)
+  it('the worked example through the library', () => {
+    assert.equal(runSrc(PROGRAM, RECORDS), EXPECTED_CSV)
   })
 
   it('json echoes the input with its lexemes', () => {
     const echo = 'def export [input] (json input)'
-    assert.equal(runSrc(echo, RECORDS, true), `${RECORDS}\n`)
-    assert.equal(runSrc(echo, '[1.50, 1e2]', false), '[1.50,1e2]\n')
+    assert.equal(runSrc(echo, RECORDS), `${RECORDS}\n`)
+    assert.equal(runSrc(echo, '[1.50, 1e2]'), '[1.50,1e2]\n')
   })
 
   it('select, map and concat-map stream items', () => {
     const src =
       'def export [input]\n  pipe input\n    select (path "a" each-index)\n    map (fn [x] (get :n x))\n    concat-map (fn [n] (concat (scalar-text csv-options n) ";"))'
-    assert.equal(runSrc(src, '{"a":[{"n":1},{"n":2.50}],"b":3}', false), '1;2.50;')
+    assert.equal(runSrc(src, '{"a":[{"n":1},{"n":2.50}],"b":3}'), '1;2.50;')
     const joined = 'def export [input]\n  join ","\n    map (fn [x] (get :n x)) (select (path "a" each-index) input)'
-    assert.equal(runSrc(joined, '{"a":[{"n":"x"},{"n":""},{"n":"y"}]}', false), 'x,,y')
+    assert.equal(runSrc(joined, '{"a":[{"n":"x"},{"n":""},{"n":"y"}]}'), 'x,,y')
     const framed = 'def export [input]\n  concat\n    "["\n    join "," (select (path each-index) input)\n    "]"\n    (text "!")'
-    assert.equal(runSrc(framed, '["a","b"]', false), '[a,b]!')
-    assert.equal(runSrc(framed, '[]', false), '[]!')
+    assert.equal(runSrc(framed, '["a","b"]'), '[a,b]!')
+    assert.equal(runSrc(framed, '[]'), '[]!')
     assert.equal(
       runSrc(
         'def export [input]\n  concat-map (fn [x] (get :v x))\n    filter (fn [x] (get :keep x)) (select (path each-index) input)',
         '[{"keep":true,"v":"a"},{"keep":false,"v":"b"},{"keep":true,"v":"c"}]',
-        false,
       ),
       'ac',
     )
@@ -84,28 +79,28 @@ describe('lower', () => {
 
   it('replace-text over a live text crosses fragments', () => {
     const src = 'def export [input]\n  replace-text "ab" "X"\n    concat-map (fn [s] s) (select (path each-index) input)'
-    assert.equal(runSrc(src, '["a","b","zab","a"]', false), 'XzXa')
+    assert.equal(runSrc(src, '["a","b","zab","a"]'), 'XzXa')
   })
 
   it('a finite text result is written at the end', () => {
-    assert.equal(runSrc('def export [input] "done"', '1', false), 'done')
+    assert.equal(runSrc('def export [input] "done"', '1'), 'done')
   })
 
   it('a stream result is rendered by the host', () => {
     const table =
       'def export [input] (table-from-json api-binding input)\n' +
       PROGRAM.replace('def export [input]\n  pipe input\n    api-table\n    csv csv-options\n', '')
-    assert.equal(runSrc(table, RECORDS, true), EXPECTED_CSV)
-    assert.equal(runSrc(table, RECORDS, false, 'csv'), EXPECTED_CSV)
+    assert.equal(runSrc(table, RECORDS), EXPECTED_CSV)
+    assert.equal(runSrc(table, RECORDS, 'csv'), EXPECTED_CSV)
     const json =
       '[{"Identifier":123,"Full name":"Alice","Balance":50.25},{"Identifier":456,"Full name":"Bob","Balance":72}]'
-    assert.equal(runSrc(table, RECORDS, true, 'json'), `${json}\n`)
-    assert.equal(runSrc(table, RECORDS, false, 'json'), `${json}\n`)
+    assert.equal(runSrc(table, RECORDS, 'json'), `${json}\n`)
+    assert.equal(runSrc(table, RECORDS, 'json'), `${json}\n`)
     const echo = 'def export [input] input'
-    assert.equal(runSrc(echo, '[1]', true), '[1]\n')
-    let f = thrown(() => runSrc(echo, '[1]', true, 'csv'))
+    assert.equal(runSrc(echo, '[1]'), '[1]\n')
+    let f = thrown(() => runSrc(echo, '[1]', 'csv'))
     assert.ok(f.message.startsWith('protocol_mismatch: '), String(f))
-    f = thrown(() => runSrc('def export [input] (json input)', '1', true, 'json'))
+    f = thrown(() => runSrc('def export [input] (json input)', '1', 'json'))
     assert.ok(f.message.startsWith('render_of_text: '), String(f))
   })
 
@@ -113,17 +108,17 @@ describe('lower', () => {
     const src = PROGRAM.replace('    csv csv-options\n', '    records\n    json\n')
     const json =
       '[{"Identifier":123,"Full name":"Alice","Balance":50.25},{"Identifier":456,"Full name":"Bob","Balance":72}]'
-    assert.equal(runSrc(src, RECORDS, true), `${json}\n`)
-    assert.equal(runSrc(src, RECORDS, false), `${json}\n`)
+    assert.equal(runSrc(src, RECORDS), `${json}\n`)
+    assert.equal(runSrc(src, RECORDS), `${json}\n`)
   })
 
   it('protocol mismatches are named', () => {
-    let f = thrown(() => runSrc('def export [input] (csv csv-options input)', '1', true))
+    let f = thrown(() => runSrc('def export [input] (csv csv-options input)', '1'))
     assert.equal(f.code, 'DSL_TYPE_ERROR')
     assert.ok(f.message.startsWith('protocol_mismatch: '), String(f))
-    f = thrown(() => runSrc('def export [input] (json (select (path each-index) input))', '[1]', true))
+    f = thrown(() => runSrc('def export [input] (json (select (path each-index) input))', '[1]'))
     assert.ok(f.message.startsWith('protocol_mismatch: '), String(f))
-    f = thrown(() => runSrc('def export [input] (concat-map (fn [x] x) input)', '[1]', true))
+    f = thrown(() => runSrc('def export [input] (concat-map (fn [x] x) input)', '[1]'))
     assert.ok(f.message.startsWith('protocol_mismatch: '), String(f))
   })
 })

@@ -13,7 +13,7 @@ alchemy canon FILE       print the program in canonical form
 alchemy format FILE      print the program in layout form
 alchemy check FILE       parse, desugar, resolve, check and build the plan
 alchemy explain FILE     print the plan report
-alchemy run [--render csv|json] [--no-native] [--max-output-bytes N] PROGRAM INPUT
+alchemy run [--render csv|json] [--max-output-bytes N] PROGRAM INPUT
                          run the program over the JSON document INPUT
 alchemy translate --from FORMAT --to FORMAT [--path PATH] [--key KEY]
                   [--with PROGRAM] [--max-output-bytes N] INPUT

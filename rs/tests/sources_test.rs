@@ -145,7 +145,4 @@ fn a_run_time_failure_in_a_part_names_the_part() {
     assert_eq!(fail.code, Code::InputInvalid, "{fail}");
     assert_eq!(fail.message, "a bad item", "{fail}");
     assert_at(&fail, PART_FILE, at(strict, 3, "(fail"));
-    // The interpreted twin positions it the same way.
-    let (outcome, _) = drive(&program.with_native(false).unwrap(), r#"["bad"]"#);
-    assert_at(&outcome.unwrap_err(), PART_FILE, at(strict, 3, "(fail"));
 }

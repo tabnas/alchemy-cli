@@ -5,7 +5,7 @@
 //! alchemy format FILE      print the program in layout form
 //! alchemy check FILE       parse, desugar, resolve, check and build the plan; print nothing and exit 0
 //! alchemy explain FILE     print the plan report
-//! alchemy run [--grammar FORMAT] [--render csv|json] [--no-native] [--max-output-bytes N] PROGRAM INPUT
+//! alchemy run [--grammar FORMAT] [--render csv|json] [--max-output-bytes N] PROGRAM INPUT
 //!                          run the program over the JSON document INPUT
 //! alchemy translate --from FORMAT --to FORMAT [--path PATH] [--key KEY]
 //!                   [--with PROGRAM] [--max-output-bytes N] INPUT
@@ -82,7 +82,7 @@ use tabnas_transduce::{Code, Fail, Limits, Metrics, ParserSink, Sink};
 /// `rs/tests/version_test.rs` fails the build if they drift.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-const USAGE: &str = "usage: alchemy canon|format|check|explain FILE\n       alchemy run [--grammar FORMAT] [--render csv|json] [--no-native] [--max-output-bytes N] PROGRAM INPUT\n       alchemy translate --from FORMAT --to FORMAT [--path PATH] [--key KEY] [--with PROGRAM] [--max-output-bytes N] INPUT\n       alchemy formats\n       (a FILE may be - for standard input)";
+const USAGE: &str = "usage: alchemy canon|format|check|explain FILE\n       alchemy run [--grammar FORMAT] [--render csv|json] [--max-output-bytes N] PROGRAM INPUT\n       alchemy translate --from FORMAT --to FORMAT [--path PATH] [--key KEY] [--with PROGRAM] [--max-output-bytes N] INPUT\n       alchemy formats\n       (a FILE may be - for standard input)";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -272,13 +272,10 @@ fn run(args: &[String]) -> Result<String, Exit> {
             // With --grammar the program reads the rule passes of INPUT
             // parsed as that format, and is compiled over them, as a
             // transducer part is; without it, the JSON document's events.
-            let mut program = match options.grammar {
+            let program = match options.grammar {
                 Some(_) => compile_with(&src, &options.program, Input::ParserEvents)?,
                 None => compile(&src, &options.program)?,
             };
-            if !options.native {
-                program = program.with_native(false)?;
-            }
             let limits = Limits {
                 max_output_bytes: options.max_output_bytes,
                 ..Limits::default()
@@ -446,7 +443,6 @@ struct RunOptions {
     /// document's events.
     grammar: Option<&'static Format>,
     render: Option<Renderer>,
-    native: bool,
     max_output_bytes: Option<u64>,
     program: String,
     input: String,
@@ -456,7 +452,6 @@ impl RunOptions {
     fn parse(args: &[String]) -> Result<RunOptions, Exit> {
         let mut grammar = None;
         let mut render = None;
-        let mut native = true;
         let mut max_output_bytes = None;
         let mut files = Vec::new();
         let mut i = 0;
@@ -483,10 +478,6 @@ impl RunOptions {
                         status: 2,
                     })?);
                     i += 2;
-                }
-                "--no-native" => {
-                    native = false;
-                    i += 1;
                 }
                 "--max-output-bytes" => {
                     let n = args.get(i + 1).ok_or_else(usage)?;
@@ -517,7 +508,6 @@ impl RunOptions {
         Ok(RunOptions {
             grammar,
             render,
-            native,
             max_output_bytes,
             program: program.clone(),
             input: input.clone(),

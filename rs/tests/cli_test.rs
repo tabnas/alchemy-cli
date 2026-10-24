@@ -236,7 +236,7 @@ fn explain_prints_the_plan_report() {
         "{text}"
     );
     assert!(
-        text.contains("Protocol:              JsonEvents/1 → TableRows/1 → Text\n"),
+        text.contains("Protocol:              JsonEvents/1 → Stream<Selected> → Stream<Value> → TableRows/1 → Text\n"),
         "{text}"
     );
     assert!(text.contains("Row capture:           one .response.payload.deep.records[*], capped at max_record_bytes\n"), "{text}");
@@ -258,20 +258,19 @@ fn explain_prints_the_plan_report() {
 }
 
 #[test]
-fn run_prints_the_worked_example_csv_both_ways() {
+fn run_prints_the_worked_example_csv() {
     let program = temp_file("export.alc", PROGRAM);
     let program = program.to_str().expect("a utf-8 path");
     let input = temp_file("records.json", RECORDS);
     let input = input.to_str().expect("a utf-8 path");
     for args in [
         vec!["run", program, input],
-        vec!["run", "--no-native", program, input],
         vec!["run", program, "-"],
-        vec!["run", "--no-native", "-", input],
+        vec!["run", "-", input],
     ] {
         let stdin = match args.as_slice() {
             [.., "-"] => Some(RECORDS),
-            [_, _, "-", _] => Some(PROGRAM),
+            [_, "-", _] => Some(PROGRAM),
             _ => None,
         };
         let output = run(&args, stdin);
@@ -368,10 +367,12 @@ fn run_statuses_follow_the_failure_code() {
     let fail = fail_json(&output);
     assert_eq!(fail["code"], "INPUT_ORDER_VIOLATION");
     assert_eq!(fail["output"], "none");
+    // The library's text refuses it, so the failure names the library's
+    // position rather than the row's path.
     assert!(
-        fail["path"]
+        fail["message"]
             .as_str()
-            .is_some_and(|p| p.starts_with(".response.payload")),
+            .is_some_and(|m| m.contains("rows must follow their metadata")),
         "{fail}"
     );
     // Invalid JSON after the rows: INPUT_INVALID, status 1; the rows were
@@ -607,7 +608,7 @@ fn a_library_failure_names_the_library_file() {
         std::fs::write(&path, PROGRAM).unwrap();
         let output = Command::new(binary())
             .current_dir(&dir)
-            .args(["run", "--no-native", name, "-"])
+            .args(["run", name, "-"])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -1150,8 +1151,8 @@ const TRANSDUCER: &str = "def export [input]
 ";
 
 /// `run --grammar FORMAT` parses INPUT with that format's grammar and runs
-/// the program over its rule passes, natively and interpreted: a
-/// transducer over json's writes the document, a number's lexeme kept; a
+/// the program over its rule passes: a transducer over json's writes the
+/// document, a number's lexeme kept; a
 /// document the grammar refuses is INPUT_INVALID; a format that is not
 /// parsed, or is unknown, is refused with status 2, naming the formats
 /// that are; a program over JSON events, compiled over parser events, is a
@@ -1161,14 +1162,9 @@ fn run_takes_a_grammar_whose_rule_passes_the_program_reads() {
     let program = temp_file("transducer.alc", TRANSDUCER);
     let program = program.to_str().expect("a utf-8 path");
     let doc = r#"{"a":[1,2.50,"x",{"b":null}],"c":{},"d":[],"e":1e21,"f":true}"#;
-    for args in [
-        &["run", "--grammar", "json", program, "-"][..],
-        &["run", "--grammar", "json", "--no-native", program, "-"][..],
-    ] {
-        let out = run(args, Some(doc));
-        assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
-        assert_eq!(stdout(&out), format!("{doc}\n"));
-    }
+    let out = run(&["run", "--grammar", "json", program, "-"], Some(doc));
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(stdout(&out), format!("{doc}\n"));
     let out = run(&["run", "--grammar", "json", program, "-"], Some("[1,"));
     assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
     assert_eq!(stdout(&out), "");

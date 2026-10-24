@@ -7,7 +7,7 @@
 //	alchemy format FILE      print the program in layout form
 //	alchemy check FILE       parse, desugar, resolve, check and build the plan; print nothing and exit 0
 //	alchemy explain FILE     print the plan report
-//	alchemy run [--grammar FORMAT] [--render csv|json] [--no-native] [--max-output-bytes N] PROGRAM INPUT
+//	alchemy run [--grammar FORMAT] [--render csv|json] [--max-output-bytes N] PROGRAM INPUT
 //	                         run the program over the JSON document INPUT; with --grammar, over
 //	                         the rule passes of INPUT parsed as FORMAT (a transducer part's input)
 //	alchemy translate --from FORMAT --to FORMAT [--path PATH] [--key KEY]
@@ -79,7 +79,7 @@ import (
 // finds it.
 const VERSION = "0.1.17"
 
-const usage = "usage: alchemy canon|format|check|explain FILE\n       alchemy run [--grammar FORMAT] [--render csv|json] [--no-native] [--max-output-bytes N] PROGRAM INPUT\n       alchemy translate --from FORMAT --to FORMAT [--path PATH] [--key KEY] [--with PROGRAM] [--max-output-bytes N] INPUT\n       alchemy formats\n       (a FILE may be - for standard input)"
+const usage = "usage: alchemy canon|format|check|explain FILE\n       alchemy run [--grammar FORMAT] [--render csv|json] [--max-output-bytes N] PROGRAM INPUT\n       alchemy translate --from FORMAT --to FORMAT [--path PATH] [--key KEY] [--with PROGRAM] [--max-output-bytes N] INPUT\n       alchemy formats\n       (a FILE may be - for standard input)"
 
 func main() {
 	// A write to a closed standard output or standard error fails with an
@@ -246,9 +246,6 @@ func run(args []string, stdin io.Reader, stdout io.Writer) (string, *exit) {
 			program, f = alchemy.CompileWith(src, options.program, alchemy.InputParserEvents, tt.Routers(), tr.Renderers())
 		} else {
 			program, f = alchemy.Compile(src, options.program, tt.Routers(), tr.Renderers())
-		}
-		if f == nil && !options.native {
-			program, f = program.WithNative(false)
 		}
 		if f != nil {
 			return "", fromFail(f)
@@ -466,7 +463,6 @@ type runOptions struct {
 	// program's input (--grammar); nil for the JSON document's events.
 	grammar        *translate.Format
 	render         alchemy.Renderer
-	native         bool
 	maxOutputBytes *uint64
 	program        string
 	input          string
@@ -484,7 +480,7 @@ func parseU64(text string) (uint64, bool) {
 }
 
 func parseRunOptions(args []string) (*runOptions, *exit) {
-	options := &runOptions{native: true}
+	options := &runOptions{}
 	var files []string
 	for i := 0; i < len(args); {
 		switch arg := args[i]; {
@@ -510,9 +506,6 @@ func parseRunOptions(args []string) (*runOptions, *exit) {
 			}
 			options.render = render
 			i += 2
-		case arg == "--no-native":
-			options.native = false
-			i++
 		case arg == "--max-output-bytes":
 			if i+1 >= len(args) {
 				return nil, usageError()

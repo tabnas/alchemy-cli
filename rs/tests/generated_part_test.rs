@@ -3,7 +3,7 @@
 // by alchemy, over the grammar's rule passes from transduce's
 // `ParserEventSource`. Over every grammar of abnf's
 // `alignment-abnf-ast.tsv`, a generated part writes the value the compiled
-// grammar builds, natively and interpreted, and the generator declares
+// grammar builds, and the generator declares
 // every other grammar read whole, for the reason it gives for a start rule
 // with no annotation. The part's events reach a renderer the program
 // builds (`Program::parser_sink`) and a sink of the host's own
@@ -81,13 +81,13 @@ fn canonical(text: &str) -> String {
 
 /// One grammar of the fixture whose generated part streams: the
 /// grammar's spec, a document, the value the grammar builds of it as
-/// JSON, and the part compiled natively and interpreted.
+/// JSON, and the part compiled.
 struct Case {
     grammar: String,
     input: String,
     spec: GrammarSpec,
     want: String,
-    programs: [(&'static str, Program); 2],
+    program: Program,
 }
 
 /// Every grammar of abnf's `alignment-abnf-ast.tsv` with its generated
@@ -124,15 +124,14 @@ fn cases() -> (Vec<Case>, usize) {
             .unwrap_or_else(|e| panic!("{grammar:?} parses {input:?}: {e}"));
         let want = serde_json::to_string(&value.to_json()).unwrap();
         let src = format!("{source}\ndef export [input] ({entry} input)\n");
-        let native = common::compile_with(&src, "generated.alc", Input::ParserEvents)
+        let program = common::compile_with(&src, "generated.alc", Input::ParserEvents)
             .unwrap_or_else(|f| panic!("the part of {grammar:?} compiles: {f:?}\n{source}"));
-        let interpreted = native.with_native(false).unwrap();
         cases.push(Case {
             grammar,
             input,
             spec,
             want,
-            programs: [("native", native), ("interpreted", interpreted)],
+            program,
         });
     }
     assert!(cases.len() > 10, "{} grammars streamed", cases.len());
@@ -155,7 +154,8 @@ fn a_generated_part_writes_the_value_its_grammar_builds() {
     let (cases, whole) = cases();
     let mut failures = Vec::new();
     for case in &cases {
-        for (how, program) in &case.programs {
+        {
+            let program = &case.program;
             let out = Shared::default();
             let sink = program.parser_sink(
                 Box::new(out.clone()),
@@ -166,7 +166,7 @@ fn a_generated_part_writes_the_value_its_grammar_builds() {
             match drive(&case.spec, &case.input, sink) {
                 Ok(()) if canonical(&out.text()) == case.want => {}
                 got => failures.push(format!(
-                    "{:?} on {:?}, {how}\n  part:  {got:?} {}\n  value: {}",
+                    "{:?} on {:?}\n  part:  {got:?} {}\n  value: {}",
                     case.grammar,
                     case.input,
                     out.text(),
@@ -177,7 +177,7 @@ fn a_generated_part_writes_the_value_its_grammar_builds() {
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
     eprintln!(
-        "generated parts: {} grammars write their values both ways, {whole} read whole",
+        "generated parts: {} grammars write their values, {whole} read whole",
         cases.len()
     );
 }
@@ -185,8 +185,8 @@ fn a_generated_part_writes_the_value_its_grammar_builds() {
 /// The parts again, their events into a sink of the host's own
 /// (`Program::parser_sink_into`), as aless runs a format's part in front
 /// of stages of its own: here render's JSON renderer, which the host
-/// builds itself, writes the value each grammar builds, natively and
-/// interpreted. A sink of the host's own takes the events as the source's
+/// builds itself, writes the value each grammar builds. A sink of the
+/// host's own takes the events as the source's
 /// limits hold them, so a document nested past `max_depth` is refused as
 /// the limit's.
 #[test]
@@ -196,7 +196,8 @@ fn a_generated_parts_events_reach_a_hosts_own_sink() {
     let (cases, _) = cases();
     let mut failures = Vec::new();
     for case in &cases {
-        for (how, program) in &case.programs {
+        {
+            let program = &case.program;
             let out = Shared::default();
             let text = renderers.write_out(Box::new(out.clone()), &limits, Metrics::new());
             let own: Box<dyn Sink + Send> = renderers.json(
@@ -210,7 +211,7 @@ fn a_generated_parts_events_reach_a_hosts_own_sink() {
             match drive(&case.spec, &case.input, sink) {
                 Ok(()) if canonical(&out.text()) == case.want => {}
                 got => failures.push(format!(
-                    "{:?} on {:?}, {how}\n  part:  {got:?} {}\n  value: {}",
+                    "{:?} on {:?}\n  part:  {got:?} {}\n  value: {}",
                     case.grammar,
                     case.input,
                     out.text(),
@@ -228,7 +229,8 @@ fn a_generated_parts_events_reach_a_hosts_own_sink() {
         max_depth: 0,
         ..Limits::default()
     };
-    for (how, program) in &case.programs {
+    {
+        let program = &case.program;
         let own: Box<dyn Sink + Send> = renderers.json(
             renderers.write_out(Box::new(Shared::default()), &tight, Metrics::new()),
             JsonOptions {
@@ -245,7 +247,7 @@ fn a_generated_parts_events_reach_a_hosts_own_sink() {
         assert_eq!(
             fail.limit.as_ref().map(|l| l.name),
             Some("max_depth"),
-            "{how}: {fail}"
+            "{fail}"
         );
     }
 }

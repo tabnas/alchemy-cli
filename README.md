@@ -25,7 +25,7 @@ alchemy canon FILE       print the program in canonical form
 alchemy format FILE      print the program in layout form
 alchemy check FILE       parse, desugar, resolve, check and build the plan; print nothing and exit 0
 alchemy explain FILE     print the plan report
-alchemy run [--grammar FORMAT] [--render csv|json] [--no-native] [--max-output-bytes N] PROGRAM INPUT
+alchemy run [--grammar FORMAT] [--render csv|json] [--max-output-bytes N] PROGRAM INPUT
                          run the program over the JSON document INPUT; with --grammar, over
                          the rule passes of INPUT parsed as FORMAT (a transducer part's input)
 alchemy translate --from FORMAT --to FORMAT [--path PATH] [--key KEY]

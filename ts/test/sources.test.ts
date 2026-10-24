@@ -111,8 +111,6 @@ describe('sources', () => {
     assert.equal(fail.code, 'INPUT_INVALID', String(fail))
     assert.equal(fail.message, 'a bad item', String(fail))
     assertAt(fail, PART_FILE, at(strict, 3, '(fail'))
-    // The interpreted twin positions it the same way.
-    assertAt(drive(program.withNative(false), '["bad"]').fail, PART_FILE, at(strict, 3, '(fail'))
   })
 
   // A program linked under another name feeds a format's render: its

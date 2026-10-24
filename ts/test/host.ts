@@ -17,7 +17,8 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 
 import * as alchemy from '@tabnas/alchemy'
-import { EventRecorder, Limits, Metrics, replay } from '@tabnas/alchemy/shared'
+import { DatumBuilder, EventRecorder, Limits, Metrics, replay, walkDatum } from '@tabnas/alchemy/shared'
+import type { Datum, Flow, JsonEvent, Sink } from '@tabnas/alchemy/shared'
 import { BytesWriter, renderers } from '@tabnas/render'
 import { ParserSource, routers } from '@tabnas/transduce'
 
@@ -171,4 +172,22 @@ export function replayed(
   const sink = program.sink(writer, render, limits, metrics)
   replay(evs, sink)
   return writer.text()
+}
+
+// The events of a document, collected into a value under a duplicate
+// policy.
+export class Collect implements Sink {
+  constructor(readonly builder: DatumBuilder) {}
+
+  event(ev: JsonEvent): Flow {
+    if ('end' !== ev.type) this.builder.event(ev)
+    return 'continue'
+  }
+}
+
+// A value's events, a number's lexeme dropped.
+export function plainEvents(value: Datum): JsonEvent[] {
+  const recorder = new EventRecorder()
+  walkDatum(value, recorder)
+  return recorder.events.map((ev) => ('number' === ev.type ? { ...ev, lexeme: null } : ev))
 }

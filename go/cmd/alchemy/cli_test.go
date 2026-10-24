@@ -196,7 +196,7 @@ func TestExplainPrintsThePlanReport(t *testing.T) {
 	o := invoke(t, []string{"explain", "-"}, text(program))
 	if o.status != 0 || o.stderr != "" ||
 		!strings.HasPrefix(o.stdout, "export: api-table → csv\n\nSource reads:          1\n") ||
-		!strings.Contains(o.stdout, "Protocol:              JsonEvents/1 → TableRows/1 → Text\n") ||
+		!strings.Contains(o.stdout, "Protocol:              JsonEvents/1 → Stream<Selected> → Stream<Value> → TableRows/1 → Text\n") ||
 		!strings.Contains(o.stdout, "Row capture:           one .response.payload.deep.records[*], capped at max_record_bytes\n") ||
 		!strings.HasSuffix(o.stdout, "A later error can occur after earlier output has been written.\n") {
 		t.Errorf("%+v", o)
@@ -207,7 +207,7 @@ func TestExplainPrintsThePlanReport(t *testing.T) {
 	}
 }
 
-func TestRunPrintsTheWorkedExampleCsvBothWays(t *testing.T) {
+func TestRunPrintsTheWorkedExampleCsv(t *testing.T) {
 	programPath := tempFile(t, "export.alc", program)
 	input := tempFile(t, "records.json", records)
 	for _, c := range []struct {
@@ -215,9 +215,8 @@ func TestRunPrintsTheWorkedExampleCsvBothWays(t *testing.T) {
 		stdin *string
 	}{
 		{[]string{"run", programPath, input}, nil},
-		{[]string{"run", "--no-native", programPath, input}, nil},
 		{[]string{"run", programPath, "-"}, text(records)},
-		{[]string{"run", "--no-native", "-", input}, text(program)},
+		{[]string{"run", "-", input}, text(program)},
 	} {
 		if o := invoke(t, c.args, c.stdin); o.status != 0 || o.stdout != expectedCSV || o.stderr != "" {
 			t.Errorf("%v: %+v", c.args, o)
@@ -282,7 +281,9 @@ func TestRunStatusesFollowTheFailureCode(t *testing.T) {
 	reordered := `{"response":{"payload":{"deep":{"records":[{"id":1,"person":{"name":"a"},"account":{"balance":2}}]}},"metadata":{"fields":[{"title":"Identifier","path":["id"]}]}}}`
 	o := invoke(t, []string{"run", programPath, "-"}, text(reordered))
 	f := failJSON(t, o)
-	if o.status != 1 || o.stdout != "" || f["code"] != "INPUT_ORDER_VIOLATION" || f["output"] != "none" || !strings.HasPrefix(fmt.Sprint(f["path"]), ".response.payload") {
+	// The library's text refuses it, so the failure names the library's
+	// position rather than the row's path.
+	if o.status != 1 || o.stdout != "" || f["code"] != "INPUT_ORDER_VIOLATION" || f["output"] != "none" || !strings.Contains(fmt.Sprint(f["message"]), "rows must follow their metadata") {
 		t.Errorf("%d %q %v", o.status, o.stdout, f)
 	}
 	// Invalid JSON after the rows: INPUT_INVALID, status 1; the rows were
@@ -445,7 +446,7 @@ func TestALibraryFailureNamesTheLibraryFile(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(program), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		o := runIn(t, dir, []string{"run", "--no-native", name, "-"}, text("{}"))
+		o := runIn(t, dir, []string{"run", name, "-"}, text("{}"))
 		f := failJSON(t, o)
 		if o.status != 1 || f["code"] != "INPUT_INVALID" || f["message"] != fmt.Sprintf("Required metadata was not found (at stdlib/table.alc:%d:%d)", row, col) {
 			t.Errorf("%s: %d %v", name, o.status, f)
@@ -512,8 +513,8 @@ const transducer = "def export [input]\n  transduce-tree\n    record\n      entr
 
 // run --grammar FORMAT parses INPUT with that format's grammar and runs the
 // program over its rule passes, in every build (the source of rule passes
-// needs no adapter), natively and interpreted: a transducer over json's
-// writes the document, a number's lexeme kept; a document the grammar
+// needs no adapter): a transducer over json's writes the document, a
+// number's lexeme kept; a document the grammar
 // refuses is INPUT_INVALID; a format that is not parsed, or is unknown, is
 // refused with status 2, naming the formats that are (C is parsed here,
 // where the Rust crate reads it as its realized tree; pgn and feed are
@@ -522,13 +523,8 @@ const transducer = "def export [input]\n  transduce-tree\n    record\n      entr
 func TestRunTakesAGrammarWhoseRulePassesTheProgramReads(t *testing.T) {
 	programPath := tempFile(t, "transducer.alc", transducer)
 	doc := `{"a":[1,2.50,"x",{"b":null}],"c":{},"d":[],"e":1e21,"f":true}`
-	for _, args := range [][]string{
-		{"run", "--grammar", "json", programPath, "-"},
-		{"run", "--grammar", "json", "--no-native", programPath, "-"},
-	} {
-		if o := invoke(t, args, text(doc)); o.status != 0 || o.stdout != doc+"\n" {
-			t.Errorf("%v: %+v", args, o)
-		}
+	if o := invoke(t, []string{"run", "--grammar", "json", programPath, "-"}, text(doc)); o.status != 0 || o.stdout != doc+"\n" {
+		t.Errorf("%+v", o)
 	}
 	if o := invoke(t, []string{"run", "--grammar", "json", programPath, "-"}, text("[1,")); o.status != 1 || o.stdout != "" || failJSON(t, o)["code"] != "INPUT_INVALID" {
 		t.Errorf("%+v", o)

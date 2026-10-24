@@ -148,10 +148,4 @@ func TestARunTimeFailureInAPartNamesThePart(t *testing.T) {
 		t.Fatalf("%v", f)
 	}
 	assertAt(t, f, partFile, row, col)
-	// The interpreted twin positions it the same way.
-	_, f = hostRun(t, interpreted(t, program), `["bad"]`, RenderDefault, tt.DefaultLimits())
-	if f == nil {
-		t.Fatal("the interpreted run succeeded")
-	}
-	assertAt(t, f, partFile, row, col)
 }

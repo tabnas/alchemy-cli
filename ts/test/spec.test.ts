@@ -7,10 +7,8 @@
 // writes (transduce.tsv), and the catalogue's drift test over the error
 // rows of all five files.
 //
-// run.tsv runs each row twice, with the standard compositions native and
-// through the library's text (`withNative(false)`), and a row whose two
-// paths differ in a byte, a code or a position fails whatever its expected
-// cell says.
+// run.tsv runs each row through the library's text, the one
+// implementation of its compositions, and holds it to its expected cell.
 //
 // Moved from alchemy's ts/test/spec.test.ts, which runs reader.tsv,
 // pipe.tsv and check.tsv and the catalogue's per-row checks over them:
@@ -24,8 +22,8 @@ import { join } from 'node:path'
 
 import { SpecRow, isErrorExpect, loadSpecDir, makeRunner } from '@tabnas/support'
 import { BytesWriter } from '@tabnas/render'
-import { DatumBuilder, EventRecorder, walkDatum } from '@tabnas/transduce'
-import type { Datum, Flow, JsonEvent, Sink } from '@tabnas/transduce'
+import { DatumBuilder } from '@tabnas/transduce'
+import type { Datum } from '@tabnas/transduce'
 
 import { Format, format as formatNamed, parserNames } from '../dist/translate'
 
@@ -42,7 +40,7 @@ import {
 import { Limits, Metrics } from '@tabnas/alchemy/shared'
 import type { Duplicates } from '@tabnas/alchemy/shared'
 
-import { OWN_CODES, compile, compileWith, failCode, jsonInto, sibling } from './host'
+import { Collect, OWN_CODES, compile, compileWith, failCode, jsonInto, plainEvents, sibling } from './host'
 
 // alchemy's fixtures, in the checkout beside this one.
 const SPEC_DIR = sibling('alchemy', 'test', 'spec')
@@ -55,10 +53,8 @@ const runnerOptions = {
 
 // Compile `program` and run it over `doc`, as `alchemy run` does: the
 // document read through JSON's transducer part, with the default limits.
-function runBoth(program: string, doc: string, render: Renderer | undefined, native: boolean): string {
-  let compiled = compile(program, 'run')
-  if (!native) compiled = compiled.withNative(false)
-  return drive(compiled, doc, render)
+function runProgram(program: string, doc: string, render: Renderer | undefined): string {
+  return drive(compile(program, 'run'), doc, render)
 }
 
 function drive(program: Program, doc: string, render: Renderer | undefined): string {
@@ -70,8 +66,6 @@ function drive(program: Program, doc: string, render: Renderer | undefined): str
   return writer.text()
 }
 
-type Outcome = { ok: true; text: string } | { ok: false; fail: unknown }
-
 // A row's `render` column: how a table or JSON-events result is rendered,
 // or the host's default.
 function rowRender(row: SpecRow): Renderer | undefined {
@@ -82,53 +76,14 @@ function rowRender(row: SpecRow): Renderer | undefined {
   return render
 }
 
-function outcome(work: () => string): Outcome {
-  try {
-    return { ok: true, text: work() }
-  } catch (fail) {
-    return { ok: false, fail }
-  }
-}
-
-function shown(o: Outcome): string {
-  return o.ok ? JSON.stringify(o.text) : String(o.fail)
-}
-
 // A program run over a JSON document: the bytes it writes, or the failure.
-// See test/AGENTS.md for the columns. Both paths, compared before the
-// expected cell is.
+// See test/AGENTS.md for the columns.
 makeRunner({
   ...runnerOptions,
   parse: (program: string, row: SpecRow) => {
     const cell = row.unescNamed('doc')
     const doc = '' === cell ? 'null' : cell
-    const render = rowRender(row)
-    const native = outcome(() => runBoth(program, doc, render, true))
-    const interpreted = outcome(() => runBoth(program, doc, render, false))
-    let agree: boolean
-    if (native.ok && interpreted.ok) {
-      agree = native.text === interpreted.text
-    } else if (!native.ok && !interpreted.ok) {
-      // Failures both, whichever copy of transduce made each (the native
-      // path's renderers are render's): one code, at one position.
-      const a: any = native.fail
-      const b: any = interpreted.fail
-      agree =
-        isFail(a) &&
-        isFail(b) &&
-        failCode(a) === failCode(b) &&
-        a.row === b.row &&
-        a.col === b.col
-    } else {
-      agree = false
-    }
-    if (!agree) {
-      throw new Error(
-        `native and interpreted runs disagree:\n  native:      ${shown(native)}\n  interpreted: ${shown(interpreted)}`,
-      )
-    }
-    if (native.ok) return native.text
-    throw native.fail
+    return runProgram(program, doc, rowRender(row))
   },
 }).file(join(SPEC_DIR, 'run.tsv'))
 
@@ -163,15 +118,13 @@ function rowFailures(file: string, input: string, row: SpecRow): unknown[] {
       const doc = row.unescNamed('doc')
       const render = rowRender(row)
       const duplicates = rowDuplicates(row)
-      return [true, false].flatMap((native) =>
-        met(() => runPasses(input, grammar, doc, render, duplicates, native).text),
-      )
+      return met(() => runPasses(input, grammar, doc, render, duplicates).text)
     }
     default: {
       const cell = row.unescNamed('doc')
       const doc = '' === cell ? 'null' : cell
       const render = rowRender(row)
-      return [true, false].flatMap((native) => met(() => runBoth(input, doc, render, native)))
+      return met(() => runProgram(input, doc, render))
     }
   }
 }
@@ -313,10 +266,8 @@ function runPasses(
   doc: string,
   render: Renderer | undefined,
   duplicates: Duplicates,
-  native: boolean,
 ): { output: string; text: string } {
   let compiled = compileWith(program, 'transduce', 'ParserEvents/1')
-  if (!native) compiled = compiled.withNative(false)
   if ('reject' !== duplicates) compiled = compiled.withDuplicates(duplicates)
   const writer = new BytesWriter()
   const limits = Limits.default()
@@ -324,38 +275,6 @@ function runPasses(
   const sink = compiled.parserSink(writer, render, limits, metrics)
   grammar.passes(doc).limits(limits).metrics(metrics).run(sink)
   return { output: compiled.output, text: writer.text() }
-}
-
-type Passed = { ok: true; output: string; text: string } | { ok: false; fail: unknown }
-
-function passed(work: () => { output: string; text: string }): Passed {
-  try {
-    return { ok: true, ...work() }
-  } catch (fail) {
-    return { ok: false, fail }
-  }
-}
-
-function shownPassed(o: Passed): string {
-  return o.ok ? JSON.stringify(o.text) : String(o.fail)
-}
-
-// The events of a document, collected into a value under a duplicate
-// policy.
-class Collect implements Sink {
-  constructor(readonly builder: DatumBuilder) {}
-
-  event(ev: JsonEvent): Flow {
-    if ('end' !== ev.type) this.builder.event(ev)
-    return 'continue'
-  }
-}
-
-// A value's events, a number's lexeme dropped.
-function plainEvents(value: Datum): JsonEvent[] {
-  const recorder = new EventRecorder()
-  walkDatum(value, recorder)
-  return recorder.events.map((ev) => ('number' === ev.type ? { ...ev, lexeme: null } : ev))
 }
 
 // The differential rule of transduce.tsv: the events a row's program
@@ -389,40 +308,16 @@ function differential(grammar: Format, doc: string, written: string): void {
 
 // A program over a grammar's rule passes, run over a document in that
 // grammar: the bytes it writes, or the failure (alchemy's test/AGENTS.md
-// has the columns). Both paths, compared before the expected cell is; and
-// a row's program is a transducer, its events the document's, which the
-// differential holds it to where it answers JSON events.
+// has the columns). A row's program is a transducer, its events the
+// document's, which the differential holds it to where it answers JSON
+// events.
 makeRunner({
   ...runnerOptions,
   parse: (program: string, row: SpecRow) => {
     const grammar = transduceGrammar(row)
     const doc = row.unescNamed('doc')
-    const render = rowRender(row)
-    const duplicates = rowDuplicates(row)
-    const native = passed(() => runPasses(program, grammar, doc, render, duplicates, true))
-    const interpreted = passed(() => runPasses(program, grammar, doc, render, duplicates, false))
-    let agree: boolean
-    if (native.ok && interpreted.ok) {
-      agree = native.text === interpreted.text
-    } else if (!native.ok && !interpreted.ok) {
-      const a: any = native.fail
-      const b: any = interpreted.fail
-      agree =
-        isFail(a) &&
-        isFail(b) &&
-        failCode(a) === failCode(b) &&
-        a.row === b.row &&
-        a.col === b.col
-    } else {
-      agree = false
-    }
-    if (!agree) {
-      throw new Error(
-        `native and interpreted runs disagree:\n  native:      ${shownPassed(native)}\n  interpreted: ${shownPassed(interpreted)}`,
-      )
-    }
-    if (!native.ok) throw native.fail
-    if ('JsonEvents/1' === native.output) differential(grammar, doc, native.text)
-    return native.text
+    const got = runPasses(program, grammar, doc, rowRender(row), rowDuplicates(row))
+    if ('JsonEvents/1' === got.output) differential(grammar, doc, got.text)
+    return got.text
   },
 }).file(join(SPEC_DIR, 'transduce.tsv'))

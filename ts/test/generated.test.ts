@@ -5,8 +5,7 @@
 // (rs/tests/generated_part_test.rs): compiled by alchemy, over the
 // grammar's rule passes from transduce's `ParserEventSource`. Over every
 // grammar of abnf's `alignment-abnf-ast.tsv`, a generated part writes the
-// value the compiled grammar builds, natively and interpreted, and the
-// generator declares every other grammar read whole, for the reason it
+// value the compiled grammar builds, and the generator declares every other grammar read whole, for the reason it
 // gives for a start rule with no annotation. The part's events reach a
 // renderer the program builds (`parserSink`) and a sink of the host's own
 // (`parserSinkInto`), which is how aless runs a part in front of its own
@@ -33,13 +32,12 @@ function engine(grammar: string): Tabnas {
 }
 
 // One grammar of the fixture whose generated part streams: a document,
-// the value the grammar builds of it as JSON, and the part compiled
-// natively and interpreted.
+// the value the grammar builds of it as JSON, and the part compiled.
 interface Case {
   grammar: string
   input: string
   want: string
-  programs: Array<[string, Program]>
+  program: Program
 }
 
 // Every grammar of abnf's `alignment-abnf-ast.tsv` with its generated
@@ -58,16 +56,8 @@ function cases(): Case[] {
       continue
     }
     const want = JSON.stringify(engine(grammar).parse(input))
-    const native = compileWith(`${part.source}\ndef export [input] (${part.entry} input)\n`, 'generated.alc', 'ParserEvents/1')
-    out.push({
-      grammar,
-      input,
-      want,
-      programs: [
-        ['native', native],
-        ['interpreted', native.withNative(false)],
-      ],
-    })
+    const program = compileWith(`${part.source}\ndef export [input] (${part.entry} input)\n`, 'generated.alc', 'ParserEvents/1')
+    out.push({ grammar, input, want, program })
   }
   assert.ok(10 < out.length, `${out.length} grammars streamed`)
   return out
@@ -86,14 +76,15 @@ describe('generated parts', () => {
   it('a generated part writes the value its grammar builds', () => {
     const failures: string[] = []
     for (const c of cases()) {
-      for (const [how, program] of c.programs) {
+      {
+      const program = c.program
         const got = written(() => {
           const writer = new BytesWriter()
           new ParserEventSource(engine(c.grammar), c.input).run(program.parserSink(writer, 'json'))
           return writer.text()
         })
         if (got !== c.want) {
-          failures.push(`${JSON.stringify(c.grammar)} on ${JSON.stringify(c.input)}, ${how}\n  part:  ${got}\n  value: ${c.want}`)
+          failures.push(`${JSON.stringify(c.grammar)} on ${JSON.stringify(c.input)}\n  part:  ${got}\n  value: ${c.want}`)
         }
       }
     }
@@ -103,13 +94,13 @@ describe('generated parts', () => {
   // The parts again, their events into a sink of the host's own
   // (`parserSinkInto`), as aless runs a format's part in front of stages
   // of its own: here render's JSON renderer, which the host builds itself,
-  // writes the value each grammar builds, natively and interpreted. The
-  // source's limits hold on the part's events, as on a source's own.
+  // writes the value each grammar builds. The source's limits hold on the part's events, as on a source's own.
   it("a generated part's events reach a host's own sink", () => {
     const failures: string[] = []
     const all = cases()
     for (const c of all) {
-      for (const [how, program] of c.programs) {
+      {
+      const program = c.program
         const got = written(() => {
           const writer = new BytesWriter()
           const own = renderers.json(renderers.writeOut(writer))
@@ -117,7 +108,7 @@ describe('generated parts', () => {
           return writer.text()
         })
         if (got !== c.want) {
-          failures.push(`${JSON.stringify(c.grammar)} on ${JSON.stringify(c.input)}, ${how}\n  part:  ${got}\n  value: ${c.want}`)
+          failures.push(`${JSON.stringify(c.grammar)} on ${JSON.stringify(c.input)}\n  part:  ${got}\n  value: ${c.want}`)
         }
       }
     }
@@ -125,12 +116,13 @@ describe('generated parts', () => {
 
     const c = all[0]
     const tight = { ...Limits.default(), max_depth: 0 }
-    for (const [how, program] of c.programs) {
+    {
+      const program = c.program
       const own = renderers.json(renderers.writeOut(new BytesWriter()))
       assert.throws(
         () => new ParserEventSource(engine(c.grammar), c.input).run(program.parserSinkInto(own, tight)),
         (err: any) => 'max_depth' === err?.limit?.name,
-        `${how}: a part's events are held to the source's limits`,
+        "a part's events are held to the source's limits",
       )
     }
   })
