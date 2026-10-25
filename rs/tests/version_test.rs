@@ -5,7 +5,7 @@
 //! so a bump that updates `ts/package.json` and forgets `rs/Cargo.toml` (or
 //! the reverse) fails here rather than shipping a crate whose version
 //! disagrees with the package it is a port of. Mirrors
-//! `ts/test/version.test.ts` and `go/cmd/alchemy/version_test.go`.
+//! `ts/test/version.test.ts` and `go/cmd/dmog/version_test.go`.
 
 use std::fs;
 use std::path::Path;

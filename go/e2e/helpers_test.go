@@ -16,8 +16,8 @@ import (
 	"strings"
 	"testing"
 
-	translate "github.com/tabnas/alchemy-cli/go/translate"
 	. "github.com/tabnas/alchemy/go"
+	translate "github.com/tabnas/dmog/go/translate"
 	tabnasjson "github.com/tabnas/json/go"
 	tabnas "github.com/tabnas/parser/go"
 	tr "github.com/tabnas/render/go"
@@ -151,7 +151,7 @@ func replayRun(t testing.TB, program *Program, doc string, render Renderer, limi
 }
 
 // jsonInto pushes the events of the JSON document doc into sink, as
-// `alchemy run` reads its input (rs/tests/common/mod.rs's json_into):
+// `dmog run` reads its input (rs/tests/common/mod.rs's json_into):
 // JSON's own transducer part over the parser's rule passes, the engine's
 // arrays emptied behind it. It needs no adapter of transduce's, so it reads
 // in every build.

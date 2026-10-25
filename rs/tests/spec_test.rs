@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex};
 
 use tabnas_alchemy::shared::{Code, Fail, Limits, Metrics};
 use tabnas_alchemy::{desugar, parse, Input, Output, Program, Renderer};
-use tabnas_alchemy_cli::translate::{self, Format};
+use tabnas_dmog::translate::{self, Format};
 use tabnas_support::{is_error_expect, load_spec_dir, Failure, Row, Runner, SpecOptions};
 use tabnas_transduce::{
     walk_datum, Datum, DatumBuilder, Duplicates, Flow, JsonEvent, OwnedJsonEvent, Sink,
@@ -59,7 +59,7 @@ fn row_render(row: &Row) -> Option<Renderer> {
     }
 }
 
-/// Compile `program` and run it over `doc`, as `alchemy run` does: on a
+/// Compile `program` and run it over `doc`, as `dmog run` does: on a
 /// thread of `STACK_BYTES`, the document read through JSON's transducer
 /// part, with the default limits.
 fn run_program(program: &str, doc: &str, render: Option<Renderer>) -> Result<String, Fail> {
@@ -407,7 +407,7 @@ fn transduce_grammar(row: &Row) -> &'static Format {
 }
 
 /// Compile `program` over the parser's rule passes and run it over `doc`,
-/// parsed with `grammar`, as `alchemy run --grammar` does: on a thread of
+/// parsed with `grammar`, as `dmog run --grammar` does: on a thread of
 /// `STACK_BYTES`, with the default limits. The program's output kind rides
 /// along, for the differential.
 fn transduce_program(

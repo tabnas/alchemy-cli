@@ -1,6 +1,6 @@
 /* Copyright (c) 2026 tabnas, MIT License */
 
-// The cross product `alchemy translate` answers for (the Rust crate's
+// The cross product `dmog translate` answers for (the Rust crate's
 // rs/tests/translate_test.rs): every document of the corpus, read with its
 // format's grammar, written in every format the command carries, read back
 // with that format's grammar, and compared with the document's own value

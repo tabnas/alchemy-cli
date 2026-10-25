@@ -1,4 +1,4 @@
-module github.com/tabnas/alchemy-cli/go
+module github.com/tabnas/dmog/go
 
 go 1.24.7
 

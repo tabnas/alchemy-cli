@@ -60,7 +60,7 @@ impl std::io::Write for Shared {
     }
 }
 
-/// Read `text` as `alchemy run` reads its input and push its events into
+/// Read `text` as `dmog run` reads its input and push its events into
 /// the program's sink.
 fn drive(program: &Program, text: &str) -> (Result<(), Fail>, String) {
     let limits = Limits::default();

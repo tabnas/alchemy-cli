@@ -1,19 +1,19 @@
 // Copyright (c) 2026 tabnas, MIT License
 
-// Command alchemy is the alchemy language's command line, the Go port of
-// rs/src/bin/alchemy.rs:
+// Command dmog is the alchemy language's command line, the Go port of
+// rs/src/bin/dmog.rs:
 //
-//	alchemy canon FILE       print the program in canonical form
-//	alchemy format FILE      print the program in layout form
-//	alchemy check FILE       parse, desugar, resolve, check and build the plan; print nothing and exit 0
-//	alchemy explain FILE     print the plan report
-//	alchemy run [--grammar FORMAT] [--render csv|json] [--max-output-bytes N] PROGRAM INPUT
-//	                         run the program over the JSON document INPUT; with --grammar, over
-//	                         the rule passes of INPUT parsed as FORMAT (a transducer part's input)
-//	alchemy translate --from FORMAT --to FORMAT [--path PATH] [--key KEY]
-//	                  [--with PROGRAM] [--max-output-bytes N] INPUT
-//	                         write INPUT, read as FORMAT, in another format
-//	alchemy formats          print the formats translate reads and writes, as JSON
+//	dmog canon FILE       print the program in canonical form
+//	dmog format FILE      print the program in layout form
+//	dmog check FILE       parse, desugar, resolve, check and build the plan; print nothing and exit 0
+//	dmog explain FILE     print the plan report
+//	dmog run [--grammar FORMAT] [--render csv|json] [--max-output-bytes N] PROGRAM INPUT
+//	                      run the program over the JSON document INPUT; with --grammar, over
+//	                      the rule passes of INPUT parsed as FORMAT (a transducer part's input)
+//	dmog translate --from FORMAT --to FORMAT [--path PATH] [--key KEY]
+//	               [--with PROGRAM] [--max-output-bytes N] INPUT
+//	                      write INPUT, read as FORMAT, in another format
+//	dmog formats          print the formats translate reads and writes, as JSON
 //
 // FILE, PROGRAM and INPUT may be - for standard input (one of them per
 // run). Nothing but the answer goes to standard output. A failure is the
@@ -33,7 +33,8 @@
 // run reads INPUT as JSON through JSON's own transducer part, the one
 // translate reads a JSON document through: the part makes the document's
 // events of the parser's rule passes, and the engine's arrays are emptied
-// behind them. Other input formats are aless's business. The output goes
+// behind them. A document of another format is `translate --with`'s
+// business: it runs the program over INPUT read as --from. The output goes
 // through a coalescing writer to standard output and is flushed once, at
 // the end; a failure found after bytes were written says so. With
 // --grammar FORMAT, run parses INPUT with that format's grammar through
@@ -44,7 +45,7 @@
 //
 // translate reads INPUT with the grammar of --from and writes it in --to,
 // through the translation parts each format's module exports, as the
-// translate package composes them: any of the formats `alchemy formats`
+// translate package composes them: any of the formats `dmog formats`
 // lists into any other. --path takes a JSON array of keys and indexes
 // (["people",0]) and translates that value instead of the document; --key
 // names the member a root is wrapped under for a format whose document must
@@ -65,9 +66,9 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/tabnas/alchemy-cli/go/translate"
 	alchemy "github.com/tabnas/alchemy/go"
 	at "github.com/tabnas/alchemy/go/translate"
+	"github.com/tabnas/dmog/go/translate"
 	tr "github.com/tabnas/render/go"
 	tt "github.com/tabnas/transduce/go"
 )
@@ -79,7 +80,7 @@ import (
 // finds it.
 const VERSION = "0.2.0"
 
-const usage = "usage: alchemy canon|format|check|explain FILE\n       alchemy run [--grammar FORMAT] [--render csv|json] [--max-output-bytes N] PROGRAM INPUT\n       alchemy translate --from FORMAT --to FORMAT [--path PATH] [--key KEY] [--with PROGRAM] [--max-output-bytes N] INPUT\n       alchemy formats\n       (a FILE may be - for standard input)"
+const usage = "usage: dmog canon|format|check|explain FILE\n       dmog run [--grammar FORMAT] [--render csv|json] [--max-output-bytes N] PROGRAM INPUT\n       dmog translate --from FORMAT --to FORMAT [--path PATH] [--key KEY] [--with PROGRAM] [--max-output-bytes N] INPUT\n       dmog formats\n       (a FILE may be - for standard input)"
 
 func main() {
 	// A write to a closed standard output or standard error fails with an

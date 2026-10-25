@@ -1,4 +1,4 @@
-// The `alchemy` binary, run the way a script runs it: the five program
+// The `dmog` binary, run the way a script runs it: the five program
 // commands, and what `formats` and `translate` answer of the formats'
 // declared refusals; standard input as `-`, the statuses, and that nothing
 // but the answer reaches standard output.
@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
 
 fn binary() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_alchemy"))
+    PathBuf::from(env!("CARGO_BIN_EXE_dmog"))
 }
 
 fn run(args: &[&str], stdin: Option<&str>) -> Output {
@@ -30,7 +30,7 @@ fn run_bytes(args: &[&str], stdin: Option<&[u8]>) -> Output {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("the alchemy binary starts");
+        .expect("the dmog binary starts");
     let writer = stdin.map(|text| {
         let mut pipe = child.stdin.take().expect("a piped stdin");
         let text = text.to_vec();
@@ -65,7 +65,7 @@ fn fail_json(output: &Output) -> serde_json::Value {
 }
 
 fn temp_file(name: &str, text: &str) -> PathBuf {
-    let path = std::env::temp_dir().join(format!("alchemy-cli-{}-{name}", std::process::id()));
+    let path = std::env::temp_dir().join(format!("dmog-{}-{name}", std::process::id()));
     std::fs::write(&path, text).expect("the file is written");
     path
 }
@@ -528,7 +528,7 @@ fn usage_errors_and_unreadable_files_exit_2() {
 
     // Malformed UTF-8 cannot be read, from a file or from standard input,
     // as in the TypeScript bin and the Go command.
-    let bad = std::env::temp_dir().join(format!("alchemy-cli-{}-bad.alc", std::process::id()));
+    let bad = std::env::temp_dir().join(format!("dmog-{}-bad.alc", std::process::id()));
     std::fs::write(&bad, b"def export [input] \xff\n").expect("the file is written");
     let bad = bad.to_str().expect("a utf-8 path");
     for (file, stdin) in [(bad, None), ("-", Some(&b"\xff"[..]))] {
@@ -629,7 +629,7 @@ fn a_library_failure_names_the_library_file() {
         .find(|(_, l)| l.contains("fail \"Required metadata was not found\""))
         .unwrap();
     let (row, col) = (row + 1, line.find("fail").unwrap() + 1);
-    let dir = std::env::temp_dir().join(format!("alchemy-cli-{}-lib", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("dmog-{}-lib", std::process::id()));
     std::fs::create_dir_all(dir.join("stdlib")).unwrap();
     for name in ["export.alc", "stdlib/table.alc"] {
         let path = dir.join(name);
@@ -1066,7 +1066,7 @@ fn an_input_that_cannot_be_read_exits_2_on_every_route() {
     let transducer = temp_file("unread-transducer.alc", TRANSDUCER);
     let transducer = transducer.to_str().expect("a utf-8 path");
     let bytes = &b"[1, \"\xff\"]"[..];
-    let bad = std::env::temp_dir().join(format!("alchemy-cli-{}-bad-input", std::process::id()));
+    let bad = std::env::temp_dir().join(format!("dmog-{}-bad-input", std::process::id()));
     std::fs::write(&bad, bytes).expect("the file is written");
     let bad = bad.to_str().expect("a utf-8 path");
     let dir = std::env::temp_dir();
@@ -1135,10 +1135,7 @@ fn run_streams_a_long_input_until_bytes_that_are_not_utf8() {
     assert_eq!(whole.status.code(), Some(0), "{}", stderr(&whole));
     let whole = stdout(&whole);
     let bytes = [b"[", records.as_bytes(), b",\"\xff\"]"].concat();
-    let bad = std::env::temp_dir().join(format!(
-        "alchemy-cli-{}-stream-bad.json",
-        std::process::id()
-    ));
+    let bad = std::env::temp_dir().join(format!("dmog-{}-stream-bad.json", std::process::id()));
     std::fs::write(&bad, &bytes).expect("the file is written");
     let bad = bad.to_str().expect("a utf-8 path");
     for (input, stdin) in [(bad, None), ("-", Some(&bytes[..]))] {

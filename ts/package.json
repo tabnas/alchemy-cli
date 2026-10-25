@@ -1,10 +1,10 @@
 {
-  "name": "@tabnas/alchemy-cli",
+  "name": "@tabnas/dmog",
   "version": "0.2.0",
   "main": "dist/cli.js",
   "type": "commonjs",
   "types": "dist/cli.d.ts",
-  "description": "The alchemy command: check, explain and run alchemy programs over JSON, and translate documents between formats, with the tabnas transducers and renderers.",
+  "description": "The dmog command (data mogrify): check, explain and run alchemy programs over JSON, and translate documents between formats, with the tabnas transducers and renderers.",
   "homepage": "https://tabnas.dev",
   "keywords": [
     "parser",
@@ -36,7 +36,7 @@
     ".": "./dist/cli.js"
   },
   "bin": {
-    "alchemy": "bin/alchemy"
+    "dmog": "bin/dmog"
   },
   "peerDependencies": {
     "@tabnas/abnf": ">=0.4.25",
@@ -89,7 +89,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git://github.com/tabnas/alchemy-cli.git",
+    "url": "git://github.com/tabnas/dmog.git",
     "directory": "ts"
   }
 }

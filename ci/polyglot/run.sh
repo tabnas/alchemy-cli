@@ -64,7 +64,7 @@ for package in $TS_PACKAGES; do
     install_and_build "$FLEET_ROOT/$package/ts"
 done
 
-phase "typescript: $total of $total (100%) test alchemy-cli" test_cli
+phase "typescript: $total of $total (100%) test dmog" test_cli
 
 WORK_DIR=$(mktemp -d)
 trap 'rm -rf "$WORK_DIR"' EXIT
@@ -84,7 +84,7 @@ in_go() {
   GOWORK="$WORK_DIR/go.work" "$@"
 }
 
-phase "go: test alchemy-cli (33%)" in_go go test -count=1 ./...
-phase "go: test alchemy-cli with tabnas_nodecell (67%)" in_go go test -count=1 -tags tabnas_nodecell ./...
-phase "go: vet alchemy-cli (100%)" in_go go vet ./...
+phase "go: test dmog (33%)" in_go go test -count=1 ./...
+phase "go: test dmog with tabnas_nodecell (67%)" in_go go test -count=1 -tags tabnas_nodecell ./...
+phase "go: vet dmog (100%)" in_go go vet ./...
 echo "polyglot gate: green"

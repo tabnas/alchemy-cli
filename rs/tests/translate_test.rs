@@ -1,4 +1,4 @@
-//! The cross product `alchemy translate` answers for: every document of
+//! The cross product `dmog translate` answers for: every document of
 //! the corpora, read with its format's grammar, written in every format
 //! the command carries, read back with that format's grammar, and compared
 //! with the document's own value under the target's declared conventions
@@ -36,7 +36,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use tabnas_alchemy::translate::Options;
-use tabnas_alchemy_cli::translate::{self, Document, Format, Request};
+use tabnas_dmog::translate::{self, Document, Format, Request};
 use tabnas_transduce::{Code, Datum, Fail, Limits, Metrics};
 
 /// What a run wrote, shared with the test.
@@ -2156,7 +2156,7 @@ fn every_fixture_of_every_format_translates_into_every_format() {
 /// every other route reads it.
 #[test]
 fn every_document_translates_from_its_file_as_from_its_text() {
-    let dir = std::env::temp_dir().join(format!("alchemy-cli-{}-files", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("dmog-{}-files", std::process::id()));
     std::fs::create_dir_all(&dir).expect("the directory is made");
     let docs = corpus();
     let compared = on_stack(|| {

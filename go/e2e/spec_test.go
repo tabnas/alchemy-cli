@@ -27,8 +27,8 @@ import (
 	"strings"
 	"testing"
 
-	translate "github.com/tabnas/alchemy-cli/go/translate"
 	. "github.com/tabnas/alchemy/go"
+	translate "github.com/tabnas/dmog/go/translate"
 	tabnasjson "github.com/tabnas/json/go"
 	tabnas "github.com/tabnas/parser/go"
 	support "github.com/tabnas/support/go"
@@ -42,7 +42,7 @@ func specDir(t testing.TB) string {
 }
 
 // repoRoot is alchemy's checkout, beside this one (../alchemy from
-// alchemy-cli's root; the tests run in go/e2e): the fixtures these tests
+// dmog's root; the tests run in go/e2e): the fixtures these tests
 // read are alchemy's, and transduce's checkout is beside it too. A missing
 // sibling fails the test, naming the path.
 func repoRoot(t testing.TB) string {
@@ -161,7 +161,7 @@ func (o runOutcome) String() string {
 	return fmt.Sprintf("Ok(%q)", o.out)
 }
 
-// runOne compiles program and runs it over doc as `alchemy run` does: the
+// runOne compiles program and runs it over doc as `dmog run` does: the
 // document read through JSON's transducer part, with the default limits.
 func runOne(program, doc string, render Renderer) runOutcome {
 	compiled, f := Compile(program, "run", routers, renderers)
@@ -172,7 +172,7 @@ func runOne(program, doc string, render Renderer) runOutcome {
 	return runOutcome{out: out, fail: f}
 }
 
-// driveRun reads doc as `alchemy run` reads its input (jsonInto) and pushes
+// driveRun reads doc as `dmog run` reads its input (jsonInto) and pushes
 // its events through the program's sink: the output, or the failure.
 // metrics may be nil.
 func driveRun(program *Program, doc string, render Renderer, limits tt.Limits, metrics *tt.Metrics) (string, *Fail) {
@@ -486,7 +486,7 @@ func transduceGrammar(t testing.TB, row *support.Row) *translate.Format {
 }
 
 // runTransduce compiles program over the parser's rule passes and runs it
-// over doc, parsed with grammar, as `alchemy run --grammar` does, with the
+// over doc, parsed with grammar, as `dmog run --grammar` does, with the
 // default limits; the program's output kind rides along, for the
 // differential.
 func runTransduce(program string, grammar *translate.Format, doc string, render Renderer, duplicates tt.Duplicates) (Output, runOutcome) {

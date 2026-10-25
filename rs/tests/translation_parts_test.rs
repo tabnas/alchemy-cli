@@ -17,7 +17,7 @@ use serde_json::Value;
 use tabnas_alchemy::shared::{replay, Fail, Limits, Metrics, OwnedJsonEvent};
 use tabnas_alchemy::translate::{compose_parsed, Options};
 use tabnas_alchemy::{Program, Source};
-use tabnas_alchemy_cli::translate as cli_translate;
+use tabnas_dmog::translate as cli_translate;
 use tabnas_transduce::ParserSource;
 
 use common::compile_sources;

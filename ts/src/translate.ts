@@ -1,6 +1,6 @@
 /* Copyright (c) 2026 tabnas, MIT License */
 
-// `alchemy translate`: a document in one of the formats whose grammar
+// `dmog translate`: a document in one of the formats whose grammar
 // packages this command carries, written in any of them (the Rust crate's
 // rs/src/translate.rs).
 //
@@ -739,7 +739,7 @@ function pathText(path: ReadonlyArray<Segment>): string {
   )
 }
 
-// The registry as JSON, one object per format, for `alchemy formats`: its
+// The registry as JSON, one object per format, for `dmog formats`: its
 // id, the shapes it reads and writes, the root its render needs, its
 // schema, why its documents are read whole where it says (`whole`, null
 // where it does not), its parts' entries, and its loss sentences.

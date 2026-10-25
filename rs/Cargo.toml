@@ -1,5 +1,5 @@
 [package]
-name = "tabnas-alchemy-cli"
+name = "tabnas-dmog"
 version = "0.2.0"
 edition = "2021"
 rust-version = "1.85"
@@ -7,18 +7,18 @@ authors = ["Richard Rodger <http://richardrodger.com>"]
 description = "The alchemy command: runs programs in the alchemy streaming language over JSON documents, composing tabnas-alchemy, tabnas-transduce and tabnas-render."
 license = "MIT"
 homepage = "https://tabnas.dev"
-repository = "https://github.com/tabnas/alchemy-cli"
+repository = "https://github.com/tabnas/dmog"
 readme = "README.md"
 include = ["src/**", "README.md", "LICENSE"]
 keywords = ["dsl", "streaming", "transducer", "cli", "tabnas"]
 categories = ["command-line-utilities", "parsing"]
 
-# `alchemy canon | format | check | explain | run`, moved here from
-# tabnas-alchemy: the one place the language, the routers and the
-# renderers meet.
+# `dmog canon | format | check | explain | run | translate | formats`,
+# the one place the language, the routers and the renderers meet. The
+# command was `alchemy` (crate tabnas-alchemy-cli) until 2026-10-25.
 [[bin]]
-name = "alchemy"
-path = "src/bin/alchemy.rs"
+name = "dmog"
+path = "src/bin/dmog.rs"
 
 [dependencies]
 # Sibling checkouts, the standard tabnas development model: the language

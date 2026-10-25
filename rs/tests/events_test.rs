@@ -144,7 +144,7 @@ impl std::io::Write for Shared {
     }
 }
 
-/// Read `text` as `alchemy run` reads its input and push its events
+/// Read `text` as `dmog run` reads its input and push its events
 /// through the program's sink: the output, or the failure with what had
 /// been written.
 fn drive(program: &Program, text: &str, limits: &Limits) -> (Result<(), Fail>, String) {

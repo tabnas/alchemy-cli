@@ -9,10 +9,10 @@ package-lock.json
 # Go (go/): local workspaces and built binaries
 go.work
 go.work.sum
-/go/alchemy
-/go/alchemy.exe
-/go/cmd/alchemy/alchemy
-/go/cmd/alchemy/alchemy.exe
+/go/dmog
+/go/dmog.exe
+/go/cmd/dmog/alchemy
+/go/cmd/dmog/alchemy.exe
 
 # Rust (rs/): Cargo's build output (Cargo.lock IS committed)
 target/

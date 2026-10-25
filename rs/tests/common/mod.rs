@@ -12,7 +12,7 @@ use std::sync::Arc;
 use tabnas_alchemy::shared::{Fail, Flow, Limits, Metrics, Renderers, Routers, Sink};
 use tabnas_alchemy::value::Val;
 use tabnas_alchemy::{Input, Program, Source};
-use tabnas_alchemy_cli::translate;
+use tabnas_dmog::translate;
 use tabnas_support::Value;
 
 /// The routers a host passes alchemy: transduce's.

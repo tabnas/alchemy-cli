@@ -105,7 +105,7 @@ export function jsonInto(text: string, limits: any, metrics: any, sink: any): vo
 }
 
 // What a host does with a program and a JSON text (rs/tests/run_test.rs's
-// `drive`): read the text as `alchemy run` reads its input, push the
+// `drive`): read the text as `dmog run` reads its input, push the
 // events into the program's sink, and mark a failure as leaving partial
 // output when `output_bytes` says bytes reached the writer. The outcome,
 // and the text the writer received.

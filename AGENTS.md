@@ -1,4 +1,4 @@
-# Agents Guide — alchemy-cli
+# Agents Guide — dmog
 
 `CLAUDE.md` is a symlink to this file.
 
@@ -65,13 +65,16 @@ default that opens pull requests in draft state.
 
 ## What this project is
 
-The `alchemy` command, in TypeScript, Go and Rust: `canon`, `format`,
+The `dmog` command (data mogrify), in TypeScript, Go and Rust: `canon`, `format`,
 `check`, `explain` and `run`, as alchemy's
 [`docs/language.md`](https://github.com/tabnas/alchemy/blob/main/docs/language.md)
 describes them, and `translate` and `formats`, which write a document of
 any tabnas format with translation parts in any other, composed by
 alchemy's `translate` from the parts each format's package exports
-(admin ADR-27; the README has the options). It is the composition root
+(admin ADR-27; the README has the options). The name is short for
+*data mogrify*; the command was `alchemy`, in `tabnas/alchemy-cli`,
+until 2026-10-25 (admin ADR-32), and aless once carried its exports and
+programs (until aless 0.5.0). It is the composition root
 of three components that do not depend on each other's implementations:
 
 - **alchemy** holds the language and the shared types: the event
@@ -93,10 +96,10 @@ that one alone.
 
 | Path | What it is |
 |---|---|
-| `ts/` | `@tabnas/alchemy-cli`: the `alchemy` bin and its tests, and the tests of alchemy's programs (`ts/test/host.ts` composes the three components for them) |
-| `go/` | `github.com/tabnas/alchemy-cli/go`: the `alchemy` command and its tests |
+| `ts/` | `@tabnas/dmog`: the `dmog` bin and its tests, and the tests of alchemy's programs (`ts/test/host.ts` composes the three components for them) |
+| `go/` | `github.com/tabnas/dmog/go`: the `dmog` command and its tests |
 | `go/e2e/` | the tests of alchemy's programs in Go: test files only, alchemy's exported API composed with transduce and render |
-| `rs/` | `tabnas-alchemy-cli`: the `alchemy` binary and its tests, and the tests of alchemy's programs (`rs/tests/common/` composes the three) |
+| `rs/` | `tabnas-dmog`: the `dmog` binary and its tests, and the tests of alchemy's programs (`rs/tests/common/` composes the three) |
 | `examples/` | the worked example of the transducer's design (`export.alc`, `table.alc`, `records.json`), which `rs/tests/cli_test.rs` runs as the README says |
 | `ci/rust/run.sh` | the Rust gate `.github/workflows/rust.yml` runs |
 | `ci/polyglot/run.sh` | the TypeScript and Go gate the same workflow runs |
@@ -273,10 +276,10 @@ tags, so neither step pushes one:
 
 1. **A reviewed bump PR** that moves every version site together:
    `ts/package.json`, `VERSION` in `ts/src/cli.ts` and in
-   `go/cmd/alchemy/main.go`, and `version` in `rs/Cargo.toml` with the
-   root `tabnas-alchemy-cli` entry of `rs/Cargo.lock` (the binary's
+   `go/cmd/dmog/main.go`, and `version` in `rs/Cargo.toml` with the
+   root `tabnas-dmog` entry of `rs/Cargo.lock` (the binary's
    `VERSION` reads it). `ts/test/version.test.ts`,
-   `go/cmd/alchemy/version_test.go` and `rs/tests/version_test.rs` fail
+   `go/cmd/dmog/version_test.go` and `rs/tests/version_test.rs` fail
    when they disagree.
 2. **Dispatch `release.yml` on `main`** with `go` true, once `main` CI is
    green on the bump commit. It publishes npm over OIDC, writes the

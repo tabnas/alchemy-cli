@@ -1,9 +1,9 @@
 // Copyright (c) 2026 tabnas, MIT License
 
-// Package translate is `alchemy translate`: a document in one of the
+// Package translate is `dmog translate`: a document in one of the
 // formats whose grammar modules this command carries, written in any of
 // them. It is the Go port of rs/src/translate.rs, and the command
-// (cmd/alchemy) and its tests both build on it.
+// (cmd/dmog) and its tests both build on it.
 //
 // Every format's module exports its translation parts: its manifest's
 // translate object (the shapes it reads and writes, the root its render
