@@ -40,7 +40,7 @@
   },
   "peerDependencies": {
     "@tabnas/abnf": ">=0.4.25",
-    "@tabnas/alchemy": ">=0.2.14",
+    "@tabnas/alchemy": ">=0.3.0",
     "@tabnas/c": ">=0.5.15",
     "@tabnas/chess": ">=0.1.18",
     "@tabnas/css": ">=0.5.16",
@@ -58,10 +58,10 @@
     "@tabnas/markdown": ">=0.7.13",
     "@tabnas/parser": ">=0",
     "@tabnas/proto": ">=0.6.11",
-    "@tabnas/render": ">=0.2.5",
+    "@tabnas/render": ">=0.2.6",
     "@tabnas/semver": ">=0.0.11",
     "@tabnas/toml": ">=0.5.18",
-    "@tabnas/transduce": ">=0.2.11",
+    "@tabnas/transduce": ">=0.4.0",
     "@tabnas/xml": ">=0.7.19",
     "@tabnas/yaml": ">=0.5.26",
     "@tabnas/zon": ">=0.5.18"
