@@ -1,22 +1,22 @@
 /* Copyright (c) 2026 tabnas, MIT License */
 
-// The `alchemy` command (alchemy's rs/src/bin/alchemy.rs), run by
-// `bin/alchemy`. It composes the language, `@tabnas/alchemy`, with the
+// The `dmog` command (the Rust binary is rs/src/bin/dmog.rs), run by
+// `bin/dmog`. It composes the language, `@tabnas/alchemy`, with the
 // stages it compiles onto: transduce's `routers` and render's `renderers`,
 // passed to `compile`, the tabnas JSON grammar and its transducer part,
 // transduce's `ParserEventSource`, and render's `FdWriter`.
 //
-//   alchemy canon FILE       print the program in canonical form
-//   alchemy format FILE      print the program in layout form
-//   alchemy check FILE       parse, desugar, resolve, check and build the plan; print nothing and exit 0
-//   alchemy explain FILE     print the plan report
-//   alchemy run [--grammar FORMAT] [--render csv|json] [--max-output-bytes N] PROGRAM INPUT
-//                            run the program over the JSON document INPUT; with --grammar, over
-//                            the rule passes of INPUT parsed as FORMAT (a transducer part's input)
-//   alchemy translate --from FORMAT --to FORMAT [--path PATH] [--key KEY]
-//                     [--with PROGRAM] [--max-output-bytes N] INPUT
-//                            write INPUT, read as FORMAT, in another format
-//   alchemy formats          print the formats translate reads and writes, as JSON
+//   dmog canon FILE       print the program in canonical form
+//   dmog format FILE      print the program in layout form
+//   dmog check FILE       parse, desugar, resolve, check and build the plan; print nothing and exit 0
+//   dmog explain FILE     print the plan report
+//   dmog run [--grammar FORMAT] [--render csv|json] [--max-output-bytes N] PROGRAM INPUT
+//                         run the program over the JSON document INPUT; with --grammar, over
+//                         the rule passes of INPUT parsed as FORMAT (a transducer part's input)
+//   dmog translate --from FORMAT --to FORMAT [--path PATH] [--key KEY]
+//                  [--with PROGRAM] [--max-output-bytes N] INPUT
+//                         write INPUT, read as FORMAT, in another format
+//   dmog formats          print the formats translate reads and writes, as JSON
 //
 // `FILE`, `PROGRAM` and `INPUT` may be `-` for standard input (one of them
 // per run). Nothing but the answer goes to standard output. A failure is
@@ -44,13 +44,14 @@
 // are emptied behind them. With `--grammar FORMAT` it parses `INPUT` with
 // that format's grammar through transduce's `ParserEventSource` and
 // compiles the program over the parser's rule passes, as a transducer part
-// is compiled. Other input formats as documents are aless's business. The output goes through a coalescing
-// writer to standard output and is flushed once, at the end; a failure
-// found after bytes were written says so.
+// is compiled. A document of another format is `translate --with`'s
+// business: it runs the program over `INPUT` read as `--from`. The output
+// goes through a coalescing writer to standard output and is flushed once,
+// at the end; a failure found after bytes were written says so.
 //
 // `translate` reads `INPUT` with the grammar of `--from` and writes it in
 // `--to`, through the translation parts each format's package exports, as
-// `./translate` composes them: any of the formats `alchemy formats` lists
+// `./translate` composes them: any of the formats `dmog formats` lists
 // into any other. `--path` takes a JSON array of keys and indexes
 // (`["people",0]`) and translates that value instead of the document;
 // `--key` names the member a root is wrapped under for a format whose
@@ -81,17 +82,17 @@ import * as translate from './translate'
 // renderers, the stages alchemy builds a run from.
 // VERSION is this package's version. It MUST equal package.json "version":
 // admin/publish.sh rewrites both, and test/version.test.ts fails the build
-// if they drift. Mirrors `const VERSION` in go/cmd/alchemy/main.go and
-// `VERSION` in rs/src/bin/alchemy.rs.
+// if they drift. Mirrors `const VERSION` in go/cmd/dmog/main.go and
+// `VERSION` in rs/src/bin/dmog.rs.
 export const VERSION = '0.2.0'
 
 const OPTIONS: CompileOptions = { routers, renderers }
 
 const USAGE =
-  'usage: alchemy canon|format|check|explain FILE\n' +
-  '       alchemy run [--grammar FORMAT] [--render csv|json] [--max-output-bytes N] PROGRAM INPUT\n' +
-  '       alchemy translate --from FORMAT --to FORMAT [--path PATH] [--key KEY] [--with PROGRAM] [--max-output-bytes N] INPUT\n' +
-  '       alchemy formats\n' +
+  'usage: dmog canon|format|check|explain FILE\n' +
+  '       dmog run [--grammar FORMAT] [--render csv|json] [--max-output-bytes N] PROGRAM INPUT\n' +
+  '       dmog translate --from FORMAT --to FORMAT [--path PATH] [--key KEY] [--with PROGRAM] [--max-output-bytes N] INPUT\n' +
+  '       dmog formats\n' +
   '       (a FILE may be - for standard input)'
 
 // A failure and the status it exits with: the code's, except that a usage

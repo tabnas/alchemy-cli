@@ -1,4 +1,4 @@
-//! `alchemy translate`: a document in one of the formats whose grammar
+//! `dmog translate`: a document in one of the formats whose grammar
 //! packages this command carries, written in any of them.
 //!
 //! Every format's package exports its translation parts: its manifest's
@@ -1182,7 +1182,7 @@ fn path_text(path: &[Segment]) -> String {
     Datum::Array(items).to_string()
 }
 
-/// The registry as JSON, one object per format, for `alchemy formats`:
+/// The registry as JSON, one object per format, for `dmog formats`:
 /// its id, the shapes it reads and writes, the root its render needs, its
 /// schema, why its documents are read whole where it says (`whole`, null
 /// where it does not), its parts' entries, and its loss sentences.
@@ -1445,10 +1445,8 @@ mod tests {
 
     /// `bytes` in a file of its own in the temporary directory.
     fn file_of(name: &str, bytes: &[u8]) -> std::path::PathBuf {
-        let file = std::env::temp_dir().join(format!(
-            "alchemy-cli-translate-{}-{name}",
-            std::process::id()
-        ));
+        let file =
+            std::env::temp_dir().join(format!("dmog-translate-{}-{name}", std::process::id()));
         std::fs::write(&file, bytes).expect("the file is written");
         file
     }
@@ -1563,7 +1561,7 @@ mod tests {
         }
         assert!(read_through_a_reader(&bad));
         let _ = std::fs::remove_file(&bad);
-        let missing = std::env::temp_dir().join("alchemy-cli-translate-no-such-file.json");
+        let missing = std::env::temp_dir().join("dmog-translate-no-such-file.json");
         let fail = translated_file(json, "json", None, &missing).unwrap_err();
         let reason = std::fs::read_to_string(&missing).unwrap_err().to_string();
         assert_eq!(unreadable(&fail), Some(reason.as_str()), "{fail:?}");
@@ -1577,10 +1575,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_pipe_is_read_whole_first() {
-        let fifo = std::env::temp_dir().join(format!(
-            "alchemy-cli-translate-{}-pipe.json",
-            std::process::id()
-        ));
+        let fifo =
+            std::env::temp_dir().join(format!("dmog-translate-{}-pipe.json", std::process::id()));
         let _ = std::fs::remove_file(&fifo);
         let made = std::process::Command::new("mkfifo")
             .arg(&fifo)

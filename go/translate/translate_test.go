@@ -2,7 +2,7 @@
 
 package translate_test
 
-// translate_test.go: the cross product `alchemy translate` answers for
+// translate_test.go: the cross product `dmog translate` answers for
 // (rs/tests/translate_test.rs): every document of the corpora, read with
 // its format's grammar, written in every format the command carries, read
 // back with that format's grammar, and compared with the document's own
@@ -51,9 +51,9 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/tabnas/alchemy-cli/go/translate"
 	alchemy "github.com/tabnas/alchemy/go"
 	at "github.com/tabnas/alchemy/go/translate"
+	"github.com/tabnas/dmog/go/translate"
 	tabnas "github.com/tabnas/parser/go"
 	tt "github.com/tabnas/transduce/go"
 )

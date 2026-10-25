@@ -35,7 +35,7 @@ function runtime(src: string): Runtime {
   return new Runtime(resolve(forms, sources, outer), sources, OPTIONS)
 }
 
-// Run `src` over the JSON `input`, read as `alchemy run` reads its input;
+// Run `src` over the JSON `input`, read as `dmog run` reads its input;
 // the output, or the failure thrown.
 function runSrc(src: string, input: string, render?: Renderer): string {
   const rt = runtime(src)

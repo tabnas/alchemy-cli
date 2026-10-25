@@ -20,9 +20,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tabnas/alchemy-cli/go/translate"
 	. "github.com/tabnas/alchemy/go"
 	"github.com/tabnas/alchemy/go/shared"
+	"github.com/tabnas/dmog/go/translate"
 	tabnas "github.com/tabnas/parser/go"
 	support "github.com/tabnas/support/go"
 	tt "github.com/tabnas/transduce/go"

@@ -172,40 +172,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tabnas-alchemy-cli"
-version = "0.2.0"
-dependencies = [
- "serde_json",
- "tabnas-abnf",
- "tabnas-alchemy",
- "tabnas-c",
- "tabnas-chess",
- "tabnas-css",
- "tabnas-csv",
- "tabnas-ebnf",
- "tabnas-expr",
- "tabnas-feed",
- "tabnas-gbnf",
- "tabnas-ini",
- "tabnas-json",
- "tabnas-json5",
- "tabnas-jsonc",
- "tabnas-jsonic",
- "tabnas-jsonl",
- "tabnas-markdown",
- "tabnas-parser",
- "tabnas-proto",
- "tabnas-render",
- "tabnas-semver",
- "tabnas-support",
- "tabnas-toml",
- "tabnas-transduce",
- "tabnas-xml",
- "tabnas-yaml",
- "tabnas-zon",
-]
-
-[[package]]
 name = "tabnas-bnf"
 version = "0.1.31"
 dependencies = [
@@ -255,6 +221,40 @@ dependencies = [
  "serde_json",
  "tabnas-jsonic",
  "tabnas-parser",
+]
+
+[[package]]
+name = "tabnas-dmog"
+version = "0.2.0"
+dependencies = [
+ "serde_json",
+ "tabnas-abnf",
+ "tabnas-alchemy",
+ "tabnas-c",
+ "tabnas-chess",
+ "tabnas-css",
+ "tabnas-csv",
+ "tabnas-ebnf",
+ "tabnas-expr",
+ "tabnas-feed",
+ "tabnas-gbnf",
+ "tabnas-ini",
+ "tabnas-json",
+ "tabnas-json5",
+ "tabnas-jsonc",
+ "tabnas-jsonic",
+ "tabnas-jsonl",
+ "tabnas-markdown",
+ "tabnas-parser",
+ "tabnas-proto",
+ "tabnas-render",
+ "tabnas-semver",
+ "tabnas-support",
+ "tabnas-toml",
+ "tabnas-transduce",
+ "tabnas-xml",
+ "tabnas-yaml",
+ "tabnas-zon",
 ]
 
 [[package]]

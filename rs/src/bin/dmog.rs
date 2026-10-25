@@ -1,16 +1,16 @@
-//! The `alchemy` command.
+//! The `dmog` command (data mogrify).
 //!
 //! ```text
-//! alchemy canon FILE       print the program in canonical form
-//! alchemy format FILE      print the program in layout form
-//! alchemy check FILE       parse, desugar, resolve, check and build the plan; print nothing and exit 0
-//! alchemy explain FILE     print the plan report
-//! alchemy run [--grammar FORMAT] [--render csv|json] [--max-output-bytes N] PROGRAM INPUT
-//!                          run the program over the JSON document INPUT
-//! alchemy translate --from FORMAT --to FORMAT [--path PATH] [--key KEY]
-//!                   [--with PROGRAM] [--max-output-bytes N] INPUT
-//!                          write INPUT, read as FORMAT, in another format
-//! alchemy formats          print the formats translate reads and writes, as JSON
+//! dmog canon FILE       print the program in canonical form
+//! dmog format FILE      print the program in layout form
+//! dmog check FILE       parse, desugar, resolve, check and build the plan; print nothing and exit 0
+//! dmog explain FILE     print the plan report
+//! dmog run [--grammar FORMAT] [--render csv|json] [--max-output-bytes N] PROGRAM INPUT
+//!                       run the program over the JSON document INPUT
+//! dmog translate --from FORMAT --to FORMAT [--path PATH] [--key KEY]
+//!                [--with PROGRAM] [--max-output-bytes N] INPUT
+//!                       write INPUT, read as FORMAT, in another format
+//! dmog formats          print the formats translate reads and writes, as JSON
 //! ```
 //!
 //! `FILE`, `PROGRAM` and `INPUT` may be `-` for standard input (one of
@@ -34,8 +34,9 @@
 //! `run` reads `INPUT` as JSON through JSON's own transducer part, the
 //! one `translate` reads a JSON document through: the part makes the
 //! document's events of the parser's rule passes, and the engine's arrays
-//! are emptied behind them. Other input formats are aless's business. The
-//! output goes through a coalescing writer to standard output and is
+//! are emptied behind them. A document of another format is `translate
+//! --with`'s business: it runs the program over `INPUT` read as `--from`.
+//! The output goes through a coalescing writer to standard output and is
 //! flushed once, at the end; a failure found after bytes were written
 //! says so.
 //!
@@ -52,8 +53,8 @@
 //!
 //! `translate` reads `INPUT` with the grammar of `--from` and writes it in
 //! `--to`, through the translation parts each format's package exports,
-//! as `tabnas_alchemy_cli::translate` composes them: any of the formats
-//! `alchemy formats` lists into any other. `--path` takes a JSON array of
+//! as `tabnas_dmog::translate` composes them: any of the formats
+//! `dmog formats` lists into any other. `--path` takes a JSON array of
 //! keys and indexes (`["people",0]`) and translates that value instead of
 //! the document; `--key` names the member a root is wrapped under for a
 //! format whose document must be an object (`items` by default); `--with`
@@ -74,7 +75,7 @@ use std::sync::Arc;
 
 use tabnas_alchemy::translate::Options;
 use tabnas_alchemy::{canonical, format, parse_file, Input, Program, Renderer};
-use tabnas_alchemy_cli::translate::{self, Document, Format};
+use tabnas_dmog::translate::{self, Document, Format};
 use tabnas_transduce::{Code, Fail, Limits, Metrics, ParserSink, Sink};
 
 /// This crate's version, read from `rs/Cargo.toml`. It MUST equal
@@ -82,7 +83,7 @@ use tabnas_transduce::{Code, Fail, Limits, Metrics, ParserSink, Sink};
 /// `rs/tests/version_test.rs` fails the build if they drift.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-const USAGE: &str = "usage: alchemy canon|format|check|explain FILE\n       alchemy run [--grammar FORMAT] [--render csv|json] [--max-output-bytes N] PROGRAM INPUT\n       alchemy translate --from FORMAT --to FORMAT [--path PATH] [--key KEY] [--with PROGRAM] [--max-output-bytes N] INPUT\n       alchemy formats\n       (a FILE may be - for standard input)";
+const USAGE: &str = "usage: dmog canon|format|check|explain FILE\n       dmog run [--grammar FORMAT] [--render csv|json] [--max-output-bytes N] PROGRAM INPUT\n       dmog translate --from FORMAT --to FORMAT [--path PATH] [--key KEY] [--with PROGRAM] [--max-output-bytes N] INPUT\n       dmog formats\n       (a FILE may be - for standard input)";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -90,7 +91,7 @@ fn main() -> ExitCode {
     // evaluator are promised, so a program within their bounds fails with
     // a code rather than overflowing the main thread's smaller stack.
     let worker = std::thread::Builder::new()
-        .name("alchemy".into())
+        .name("dmog".into())
         .stack_size(tabnas_alchemy::STACK_BYTES)
         .spawn(move || command(&args));
     match worker {

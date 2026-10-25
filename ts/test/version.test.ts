@@ -2,7 +2,7 @@
 
 // The exported VERSION must equal package.json "version". A release that
 // bumps one and forgets the other fails here instead of shipping a package
-// that misstates its own version. Mirrors go/cmd/alchemy/version_test.go and
+// that misstates its own version. Mirrors go/cmd/dmog/version_test.go and
 // rs/tests/version_test.rs.
 
 import { describe, it } from 'node:test'

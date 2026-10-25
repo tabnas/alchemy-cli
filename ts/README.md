@@ -1,24 +1,24 @@
-# @tabnas/alchemy-cli
+# @tabnas/dmog
 
-The `alchemy` command for [alchemy](https://github.com/tabnas/alchemy), the
+The `dmog` command for [alchemy](https://github.com/tabnas/alchemy), the
 small transformation language for streaming structured data through the
 tabnas parser and transducer stack.
 
 ```sh
-npm install -g @tabnas/alchemy-cli
+npm install -g @tabnas/dmog
 ```
 
 ```
-alchemy canon FILE       print the program in canonical form
-alchemy format FILE      print the program in layout form
-alchemy check FILE       parse, desugar, resolve, check and build the plan
-alchemy explain FILE     print the plan report
-alchemy run [--render csv|json] [--max-output-bytes N] PROGRAM INPUT
-                         run the program over the JSON document INPUT
-alchemy translate --from FORMAT --to FORMAT [--path PATH] [--key KEY]
-                  [--with PROGRAM] [--max-output-bytes N] INPUT
-                         write INPUT, read as FORMAT, in another format
-alchemy formats          print the formats translate reads and writes, as JSON
+dmog canon FILE       print the program in canonical form
+dmog format FILE      print the program in layout form
+dmog check FILE       parse, desugar, resolve, check and build the plan
+dmog explain FILE     print the plan report
+dmog run [--render csv|json] [--max-output-bytes N] PROGRAM INPUT
+                      run the program over the JSON document INPUT
+dmog translate --from FORMAT --to FORMAT [--path PATH] [--key KEY]
+               [--with PROGRAM] [--max-output-bytes N] INPUT
+                      write INPUT, read as FORMAT, in another format
+dmog formats          print the formats translate reads and writes, as JSON
 ```
 
 A `FILE`, `PROGRAM` or `INPUT` may be `-` for standard input. A failure is

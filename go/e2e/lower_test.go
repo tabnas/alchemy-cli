@@ -20,7 +20,7 @@ import (
 // lowerRun runs src over the JSON input as rs/src/lower.rs's tests do: a
 // runtime over the resolved program (no checker, so the lowering's own
 // refusals are seen), its export lowered to a sink over a writer, and the
-// input read as `alchemy run` reads it (jsonInto).
+// input read as `dmog run` reads it (jsonInto).
 func lowerRun(t testing.TB, src, input string, render Renderer) (string, *Fail) {
 	t.Helper()
 	rt := runtimeOf(t, src)

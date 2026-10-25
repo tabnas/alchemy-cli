@@ -15,7 +15,7 @@ import (
 )
 
 func TestVersionMatchesPackageJSON(t *testing.T) {
-	// This test lives in go/cmd/alchemy, three levels below the repo root.
+	// This test lives in go/cmd/dmog, three levels below the repo root.
 	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "ts", "package.json"))
 	if err != nil {
 		// Fatal, never skipped: a version check that silently does not run

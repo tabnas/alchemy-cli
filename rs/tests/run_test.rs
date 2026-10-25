@@ -71,7 +71,7 @@ impl std::io::Write for Shared {
     }
 }
 
-/// What a host does: read `text` as `alchemy run` reads its input, push
+/// What a host does: read `text` as `dmog run` reads its input, push
 /// the events into the program's sink, and mark a failure as leaving
 /// partial output when `output_bytes` says bytes reached the writer.
 fn drive(

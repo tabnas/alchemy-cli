@@ -51,7 +51,7 @@ const runnerOptions = {
   errorPos: (err: any) => ({ row: err?.row, col: err?.col }),
 }
 
-// Compile `program` and run it over `doc`, as `alchemy run` does: the
+// Compile `program` and run it over `doc`, as `dmog run` does: the
 // document read through JSON's transducer part, with the default limits.
 function runProgram(program: string, doc: string, render: Renderer | undefined): string {
   return drive(compile(program, 'run'), doc, render)
@@ -258,7 +258,7 @@ function transduceGrammar(row: SpecRow): Format {
 }
 
 // Compile `program` over the parser's rule passes and run it over `doc`,
-// parsed with `grammar`, as `alchemy run --grammar` does, with the default
+// parsed with `grammar`, as `dmog run --grammar` does, with the default
 // limits. The program's output kind rides along, for the differential.
 function runPasses(
   program: string,

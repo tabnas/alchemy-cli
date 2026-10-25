@@ -49,7 +49,7 @@ impl std::io::Write for Shared {
     }
 }
 
-/// Run `src` over the JSON `input`, read as `alchemy run` reads its
+/// Run `src` over the JSON `input`, read as `dmog run` reads its
 /// input, lowered through transduce's routers and render's renderers; the
 /// output bytes, or the failure.
 fn run(src: &str, input: &str, render: Option<Renderer>) -> Result<String, Fail> {

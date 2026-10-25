@@ -2,7 +2,7 @@
 
 package main
 
-// translate_test.go: alchemy translate and alchemy formats, run the way a
+// translate_test.go: dmog translate and dmog formats, run the way a
 // script runs them (cli_test.go builds the binary): the flags, the paths,
 // the programs, the failures and their statuses, and that standard error
 // carries nothing on success. The bytes expected are the Rust binary's,
@@ -23,9 +23,9 @@ import (
 	"testing"
 
 	tabnasabnf "github.com/tabnas/abnf/go"
-	"github.com/tabnas/alchemy-cli/go/translate"
 	tabnasc "github.com/tabnas/c/go"
 	tabnascss "github.com/tabnas/css/go"
+	"github.com/tabnas/dmog/go/translate"
 	tabnasebnf "github.com/tabnas/ebnf/go"
 	tabnasexpr "github.com/tabnas/expr/go"
 	tabnasfeed "github.com/tabnas/feed/go"
@@ -172,7 +172,7 @@ func TestFormatsPrintsTheRegistryAsJSON(t *testing.T) {
 	}
 }
 
-// wholeJSON is a manifest's translate.whole as `alchemy formats` writes
+// wholeJSON is a manifest's translate.whole as `dmog formats` writes
 // it: the sentence as a JSON string, or null where the manifest gives none.
 func wholeJSON(t *testing.T, manifest string) string {
 	t.Helper()
@@ -199,7 +199,7 @@ func wholeJSON(t *testing.T, manifest string) string {
 // A document read with --from's grammar and written in --to's format,
 // from a file or from standard input; nothing reaches standard error,
 // though a translation loses what the target's loss sentences say (in
-// alchemy formats), as in the Rust binary.
+// dmog formats), as in the Rust binary.
 func TestTranslateWritesADocumentInAnotherFormat(t *testing.T) {
 	input := tempFile(t, "people.json", people)
 	wantSuccess(t, invoke(t, []string{"translate", "--from", "json", "--to", "yaml", input}, nil),
@@ -422,7 +422,7 @@ func TestTranslateFailuresAndStatuses(t *testing.T) {
 		{"translate", "--bogus", "--from", "bogus", input},
 	} {
 		f := wantFailure(t, invoke(t, args, nil), 2, "INPUT_INVALID", "usage: ")
-		if !strings.Contains(f["message"].(string), "alchemy translate --from FORMAT --to FORMAT") {
+		if !strings.Contains(f["message"].(string), "dmog translate --from FORMAT --to FORMAT") {
 			t.Errorf("%v: %v", args, f)
 		}
 	}

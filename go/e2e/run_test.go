@@ -31,7 +31,7 @@ import (
 	tabnasyaml "github.com/tabnas/yaml/go"
 )
 
-// hostRun is what a host does: read text as `alchemy run` reads its input
+// hostRun is what a host does: read text as `dmog run` reads its input
 // (driveRun), push the events into the program's sink, and mark a failure
 // as leaving partial output when OutputBytes says bytes reached the
 // writer.

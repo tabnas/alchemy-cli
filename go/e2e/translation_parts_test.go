@@ -19,11 +19,11 @@ import (
 	"strings"
 	"testing"
 
-	translate "github.com/tabnas/alchemy-cli/go/translate"
 	. "github.com/tabnas/alchemy/go"
 	altranslate "github.com/tabnas/alchemy/go/translate"
 	tabnaschess "github.com/tabnas/chess/go"
 	tabnascsv "github.com/tabnas/csv/go"
+	translate "github.com/tabnas/dmog/go/translate"
 	tabnasini "github.com/tabnas/ini/go"
 	tabnasjson "github.com/tabnas/json/go"
 	tabnasjson5 "github.com/tabnas/json5/go"

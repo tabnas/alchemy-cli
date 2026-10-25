@@ -22,7 +22,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use tabnas_alchemy::translate::Options;
-use tabnas_alchemy_cli::translate::{self, Request};
+use tabnas_dmog::translate::{self, Request};
 use tabnas_transduce::{Limits, Metrics};
 
 /// The inputs whose output YAML's reader misreads, each with the issue
@@ -173,7 +173,7 @@ fn read(text: &str) -> Option<String> {
     })
 }
 
-/// `text` written as `alchemy translate --from yaml --to yaml` writes it.
+/// `text` written as `dmog translate --from yaml --to yaml` writes it.
 fn render(
     request: &Request<'_>,
     compiled: &translate::Compiled,

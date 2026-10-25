@@ -1,6 +1,6 @@
-# tabnas-alchemy-cli
+# tabnas-dmog
 
-The `alchemy` command: runs programs in the
+The `dmog` command (data mogrify): runs programs in the
 [alchemy](https://github.com/tabnas/alchemy) language over JSON
 documents, and translates a document from any of the tabnas formats into
 any other, in TypeScript, Go and Rust.
@@ -21,24 +21,24 @@ A library that only needs one of them depends on that one alone; this
 command is where all of them meet.
 
 ```text
-alchemy canon FILE       print the program in canonical form
-alchemy format FILE      print the program in layout form
-alchemy check FILE       parse, desugar, resolve, check and build the plan; print nothing and exit 0
-alchemy explain FILE     print the plan report
-alchemy run [--grammar FORMAT] [--render csv|json] [--max-output-bytes N] PROGRAM INPUT
-                         run the program over the JSON document INPUT; with --grammar, over
-                         the rule passes of INPUT parsed as FORMAT (a transducer part's input)
-alchemy translate --from FORMAT --to FORMAT [--path PATH] [--key KEY]
-                  [--with PROGRAM] [--max-output-bytes N] INPUT
-                         write INPUT, read as FORMAT, in another format
-alchemy formats          print the formats translate reads and writes, as JSON
+dmog canon FILE       print the program in canonical form
+dmog format FILE      print the program in layout form
+dmog check FILE       parse, desugar, resolve, check and build the plan; print nothing and exit 0
+dmog explain FILE     print the plan report
+dmog run [--grammar FORMAT] [--render csv|json] [--max-output-bytes N] PROGRAM INPUT
+                      run the program over the JSON document INPUT; with --grammar, over
+                      the rule passes of INPUT parsed as FORMAT (a transducer part's input)
+dmog translate --from FORMAT --to FORMAT [--path PATH] [--key KEY]
+               [--with PROGRAM] [--max-output-bytes N] INPUT
+                      write INPUT, read as FORMAT, in another format
+dmog formats          print the formats translate reads and writes, as JSON
 ```
 
 `FILE`, `PROGRAM` and `INPUT` may be `-` for standard input (one of them
 per run). The worked example of the transducer's design is under
-[`examples/`](examples/): `alchemy run examples/export.alc
+[`examples/`](examples/): `dmog run examples/export.alc
 examples/records.json` renders a table bound by the document's own
-metadata as CSV, and `alchemy run --render json examples/table.alc
+metadata as CSV, and `dmog run --render json examples/table.alc
 examples/records.json` writes the same rows as JSON records. A failure is the `Fail` as one JSON object on standard error,
 and standard output carries nothing but the answer. The language
 reference, [`docs/language.md`](https://github.com/tabnas/alchemy/blob/main/docs/language.md)
@@ -66,7 +66,7 @@ array of keys and indexes (`["people",0]`) and translates that value
 instead of the document; `--key` names the member a root is wrapped
 under for a format whose document must be an object (`items` by
 default); `--with` runs a program over the input first and writes its
-export's events or table. `alchemy formats` lists each format, as JSON:
+export's events or table. `dmog formats` lists each format, as JSON:
 its `id`, the shapes it `reads` and `writes`, the `root` its render
 needs, its `schema`, `whole` (why its documents are read whole, never
 streamed, where the format says so, and null where it does not), its
@@ -94,13 +94,13 @@ read `INPUT` whole.
 
 ## Install
 
-Each runtime installs a command named `alchemy`:
+Each runtime installs a command named `dmog`:
 
 | Runtime | Install |
 |---|---|
-| TypeScript (Node 24 or later) | `npm install -g @tabnas/alchemy-cli` |
-| Go | `go install github.com/tabnas/alchemy-cli/go/cmd/alchemy@latest` |
-| Rust (1.85 or later) | `cargo install tabnas-alchemy-cli` |
+| TypeScript (Node 24 or later) | `npm install -g @tabnas/dmog` |
+| Go | `go install github.com/tabnas/dmog/go/cmd/dmog@latest` |
+| Rust (1.85 or later) | `cargo install tabnas-dmog` |
 
 The Go command needs no build tag. `run` reads its document through
 JSON's transducer part, and `translate` reads a document through its
@@ -113,9 +113,9 @@ build without it does.
 
 | Path | What it is |
 |---|---|
-| `ts/` | `@tabnas/alchemy-cli`, the `alchemy` bin |
-| `go/` | `github.com/tabnas/alchemy-cli/go`, the `alchemy` command |
-| `rs/` | `tabnas-alchemy-cli`, the `alchemy` binary |
+| `ts/` | `@tabnas/dmog`, the `dmog` bin |
+| `go/` | `github.com/tabnas/dmog/go`, the `dmog` command |
+| `rs/` | `tabnas-dmog`, the `dmog` binary |
 | `examples/` | the worked example: `export.alc` renders its table as CSV, `table.alc` leaves the rendering to the command, `records.json` is the document they read |
 
 ## Build and test

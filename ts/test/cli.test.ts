@@ -1,7 +1,7 @@
 /* Copyright (c) 2026 tabnas, MIT License */
 
-// The `alchemy` command (alchemy's rs/tests/cli_test.rs), run the way a
-// script runs it: bin/alchemy in a child process, the five commands of
+// The `dmog` command (rs/tests/cli_test.rs in Rust), run the way a
+// script runs it: bin/dmog in a child process, the five commands of
 // programs and the two of formats (`translate` and `formats`), standard
 // input as `-`, the statuses, and that nothing but the answer reaches
 // standard output.
@@ -30,13 +30,13 @@ import { translate as tomlParts } from '@tabnas/toml'
 import { EXPECTED_CSV, PROGRAM, RECORDS } from './common'
 
 // The command, as the package's `bin` names it.
-const BIN = join(__dirname, '..', 'bin', 'alchemy')
+const BIN = join(__dirname, '..', 'bin', 'dmog')
 
-const TMP = mkdtempSync(join(tmpdir(), 'alchemy-cli-'))
+const TMP = mkdtempSync(join(tmpdir(), 'dmog-'))
 
 type Output = { status: number | null; stdout: string; stderr: string }
 
-function alchemy(args: string[], stdin?: string | Buffer, cwd?: string): Output {
+function dmog(args: string[], stdin?: string | Buffer, cwd?: string): Output {
   const out: SpawnSyncReturns<Buffer> = spawnSync(process.execPath, [BIN, ...args], {
     input: stdin,
     stdio: [undefined === stdin ? 'ignore' : 'pipe', 'pipe', 'pipe'],
@@ -84,20 +84,20 @@ describe('cli', () => {
 
   it('canon prints the canonical form', () => {
     const file = tempFile('canon.alc', EXPORT)
-    const out = alchemy(['canon', file])
+    const out = dmog(['canon', file])
     assert.equal(out.status, 0, out.stderr)
     assert.equal(out.stdout, '(def export [input] (pipe input (table-from-json api-binding) (csv csv-options)))\n')
     assert.equal(out.stderr, '')
   })
 
   it('format prints the layout form and reads standard input', () => {
-    const out = alchemy(['format', '-'], '(def export [input] (pipe input (table-from-json api-binding) (csv csv-options)))')
+    const out = dmog(['format', '-'], '(def export [input] (pipe input (table-from-json api-binding) (csv csv-options)))')
     assert.equal(out.status, 0, out.stderr)
     assert.equal(out.stdout, EXPORT)
   })
 
   it('check is silent on a program that checks', () => {
-    const out = alchemy(['check', '-'], PROGRAM)
+    const out = dmog(['check', '-'], PROGRAM)
     assert.equal(out.status, 0, out.stderr)
     assert.equal(out.stdout, '')
     assert.equal(out.stderr, '')
@@ -122,16 +122,16 @@ describe('cli', () => {
       ],
     ]) {
       const path = tempFile(name, program)
-      let out = alchemy(['check', path])
+      let out = dmog(['check', path])
       assert.equal(out.status, 0, `${name}: ${out.stderr}`)
-      out = alchemy(['run', path, '-'], input)
+      out = dmog(['run', path, '-'], input)
       assert.equal(out.status, 0, `${name}: ${out.stderr}`)
       assert.equal(out.stdout, want, name)
     }
   })
 
   it('check reports a reader failure as JSON on stderr with status 2', () => {
-    const out = alchemy(['check', '-'], 'pipe x\n  f\n  []\n')
+    const out = dmog(['check', '-'], 'pipe x\n  f\n  []\n')
     assert.equal(out.status, 2)
     assert.equal(out.stdout, '')
     const fail = failJson(out)
@@ -146,24 +146,24 @@ describe('cli', () => {
   // stream and a dynamic function each fail with their code, at the
   // position they name, with status 2.
   it('check reports the resolver and checker codes', () => {
-    let out = alchemy(['check', '-'], EXPORT)
+    let out = dmog(['check', '-'], EXPORT)
     assert.equal(out.status, 2)
     let fail = failJson(out)
     assert.equal(fail.code, 'DSL_TYPE_ERROR')
     assert.ok(fail.message.startsWith('unknown_name: api-binding'), JSON.stringify(fail))
     assert.deepStrictEqual([fail.row, fail.col], [3, 21])
-    out = alchemy(['check', '-'], 'def export [input] (concat (json input) (json input))')
+    out = dmog(['check', '-'], 'def export [input] (concat (json input) (json input))')
     assert.equal(out.status, 2)
     fail = failJson(out)
     assert.equal(fail.code, 'STREAM_REUSED')
     assert.ok(fail.message.startsWith('reused: '), JSON.stringify(fail))
-    out = alchemy(['check', '-'], 'def a [x] (b x)\ndef b [x] (a x)\ndef export [input] (a input)')
+    out = dmog(['check', '-'], 'def a [x] (b x)\ndef b [x] (a x)\ndef export [input] (a input)')
     assert.equal(out.status, 2)
     assert.equal(failJson(out).code, 'STREAMABILITY_UNKNOWN')
   })
 
   it('explain prints the plan report', () => {
-    let out = alchemy(['explain', '-'], PROGRAM)
+    let out = dmog(['explain', '-'], PROGRAM)
     assert.equal(out.status, 0, out.stderr)
     const text = out.stdout
     assert.ok(text.startsWith('export: api-table → csv\n\nSource reads:          1\n'), text)
@@ -174,7 +174,7 @@ describe('cli', () => {
     )
     assert.ok(text.endsWith('A later error can occur after earlier output has been written.\n'), text)
     assert.equal(out.stderr, '')
-    out = alchemy(['explain', '-'], 'def x 1')
+    out = dmog(['explain', '-'], 'def x 1')
     assert.equal(out.status, 2)
     assert.ok(failJson(out).message.startsWith('no_export: '), out.stderr)
   })
@@ -188,7 +188,7 @@ describe('cli', () => {
       ['run', '-', input],
     ]) {
       const stdin = '-' === args[args.length - 1] ? RECORDS : '-' === args[1] ? PROGRAM : undefined
-      const out = alchemy(args, stdin)
+      const out = dmog(args, stdin)
       assert.equal(out.status, 0, `${args}: ${out.stderr}`)
       assert.equal(out.stdout, EXPECTED_CSV, String(args))
       assert.equal(out.stderr, '', String(args))
@@ -197,10 +197,10 @@ describe('cli', () => {
 
   it('run renders a table result as csv or json', () => {
     const program = tempFile('table.alc', PROGRAM.replace('    csv csv-options\n', ''))
-    let out = alchemy(['run', program, '-'], RECORDS)
+    let out = dmog(['run', program, '-'], RECORDS)
     assert.equal(out.status, 0, out.stderr)
     assert.equal(out.stdout, EXPECTED_CSV)
-    out = alchemy(['run', '--render', 'json', program, '-'], RECORDS)
+    out = dmog(['run', '--render', 'json', program, '-'], RECORDS)
     assert.equal(out.status, 0, out.stderr)
     assert.equal(
       out.stdout,
@@ -208,14 +208,14 @@ describe('cli', () => {
     )
     // The echo, and a renderer refused for a program that renders itself.
     const echo = tempFile('echo.alc', 'def export [input] input\n')
-    out = alchemy(['run', echo, '-'], '[1.50, {"a": null}]')
+    out = dmog(['run', echo, '-'], '[1.50, {"a": null}]')
     assert.equal(out.status, 0, out.stderr)
     assert.equal(out.stdout, '[1.50,{"a":null}]\n')
-    out = alchemy(['run', '--render', 'csv', echo, '-'], '[1]')
+    out = dmog(['run', '--render', 'csv', echo, '-'], '[1]')
     assert.equal(out.status, 2)
     assert.ok(failJson(out).message.startsWith('protocol_mismatch: '), out.stderr)
     const text = tempFile('text.alc', PROGRAM)
-    out = alchemy(['run', '--render', 'json', text, '-'], RECORDS)
+    out = dmog(['run', '--render', 'json', text, '-'], RECORDS)
     assert.equal(out.status, 2)
     assert.ok(failJson(out).message.startsWith('render_of_text: '), out.stderr)
     // Before the input is read: an input that cannot be read is never
@@ -224,7 +224,7 @@ describe('cli', () => {
       [echo, 'csv', 'protocol_mismatch: '],
       [text, 'json', 'render_of_text: '],
     ]) {
-      out = alchemy(['run', '--render', render, file, '/nonexistent/input.json'])
+      out = dmog(['run', '--render', render, file, '/nonexistent/input.json'])
       assert.equal(out.status, 2, prefix)
       assert.ok(failJson(out).message.startsWith(prefix), out.stderr)
     }
@@ -238,7 +238,7 @@ describe('cli', () => {
     // Metadata after the rows: INPUT_ORDER_VIOLATION, status 1, no output.
     const reordered =
       '{"response":{"payload":{"deep":{"records":[{"id":1,"person":{"name":"a"},"account":{"balance":2}}]}},"metadata":{"fields":[{"title":"Identifier","path":["id"]}]}}}'
-    let out = alchemy(['run', program, '-'], reordered)
+    let out = dmog(['run', program, '-'], reordered)
     assert.equal(out.status, 1, out.stderr)
     assert.equal(out.stdout, '')
     let fail = failJson(out)
@@ -249,7 +249,7 @@ describe('cli', () => {
     assert.ok(String(fail.message).includes('rows must follow their metadata'), JSON.stringify(fail))
     // Invalid JSON after the rows: INPUT_INVALID, status 1; the rows were
     // buffered, not committed, so nothing reached standard output.
-    out = alchemy(['run', program, '-'], `${RECORDS} x`)
+    out = dmog(['run', program, '-'], `${RECORDS} x`)
     assert.equal(out.status, 1, out.stderr)
     assert.equal(out.stdout, '')
     fail = failJson(out)
@@ -258,18 +258,18 @@ describe('cli', () => {
     // A missing cell under the standard options: MISSING_VALUE, status 1.
     const missing =
       '{"response":{"metadata":{"fields":[{"title":"Identifier","path":["id"]},{"title":"Full name","path":["person","name"]}]},"payload":{"deep":{"records":[{"id":1}]}}}}'
-    out = alchemy(['run', program, '-'], missing)
+    out = dmog(['run', program, '-'], missing)
     assert.equal(out.status, 1, out.stderr)
     assert.equal(failJson(out).code, 'MISSING_VALUE')
     // A program that does not check: status 2, nothing read from the input.
     const bad = tempFile('bad.alc', 'def export [input] (nope input)\n')
-    out = alchemy(['run', bad, '-'], 'not json')
+    out = dmog(['run', bad, '-'], 'not json')
     assert.equal(out.status, 2)
     assert.equal(failJson(out).code, 'DSL_TYPE_ERROR')
   })
 
   it('a reader error carries the engine code and position', () => {
-    const out = alchemy(['canon', '-'], 'a\n  b\n c\n')
+    const out = dmog(['canon', '-'], 'a\n  b\n c\n')
     assert.equal(out.status, 2)
     const fail = failJson(out)
     assert.equal(fail.code, 'DSL_PARSE_ERROR')
@@ -298,7 +298,7 @@ describe('cli', () => {
       ['canon', indented, 257],
       ['check', pipe, 1],
     ] as Array<[string, string, number]>) {
-      const out = alchemy([command, '-'], program)
+      const out = dmog([command, '-'], program)
       assert.equal(out.status, 2, `${command}: ${out.stderr}`)
       assert.equal(out.stdout, '', command)
       const fail = failJson(out)
@@ -309,13 +309,13 @@ describe('cli', () => {
   })
 
   it('usage errors and unreadable files exit 2', () => {
-    let out = alchemy([])
+    let out = dmog([])
     assert.equal(out.status, 2)
     assert.ok(out.stderr.includes('usage:'), out.stderr)
     assert.equal(out.stdout, '')
     // An unknown command is refused before standard input is read, so what
     // it holds does not matter: unparsable input is not a parse error here.
-    out = alchemy(['bogus', '-'], '(')
+    out = dmog(['bogus', '-'], '(')
     assert.equal(out.status, 2)
     assert.equal(failJson(out).code, 'INPUT_INVALID')
     assert.equal(out.stdout, '')
@@ -327,12 +327,12 @@ describe('cli', () => {
       ['run', '-', '-'],
       ['explain'],
     ]) {
-      out = alchemy(args)
+      out = dmog(args)
       assert.equal(out.status, 2, String(args))
       assert.equal(failJson(out).code, 'INPUT_INVALID', String(args))
       assert.equal(out.stdout, '', String(args))
     }
-    out = alchemy(['canon', '/nonexistent/program.alc'])
+    out = dmog(['canon', '/nonexistent/program.alc'])
     assert.equal(out.status, 2)
     assert.equal(failJson(out).code, 'INPUT_INVALID')
     assert.equal(out.stdout, '')
@@ -341,7 +341,7 @@ describe('cli', () => {
     const bad = join(TMP, 'bad.alc')
     writeFileSync(bad, Buffer.concat([Buffer.from('def export [input] '), Buffer.from([0xff, 0x0a])]))
     for (const [file, stdin] of [[bad, undefined], ['-', Buffer.from([0xff])]] as const) {
-      out = alchemy(['canon', file], stdin)
+      out = dmog(['canon', file], stdin)
       assert.equal(out.status, 2, file)
       assert.equal(failJson(out).code, 'INPUT_INVALID', file)
       assert.equal(failJson(out).message, `cannot read ${file}: stream did not contain valid UTF-8`)
@@ -361,10 +361,10 @@ describe('cli', () => {
       ['check', program],
       ['explain', program],
     ]) {
-      const out = alchemy(args)
+      const out = dmog(args)
       assert.equal(out.status, 0, `${args}: ${out.stderr}`)
     }
-    const out = alchemy(['run', program, '-'], '["a","b"]')
+    const out = dmog(['run', program, '-'], '["a","b"]')
     assert.equal(out.status, 0, out.stderr)
     assert.equal(out.stdout, 'a,b')
   })
@@ -373,7 +373,7 @@ describe('cli', () => {
   // (which builds the plan) and from `run`, not a stack overflow.
   it('self-application is a failure, not an abort', () => {
     const omega = tempFile('omega.alc', 'def w [f] (f f)\ndef export [input]\n  let [x (w w)]\n    json input\n')
-    let out = alchemy(['check', omega])
+    let out = dmog(['check', omega])
     assert.equal(out.status, 2, out.stderr)
     const fail = failJson(out)
     assert.equal(fail.code, 'STREAMABILITY_UNKNOWN')
@@ -382,7 +382,7 @@ describe('cli', () => {
       'omega-item.alc',
       'def w [f] (f f)\ndef export [input]\n  pipe input\n    select (path each-index)\n    map (fn [x] (w w))\n    join ","\n',
     )
-    out = alchemy(['run', perItem, '-'], '[1]')
+    out = dmog(['run', perItem, '-'], '[1]')
     assert.equal(out.status, 2, out.stderr)
     assert.equal(failJson(out).code, 'STREAMABILITY_UNKNOWN')
   })
@@ -392,7 +392,7 @@ describe('cli', () => {
   // position, although no document was read.
   it('check reports a fail the plan reaches', () => {
     const program = tempFile('fail.alc', 'def export [input] (concat "a" (fail "boom"))\n')
-    const out = alchemy(['check', program])
+    const out = dmog(['check', program])
     assert.equal(out.status, 1, out.stderr)
     const fail = failJson(out)
     assert.equal(fail.code, 'INPUT_INVALID')
@@ -413,7 +413,7 @@ describe('cli', () => {
     mkdirSync(join(dir, 'stdlib'), { recursive: true })
     for (const name of ['export.alc', 'stdlib/table.alc']) {
       writeFileSync(join(dir, name), PROGRAM)
-      const out = alchemy(['run', name, '-'], '{}', dir)
+      const out = dmog(['run', name, '-'], '{}', dir)
       assert.equal(out.status, 1, `${name}: ${out.stderr}`)
       const fail = failJson(out)
       assert.equal(fail.code, 'INPUT_INVALID', name)
@@ -436,14 +436,14 @@ describe('cli', () => {
   // it fails with the limit named, status 5.
   it('run takes an output limit', () => {
     const program = tempFile('limit.alc', PROGRAM)
-    let out = alchemy(['run', '--max-output-bytes', '20', program, '-'], RECORDS)
+    let out = dmog(['run', '--max-output-bytes', '20', program, '-'], RECORDS)
     assert.equal(out.status, 5, out.stderr)
     assert.equal(failJson(out).limit.name, 'max_output_bytes')
     assert.ok(Buffer.byteLength(out.stdout) <= 20)
-    out = alchemy(['run', '--max-output-bytes', '1000', program, '-'], RECORDS)
+    out = dmog(['run', '--max-output-bytes', '1000', program, '-'], RECORDS)
     assert.equal(out.status, 0, out.stderr)
     assert.equal(out.stdout, EXPECTED_CSV)
-    out = alchemy(['run', '--max-output-bytes', 'many', program, '-'], RECORDS)
+    out = dmog(['run', '--max-output-bytes', 'many', program, '-'], RECORDS)
     assert.equal(out.status, 2)
     assert.equal(failJson(out).code, 'INPUT_INVALID')
   })
@@ -458,15 +458,15 @@ describe('cli', () => {
   it('run takes a grammar whose rule passes the program reads', () => {
     const program = tempFile('transducer.alc', TRANSDUCER)
     const doc = '{"a":[1,2.50,"x",{"b":null}],"c":{},"d":[],"e":1e21,"f":true}'
-    let out = alchemy(['run', '--grammar', 'json', program, '-'], doc)
+    let out = dmog(['run', '--grammar', 'json', program, '-'], doc)
     assert.equal(out.status, 0, out.stderr)
     assert.equal(out.stdout, `${doc}\n`)
-    out = alchemy(['run', '--grammar', 'json', program, '-'], '[1,')
+    out = dmog(['run', '--grammar', 'json', program, '-'], '[1,')
     assert.equal(out.status, 1, out.stderr)
     assert.equal(out.stdout, '')
     assert.equal(failJson(out).code, 'INPUT_INVALID')
     for (const name of ['abnf', 'nope']) {
-      out = alchemy(['run', '--grammar', name, program, '-'], doc)
+      out = dmog(['run', '--grammar', name, program, '-'], doc)
       assert.equal(out.status, 2, out.stderr)
       const fail = failJson(out)
       assert.equal(fail.code, 'INPUT_INVALID')
@@ -477,12 +477,12 @@ describe('cli', () => {
       )
     }
     const events = tempFile('events.alc', 'def export [input] (json input)\n')
-    out = alchemy(['run', '--grammar', 'json', events, '-'], doc)
+    out = dmog(['run', '--grammar', 'json', events, '-'], doc)
     assert.notEqual(out.status, 0)
     const fail = failJson(out)
     assert.equal(fail.code, 'DSL_TYPE_ERROR')
     assert.ok(fail.message.startsWith('protocol_mismatch'), fail.message)
-    out = alchemy(['run', program, '-', '--grammar'], doc)
+    out = dmog(['run', program, '-', '--grammar'], doc)
     assert.equal(out.status, 2)
   })
 })
@@ -535,7 +535,7 @@ describe('cli translate', () => {
   const TEXT = 'def export [input] (join "," (map (fn [p] (get :name p)) (select (path "people" each-index) input)))\n'
 
   it('formats prints the formats translate reads and writes, as JSON', () => {
-    const out = alchemy(['formats'])
+    const out = dmog(['formats'])
     assert.equal(out.status, 0, out.stderr)
     assert.equal(out.stderr, '')
     assert.ok(out.stdout.endsWith('}]\n'), out.stdout)
@@ -638,7 +638,7 @@ describe('cli translate', () => {
     }
     assert.strictEqual(byId('pgn').whole, null)
     // `formats` takes no arguments.
-    const extra = alchemy(['formats', 'json'])
+    const extra = dmog(['formats', 'json'])
     assert.equal(extra.status, 2)
     assert.equal(failJson(extra).code, 'INPUT_INVALID')
     assert.ok(failJson(extra).message.startsWith('usage: '), extra.stderr)
@@ -647,7 +647,7 @@ describe('cli translate', () => {
 
   it('translate writes a document in another format', () => {
     const input = tempFile('people.json', PEOPLE)
-    let out = alchemy(['translate', '--from', 'json', '--to', 'yaml', input])
+    let out = dmog(['translate', '--from', 'json', '--to', 'yaml', input])
     assert.equal(out.status, 0, out.stderr)
     // A number keeps the lexeme the document spelled it with.
     assert.equal(
@@ -673,7 +673,7 @@ describe('cli translate', () => {
       // A byte order mark is the document's, and its grammar's to read.
       [['--from', 'csv', '--to', 'json', '-'], '\ufeffa\n1\n', '[{"\ufeffa":"1"}]\n'],
     ] as Array<[string[], string, string]>) {
-      out = alchemy(['translate', ...args], stdin)
+      out = dmog(['translate', ...args], stdin)
       assert.equal(out.status, 0, `${args}: ${out.stderr}`)
       assert.equal(out.stdout, want, String(args))
       assert.equal(out.stderr, '', String(args))
@@ -699,12 +699,12 @@ describe('cli translate', () => {
         '{"people":[{"name":"Ann","age":31.5},{"name":"Bo","age":7}],"n":null}\n',
       ],
     ] as Array<[string[], string]>) {
-      const out = alchemy(['translate', '--from', 'json', ...args])
+      const out = dmog(['translate', '--from', 'json', ...args])
       assert.equal(out.status, 0, `${args}: ${out.stderr}`)
       assert.equal(out.stdout, want, String(args))
     }
     // A path that names nothing is the document's failure, status 1.
-    let out = alchemy(['translate', '--from', 'json', '--to', 'yaml', '--path', '["people",5]', input])
+    let out = dmog(['translate', '--from', 'json', '--to', 'yaml', '--path', '["people",5]', input])
     assert.equal(out.status, 1, out.stderr)
     assert.equal(out.stdout, '')
     assert.deepStrictEqual(failJson(out), {
@@ -715,7 +715,7 @@ describe('cli translate', () => {
     // A path that is not an array of keys and indexes is the command line's,
     // status 2, before the input is read.
     for (const path of ['people', '[0.5]', '[-1]', '[true]', '{"a":1}']) {
-      out = alchemy(['translate', '--from', 'json', '--to', 'yaml', '--path', path, '/nonexistent/input.json'])
+      out = dmog(['translate', '--from', 'json', '--to', 'yaml', '--path', path, '/nonexistent/input.json'])
       assert.equal(out.status, 2, `${path}: ${out.stderr}`)
       assert.deepStrictEqual(failJson(out), {
         code: 'INPUT_INVALID',
@@ -735,18 +735,18 @@ describe('cli translate', () => {
       ['markdown', '| name | age |\n| --- | --- |\n| Ann | 31.50 |\n| Bo | 7 |\n'],
       ['json', '[{"name":"Ann","age":31.50},{"name":"Bo","age":7}]\n'],
     ]) {
-      const out = alchemy(['translate', '--from', 'json', '--to', to, '--with', table, input])
+      const out = dmog(['translate', '--from', 'json', '--to', to, '--with', table, input])
       assert.equal(out.status, 0, `${to}: ${out.stderr}`)
       assert.equal(out.stdout, want, to)
     }
     // The program from standard input.
-    let out = alchemy(['translate', '--from', 'json', '--to', 'csv', '--with', '-', input], TABLE)
+    let out = dmog(['translate', '--from', 'json', '--to', 'csv', '--with', '-', input], TABLE)
     assert.equal(out.status, 0, out.stderr)
     assert.equal(out.stdout, '"name","age"\r\n"Ann","31.50"\r\n"Bo","7"\r\n')
     // A program that writes its own text has nothing for a render to write:
     // refused before the input is read.
     const text = tempFile('text-export.alc', TEXT)
-    out = alchemy(['translate', '--from', 'json', '--to', 'yaml', '--with', text, '/nonexistent/input.json'])
+    out = dmog(['translate', '--from', 'json', '--to', 'yaml', '--with', text, '/nonexistent/input.json'])
     assert.equal(out.status, 2, out.stderr)
     assert.equal(out.stdout, '')
     assert.deepStrictEqual(failJson(out), {
@@ -758,7 +758,7 @@ describe('cli translate', () => {
     })
     // A program that does not check, at its position.
     const broken = tempFile('broken-export.alc', 'def export [input] (nope input)\n')
-    out = alchemy(['translate', '--from', 'json', '--to', 'yaml', '--with', broken, input])
+    out = dmog(['translate', '--from', 'json', '--to', 'yaml', '--with', broken, input])
     assert.equal(out.status, 2, out.stderr)
     const fail = failJson(out)
     assert.equal(fail.code, 'DSL_TYPE_ERROR')
@@ -779,7 +779,7 @@ describe('cli translate', () => {
       ['', 'json5_empty'],
       ['// c\n', 'json5_no_value'],
     ]) {
-      const out = alchemy(['translate', '--from', 'json5', '--to', 'json', '-'], input)
+      const out = dmog(['translate', '--from', 'json5', '--to', 'json', '-'], input)
       assert.equal(out.status, 1, out.stderr)
       assert.equal(out.stdout, '')
       assert.deepStrictEqual(failJson(out), {
@@ -788,12 +788,12 @@ describe('cli translate', () => {
         output: 'none',
       })
     }
-    let out = alchemy(['translate', '--from', 'json5', '--to', 'json', '-'], '// c\n{a:1}\n')
+    let out = dmog(['translate', '--from', 'json5', '--to', 'json', '-'], '// c\n{a:1}\n')
     assert.equal(out.status, 0, out.stderr)
     assert.equal(out.stdout, '{"a":1}\n')
     const deep = (n: number): string =>
       'syntax = "proto3";\n' + 'message M {'.repeat(n) + '}'.repeat(n) + '\n'
-    out = alchemy(['translate', '--from', 'proto', '--to', 'json', '-'], deep(101))
+    out = dmog(['translate', '--from', 'proto', '--to', 'json', '-'], deep(101))
     assert.equal(out.status, 1, out.stderr)
     assert.equal(out.stdout, '')
     assert.deepStrictEqual(failJson(out), {
@@ -801,7 +801,7 @@ describe('cli translate', () => {
       message: 'proto: document nests 101 levels deep, past the 100 this parser accepts',
       output: 'none',
     })
-    out = alchemy(['translate', '--from', 'abnf', '--to', 'json', '-'], 'a = "b" c\n')
+    out = dmog(['translate', '--from', 'abnf', '--to', 'json', '-'], 'a = "b" c\n')
     assert.equal(out.status, 1, out.stderr)
     assert.equal(out.stdout, '')
     assert.deepStrictEqual(failJson(out), {
@@ -820,7 +820,7 @@ describe('cli translate', () => {
       const next = (i + 1) % k
       cycle += `r${i} ::= r${next} "a${i}" | r${next} "b${i}" | "x${i}"\n`
     }
-    out = alchemy(['translate', '--from', 'gbnf', '--to', 'json', '-'], cycle)
+    out = dmog(['translate', '--from', 'gbnf', '--to', 'json', '-'], cycle)
     assert.equal(out.status, 1, out.stderr)
     assert.equal(out.stdout, '')
     assert.deepStrictEqual(failJson(out), {
@@ -841,7 +841,7 @@ describe('cli translate', () => {
   // that makes its tree; a grammar notation takes the others' too.
 
   it('translate refuses what a target declares it cannot carry', () => {
-    let out = alchemy(['translate', '--from', 'json', '--to', 'css', '/nonexistent/input.json'])
+    let out = dmog(['translate', '--from', 'json', '--to', 'css', '/nonexistent/input.json'])
     assert.equal(out.status, 1, out.stderr)
     assert.equal(out.stdout, '')
     assert.deepStrictEqual(failJson(out), {
@@ -851,7 +851,7 @@ describe('cli translate', () => {
         'one; a program that makes one can be composed with the render',
       output: 'none',
     })
-    out = alchemy(['translate', '--from', 'json', '--to', 'semver', '-'], '{"major":1,"minor":2}')
+    out = dmog(['translate', '--from', 'json', '--to', 'semver', '-'], '{"major":1,"minor":2}')
     assert.equal(out.status, 1, out.stderr)
     assert.equal(out.stdout, '')
     assert.deepStrictEqual(failJson(out), {
@@ -869,7 +869,7 @@ describe('cli translate', () => {
       ['abnf', 'grammar-spec'],
       ['c', 'c'],
     ]) {
-      out = alchemy(['translate', '--from', 'json', '--to', to, '-'], '{}')
+      out = dmog(['translate', '--from', 'json', '--to', to, '-'], '{}')
       assert.equal(out.status, 1, out.stderr)
       assert.equal(out.stdout, '')
       assert.deepStrictEqual(failJson(out), {
@@ -880,7 +880,7 @@ describe('cli translate', () => {
         output: 'none',
       })
     }
-    out = alchemy(['translate', '--from', 'abnf', '--to', 'ebnf', '-'], 'greet = "hi"\n')
+    out = dmog(['translate', '--from', 'abnf', '--to', 'ebnf', '-'], 'greet = "hi"\n')
     assert.equal(out.status, 1, out.stderr)
     assert.equal(out.stdout, '')
     assert.deepStrictEqual(failJson(out), {
@@ -915,7 +915,7 @@ describe('cli translate', () => {
       [['--from', 'ebnf', '--to', 'gbnf', '-'], 'top ::= "a" b\nb ::= "c"\n', 'root ::= top\ntop ::= "a" b\nb ::= "c"\n'],
       [['--from', 'abnf', '--to', 'ebnf', '-'], 'top = "a"\n', 'top ::= [aA]\n'],
     ] as Array<[string[], string, string]>) {
-      out = alchemy(['translate', ...args], stdin)
+      out = dmog(['translate', ...args], stdin)
       assert.equal(out.status, 0, `${args}: ${out.stderr}`)
       assert.equal(out.stdout, want, String(args))
       assert.equal(out.stderr, '', String(args))
@@ -933,7 +933,7 @@ describe('cli translate', () => {
       ['--from', 'json', '--to'],
       ['--from', 'json', '--to', 'yaml', '--render', 'json', input],
     ]) {
-      const out = alchemy(['translate', ...args])
+      const out = dmog(['translate', ...args])
       assert.equal(out.status, 2, String(args))
       assert.equal(out.stdout, '', String(args))
       assert.ok(failJson(out).message.startsWith('usage: '), out.stderr)
@@ -952,34 +952,34 @@ describe('cli translate', () => {
         '--max-output-bytes takes a number of bytes, not "many"',
       ],
     ] as Array<[string[], string]>) {
-      const out = alchemy(['translate', ...args])
+      const out = dmog(['translate', ...args])
       assert.equal(out.status, 2, String(args))
       assert.equal(out.stdout, '', String(args))
       assert.deepStrictEqual(failJson(out), { code: 'INPUT_INVALID', message, output: 'none' }, String(args))
     }
     // An input that cannot be read: status 2.
-    let out = alchemy(['translate', '--from', 'json', '--to', 'yaml', '/nonexistent/input.json'])
+    let out = dmog(['translate', '--from', 'json', '--to', 'yaml', '/nonexistent/input.json'])
     assert.equal(out.status, 2, out.stderr)
     assert.ok(failJson(out).message.startsWith('cannot read /nonexistent/input.json: '), out.stderr)
     // A document its grammar refuses: status 1, at the engine's position.
-    out = alchemy(['translate', '--from', 'json', '--to', 'yaml', '-'], '{"a":')
+    out = dmog(['translate', '--from', 'json', '--to', 'yaml', '-'], '{"a":')
     assert.equal(out.status, 1, out.stderr)
     assert.equal(out.stdout, '')
     let fail = failJson(out)
     assert.equal(fail.code, 'INPUT_INVALID')
     assert.deepStrictEqual([fail.row, fail.col], [1, 6])
-    out = alchemy(['translate', '--from', 'toml', '--to', 'json', input])
+    out = dmog(['translate', '--from', 'toml', '--to', 'json', input])
     assert.equal(out.status, 1, out.stderr)
     assert.deepStrictEqual([failJson(out).code, failJson(out).row, failJson(out).col], ['INPUT_INVALID', 1, 1])
     // An output past `--max-output-bytes`: status 5, the limit named, and
     // nothing written, since a translation is written once it has succeeded.
-    out = alchemy(['translate', '--from', 'json', '--to', 'yaml', '--max-output-bytes', '10', input])
+    out = dmog(['translate', '--from', 'json', '--to', 'yaml', '--max-output-bytes', '10', input])
     assert.equal(out.status, 5, out.stderr)
     assert.equal(out.stdout, '')
     fail = failJson(out)
     assert.equal(fail.code, 'RESOURCE_LIMIT_EXCEEDED')
     assert.deepStrictEqual(fail.limit, { name: 'max_output_bytes', value: 10 })
-    out = alchemy(['translate', '--from', 'json', '--to', 'yaml', '--max-output-bytes', '1000', input])
+    out = dmog(['translate', '--from', 'json', '--to', 'yaml', '--max-output-bytes', '1000', input])
     assert.equal(out.status, 0, out.stderr)
   })
 })

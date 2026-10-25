@@ -2,7 +2,7 @@
 
 package main
 
-// cli_test.go: the alchemy binary, built and run the way a script runs it
+// cli_test.go: the dmog binary, built and run the way a script runs it
 // (rs/tests/cli_test.rs): the five commands, standard input as -, the
 // statuses, and that nothing but the answer reaches standard output.
 //
@@ -29,12 +29,12 @@ import (
 var binary string
 
 func TestMain(m *testing.M) {
-	dir, err := os.MkdirTemp("", "alchemy-cli-")
+	dir, err := os.MkdirTemp("", "dmog-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	binary = filepath.Join(dir, "alchemy")
+	binary = filepath.Join(dir, "dmog")
 	args := []string{"build", "-o", binary}
 	if tt.AdapterBuilt() {
 		args = append(args, "-tags", "tabnas_nodecell")
@@ -42,7 +42,7 @@ func TestMain(m *testing.M) {
 	build := exec.Command("go", append(args, ".")...)
 	build.Stdout, build.Stderr = os.Stderr, os.Stderr
 	if err := build.Run(); err != nil {
-		fmt.Fprintln(os.Stderr, "the alchemy binary does not build:", err)
+		fmt.Fprintln(os.Stderr, "the dmog binary does not build:", err)
 		os.Exit(1)
 	}
 	code := m.Run()
