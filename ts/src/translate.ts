@@ -311,9 +311,9 @@ function descriptor(pkg: string, parts: Parts | undefined): Described | undefine
 
 // Every grammar package this command carries, with how its documents are
 // read: each one's default parser, as the Rust crate's `make()` builds it
-// (the relaxed grammars on jsonic's base) and as transduce's differential
-// suite reads it, or, where its parser's value is not yet the tree its
-// parts declare, the tree its own API reads a document as.
+// (the relaxed grammars on jsonic's base), or, where its parser's value is
+// not yet the tree its parts declare, the tree its own API reads a
+// document as.
 function packages(): Array<[Described | undefined, Reading]> {
   return [
     [descriptor('tabnas-abnf', abnfParts()), { tree: abnfTree }],

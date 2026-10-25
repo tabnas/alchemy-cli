@@ -2,24 +2,21 @@
 
 package e2e
 
-// differential_test.go: the differential test (rs/tests/stdlib_test.rs):
-// the standard library's own text, interpreted, against the native
-// compositions the runtime substitutes for it. Over every transduce
-// fixture a grammar these tests can read, and the generated documents
-// transduce's tests and benches share, the spec's worked-example program
-// produces the same bytes both ways, or fails with the same code. The
-// library text is the reference; the native path is the optimization, and
-// this is what makes it one.
-//
-// The native compositions render through render's renderers, and the
-// library's text through alchemy's own natives, so the bytes compared are
-// also alchemy's number text (its copy of render's formatter, for a number
-// without a lexeme) against render's. From alchemy's
-// go/differential_test.go; its TestTheLibraryLoads, which runs nothing,
-// stays in alchemy (go/stdlib_test.go).
+// stdlib_test.go: the standard library's text on transduce's routers and
+// render's renderers (rs/tests/stdlib_test.rs): the one implementation of
+// table-from-json and csv (the ruling of 2026-10-24: nothing native stands
+// in for the text), over every transduce fixture a grammar these tests can
+// read, the generated documents transduce's tests and benches share, and
+// the documents below. Where an oracle exists the text is held to it: the
+// spec's worked-example program writes the bytes transduce's table
+// transducer and render's CSV renderer write for the same binding, or
+// fails with their code, and the library's csv refuses what the renderer
+// refuses. The parts, transduce-tree and transduce-records, are
+// transduce_tree_test.go's.
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -30,6 +27,7 @@ import (
 	tabnasjson "github.com/tabnas/json/go"
 	tabnasjsonl "github.com/tabnas/jsonl/go"
 	tabnas "github.com/tabnas/parser/go"
+	tr "github.com/tabnas/render/go"
 	tt "github.com/tabnas/transduce/go"
 	tabnasyaml "github.com/tabnas/yaml/go"
 )
@@ -40,33 +38,59 @@ func replay(program *Program, events []tt.Event, render Renderer) (string, *Fail
 	return replayEvents(program, events, render, tt.DefaultLimits(), tt.NewMetrics())
 }
 
-// differential runs one document both ways: the same bytes, or the same
-// code.
-func differential(t testing.TB, name string, program *Program, events []tt.Event) string {
-	t.Helper()
-	slow := interpreted(t, program)
-	if !program.Native() || slow.Native() {
-		t.Fatalf("%s: native %v, interpreted %v", name, program.Native(), slow.Native())
+// recordsSelector is where the worked example's records are.
+func recordsSelector() tt.Selector {
+	return tt.Root().Property("response").Property("payload").Property("deep").Property("records").EachIndex()
+}
+
+// components is what the library's text is held to: transduce's table
+// transducer over the worked example's binding (its columns from the
+// metadata, or inferred from the first row) and render's CSV renderer in
+// its default dialect, the events replayed through the source's guard; the
+// bytes, or the failure.
+func components(events []tt.Event, limits tt.Limits, infer bool) (string, *Fail) {
+	var buffer bytes.Buffer
+	renderer, f := tr.NewCSVRenderer(tr.NewWriteOut(&buffer), tr.DefaultCSVOptions())
+	if f != nil {
+		return "", f
 	}
+	schema := tt.InferSchema()
+	if !infer {
+		schema = tt.MetadataSchema(tt.Root().Property("response").Property("metadata").Property("fields"), tt.ColumnFromMeta)
+	}
+	table, f := tt.NewTableFromJSON(tt.TableBinding{Schema: schema, Rows: recordsSelector()}, limits, tt.Reject, tt.NewMetrics(), renderer)
+	if f != nil {
+		return "", f
+	}
+	if _, f := tt.Replay(events, tt.NewGuarded(table, limits, tt.NewAbortFlag(), tt.NewMetrics())); f != nil {
+		return "", f
+	}
+	return buffer.String(), nil
+}
+
+// agreesWithComponents runs one document through the library's text and
+// through the components: the same bytes, or the same code; a report of
+// the difference otherwise.
+func agreesWithComponents(name string, program *Program, events []tt.Event, infer bool) string {
 	a, fa := replay(program, events, RenderDefault)
-	b, fb := replay(slow, events, RenderDefault)
+	b, fb := components(events, tt.DefaultLimits(), infer)
 	switch {
 	case fa == nil && fb == nil && a == b:
 		return ""
 	case fa == nil && fb == nil:
-		return fmt.Sprintf("%s: the bytes differ\n  native:      %q\n  interpreted: %q", name, a, b)
+		return fmt.Sprintf("%s: the bytes differ\n  text:       %q\n  components: %q", name, a, b)
 	case fa != nil && fb != nil && fa.Code == fb.Code:
 		return ""
 	case fa != nil && fb != nil:
-		return fmt.Sprintf("%s: the codes differ\n  native:      %v\n  interpreted: %v", name, fa, fb)
+		return fmt.Sprintf("%s: the codes differ\n  text:       %v\n  components: %v", name, fa, fb)
 	case fa == nil:
-		return fmt.Sprintf("%s: native produced %q, interpreted failed: %v", name, a, fb)
+		return fmt.Sprintf("%s: the text produced %q, the components failed: %v", name, a, fb)
 	}
-	return fmt.Sprintf("%s: interpreted produced %q, native failed: %v", name, b, fa)
+	return fmt.Sprintf("%s: the components produced %q, the text failed: %v", name, b, fa)
 }
 
-// testDocument is a document to compare: its name, the grammar that reads it,
-// its text.
+// testDocument is a document to compare: its name, the grammar that reads
+// it, its text.
 type testDocument struct {
 	name string
 	make func() *tabnas.Tabnas
@@ -85,8 +109,9 @@ func csvGrammar() *tabnas.Tabnas {
 }
 
 // Every transduce fixture a grammar here reads, plus the generated
-// documents in every shape: identical bytes or identical codes.
-func TestInterpretedAndNativeAgreeOnEveryFixtureAndGeneratedDocument(t *testing.T) {
+// documents in every shape: the text writes the components' bytes, or
+// fails with their code.
+func TestTheLibraryWritesWhatTheComponentsWriteForEveryFixtureAndGeneratedDocument(t *testing.T) {
 	program := mustCompile(t, workedExample, "export.alc")
 	var documents []testDocument
 	for _, path := range fixtures(t) {
@@ -130,7 +155,6 @@ func TestInterpretedAndNativeAgreeOnEveryFixtureAndGeneratedDocument(t *testing.
 		testDocument{"no metadata", jsonGrammar, `{"response":{"payload":{"deep":{"records":[` + record(1) + `]}}}}`},
 		testDocument{"no records", jsonGrammar, `{"response":{"metadata":` + metadata + `}}`},
 		testDocument{"metadata not an array", jsonGrammar, `{"response":{"metadata":{"fields":{}}}}`},
-		testDocument{"descriptor without title", jsonGrammar, `{"response":{"metadata":{"fields":[{"path":["a"]}]}}}`},
 		testDocument{"descriptor with a bad segment", jsonGrammar, `{"response":{"metadata":{"fields":[{"title":"a","path":[true]}]}}}`},
 		testDocument{"row that is not an object", jsonGrammar, shaped("1")},
 	)
@@ -139,20 +163,19 @@ func TestInterpretedAndNativeAgreeOnEveryFixtureAndGeneratedDocument(t *testing.
 	skipped := 0
 	for i, doc := range documents {
 		if i%10 == 0 {
-			t.Logf("differential: %d of %d (%d%%)", i, total, i*100/total)
+			t.Logf("sweep: %d of %d (%d%%)", i, total, i*100/total)
 		}
 		events, f := recordEvents(doc.make(), doc.text)
 		if f != nil {
-			// The grammar refused the document: nothing reached a
-			// program, so there is nothing to compare.
+			// The grammar refused the document: nothing reached a program.
 			skipped++
 			continue
 		}
-		if report := differential(t, doc.name, program, events); report != "" {
+		if report := agreesWithComponents(doc.name, program, events, false); report != "" {
 			failures = append(failures, report)
 		}
 	}
-	t.Logf("differential: %d of %d (100%%), %d unreadable", total, total, skipped)
+	t.Logf("sweep: %d of %d (100%%), %d unreadable", total, total, skipped)
 	if total-skipped <= 20 {
 		t.Errorf("only %d documents were read", total-skipped)
 	}
@@ -161,34 +184,46 @@ func TestInterpretedAndNativeAgreeOnEveryFixtureAndGeneratedDocument(t *testing.
 	}
 }
 
-// The same, with the JSON renderer over the table both ways (records then
-// json), and with a program whose options record changes the dialect the
-// native renderer takes.
-func TestInterpretedAndNativeAgreeOnOtherRenderings(t *testing.T) {
+// The other renderings the text offers: the table as records, rendered as
+// JSON (records then json), and a csv whose options record names another
+// dialect, which the text writes as named.
+func TestTheOtherRenderingsWriteAsTheirProgramsSay(t *testing.T) {
 	program := mustCompile(t, strings.Replace(workedExample, "    csv csv-options\n", "    records\n    json\n", 1), "records.alc")
 	dialect := mustCompile(t, strings.Replace(workedExample, "    csv csv-options\n",
 		"    csv options\n\ndef options\n  record\n    entry :delimiter \";\"\n    entry :newline \"\\n\"\n    entry :header false\n    entry :null-text \"NULL\"\n    entry :missing \"-\"\n", 1), "dialect.alc")
-	docs := []string{
-		recordsJSON(3),
-		`{"response":{"metadata":` + metadata + `,"payload":{"deep":{"records":[{"id":null,"person":{},"account":{"balance":"a;b"}}]}}}}`,
+	three := mustEvents(t, recordsJSON(3))
+	out, f := replay(program, three, RenderDefault)
+	if f != nil {
+		t.Fatal(f)
 	}
-	for i, doc := range docs {
-		events := mustEvents(t, doc)
-		for _, c := range []struct {
-			name    string
-			program *Program
-		}{{"records/json", program}, {"dialect", dialect}} {
-			if report := differential(t, fmt.Sprintf("%s %d", c.name, i), c.program, events); report != "" {
-				t.Error(report)
-			}
+	var rows []map[string]any
+	if err := json.Unmarshal([]byte(out), &rows); err != nil || len(rows) != 3 || rows[2]["Full name"] != "Person number 2" {
+		t.Errorf("%q %v", out, err)
+	}
+	csvOut, f := replay(dialect, three, RenderDefault)
+	if f != nil {
+		t.Fatal(f)
+	}
+	lines := strings.Split(strings.TrimSuffix(csvOut, "\n"), "\n")
+	if len(lines) != 3 {
+		t.Errorf("%q", csvOut)
+	}
+	for _, line := range lines {
+		if strings.Count(line, ";") != 2 {
+			t.Errorf("%q", csvOut)
 		}
 	}
-	if out, f := replay(dialect, mustEvents(t, docs[1]), RenderDefault); f != nil || out != "\"NULL\";\"-\";\"a;b\"\n" {
+	sparse := mustEvents(t, `{"response":{"metadata":`+metadata+`,"payload":{"deep":{"records":[{"id":null,"person":{},"account":{"balance":"a;b"}}]}}}}`)
+	if out, f := replay(dialect, sparse, RenderDefault); f != nil || out != "\"NULL\";\"-\";\"a;b\"\n" {
+		t.Errorf("%q %v", out, f)
+	}
+	// A missing cell is no member of the record.
+	if out, f := replay(program, sparse, RenderDefault); f != nil || out != "[{\"Identifier\":null,\"Balance\":\"a;b\"}]\n" {
 		t.Errorf("%q %v", out, f)
 	}
 }
 
-// outcome is what a run both ways must come to: the bytes, or the code.
+// outcome is what a run must come to: the bytes, or the code.
 type outcome struct {
 	ok   bool
 	out  string
@@ -198,47 +233,32 @@ type outcome struct {
 func okOut(out string) outcome  { return outcome{ok: true, out: out} }
 func errCode(code Code) outcome { return outcome{code: code} }
 
-// agree runs both ways to one outcome: the same bytes, or the same code and
-// the same limit named; expected is that outcome, and both ways count the
-// same rows.
-func agree(t testing.TB, name string, program *Program, events []tt.Event, limits tt.Limits, expected outcome) {
+// expect runs program over events under limits to one outcome: the bytes,
+// or the code.
+func expect(t testing.TB, name string, program *Program, events []tt.Event, limits tt.Limits, expected outcome) {
 	t.Helper()
-	slow := interpreted(t, program)
-	nativeRows, interpretedRows := tt.NewMetrics(), tt.NewMetrics()
-	a, fa := replayEvents(program, events, RenderDefault, limits, nativeRows)
-	b, fb := replayEvents(slow, events, RenderDefault, limits, interpretedRows)
+	out, f := replayEvents(program, events, RenderDefault, limits, tt.NewMetrics())
 	switch {
-	case fa == nil && fb == nil && expected.ok:
-		if a != expected.out || b != expected.out {
-			t.Errorf("%s:\n  native:      %q\n  interpreted: %q\n  want:        %q", name, a, b, expected.out)
+	case f == nil && expected.ok:
+		if out != expected.out {
+			t.Errorf("%s:\n  got:  %q\n  want: %q", name, out, expected.out)
 		}
-		if nativeRows.Rows.Load() != interpretedRows.Rows.Load() {
-			t.Errorf("%s: rows counted %d native, %d interpreted", name, nativeRows.Rows.Load(), interpretedRows.Rows.Load())
+	case f != nil && !expected.ok:
+		if f.Code != expected.code {
+			t.Errorf("%s: want %s, got %v", name, expected.code, f)
 		}
-	case fa != nil && fb != nil && !expected.ok:
-		if fa.Code != expected.code || fb.Code != expected.code {
-			t.Errorf("%s: want %s\n  native:      %v\n  interpreted: %v", name, expected.code, fa, fb)
-		}
-		la, lb := "", ""
-		if fa.Limit != nil {
-			la = fa.Limit.Name
-		}
-		if fb.Limit != nil {
-			lb = fb.Limit.Name
-		}
-		if la != lb {
-			t.Errorf("%s: the limit named: native %q, interpreted %q", name, la, lb)
-		}
+	case f == nil:
+		t.Errorf("%s: want %s, got %q", name, expected.code, out)
 	default:
-		t.Errorf("%s: expected %+v\n  native:      %q %v\n  interpreted: %q %v", name, expected, a, fa, b, fb)
+		t.Errorf("%s: want %q, got %v", name, expected.out, f)
 	}
 }
 
-// The library's csv validates the table events it renders as the native
+// The library's csv validates the table events it renders as render's CSV
 // renderer does (spec 13.2: the protocol validator is not omitted), so a
 // program that produces its own table events, or a document or an options
-// record the renderer refuses, fails with the same code both ways, and a
-// sound one prints the same bytes.
+// record the renderer refuses, fails with the renderer's code, and a sound
+// one prints the renderer's bytes.
 func TestTheLibraryCsvValidatesWhatTheRendererValidates(t *testing.T) {
 	items := mustEvents(t, `{"items":[{"n":"a","v":1},{"n":"b\"q","v":-2},{"n":"c","v":null}],"tail":"t"}`)
 	limits := tt.DefaultLimits()
@@ -272,36 +292,36 @@ func TestTheLibraryCsvValidatesWhatTheRendererValidates(t *testing.T) {
 		if f != nil {
 			t.Fatalf("%s: %v", c.name, f)
 		}
-		agree(t, c.name, program, items, limits, c.want)
+		expect(t, c.name, program, items, limits, c.want)
 	}
 
 	// The worked example over a document whose metadata is empty: a table
-	// of no columns has no CSV form, whichever path renders it.
+	// of no columns has no CSV form.
 	program := mustCompile(t, workedExample, "export.alc")
 	empty := mustEvents(t, `{"response":{"metadata":{"fields":[]},"payload":{"deep":{"records":[{"id":1}]}}}}`)
-	agree(t, "no columns", program, empty, limits, errCode(CodeTargetValueUnrepresentable))
+	expect(t, "no columns", program, empty, limits, errCode(CodeTargetValueUnrepresentable))
 
-	// A delimiter no CSV reader could take is refused before anything runs,
-	// natively (the renderer) and interpreted (csv-table).
+	// A delimiter no CSV reader could take is refused before anything runs
+	// (csv-table, as the renderer refuses it).
 	recordEventsList := mustEvents(t, records)
 	for _, delimiter := range []string{`\"`, `\n`, `\r`} {
 		src := strings.Replace(workedExample, "    csv csv-options\n",
 			"    csv (record (entry :delimiter \""+delimiter+"\") (entry :newline \"\\r\\n\") (entry :header true) (entry :null-text \"\") (entry :missing :error))\n", 1)
-		agree(t, "delimiter "+delimiter, mustCompile(t, src, "delimiter.alc"), recordEventsList, limits, errCode(CodeTargetValueUnrepresentable))
+		expect(t, "delimiter "+delimiter, mustCompile(t, src, "delimiter.alc"), recordEventsList, limits, errCode(CodeTargetValueUnrepresentable))
 	}
 
 	// A column function that answers something other than a record fails
-	// as get does, both ways.
+	// as get does.
 	keyword := mustCompile(t, "def b (record (entry :columns (path \"m\")) (entry :rows (path \"r\" each-index)) (entry :column (fn [d] :oops)))\ndef export [input] (csv csv-options (table-from-json b input))", "keyword.alc")
 	doc := mustEvents(t, `{"m":[{"title":"t","path":["a"]}],"r":[{"a":"x"}]}`)
-	agree(t, "a column that is a keyword", keyword, doc, limits, errCode(CodeDSLTypeError))
+	expect(t, "a column that is a keyword", keyword, doc, limits, errCode(CodeDSLTypeError))
 }
 
-// The library's table holds the scopes it captures to the limits the
-// native table does (the metadata under max_metadata_bytes, each row under
-// max_record_bytes, at most max_columns columns), so under the host's own
-// limits both ways fail alike or print alike, and count the same rows.
-func TestTheLimitsHoldAlikeBothWays(t *testing.T) {
+// The library's table holds the scopes it captures to the host's limits
+// (the metadata under max_metadata_bytes, each row under max_record_bytes,
+// at most max_columns columns), so under the host's own limits it fails
+// naming the limit, or prints, and counts its rows.
+func TestTheLimitsHold(t *testing.T) {
 	program := mustCompile(t, workedExample, "export.alc")
 	events := mustEvents(t, records)
 	with := func(change func(*tt.Limits)) tt.Limits {
@@ -320,18 +340,18 @@ func TestTheLimitsHoldAlikeBothWays(t *testing.T) {
 		{"max_columns", with(func(l *tt.Limits) { l.MaxColumns = 2 }), errCode(CodeResourceLimitExceeded)},
 		{"max_capture_bytes decides neither table", with(func(l *tt.Limits) { l.MaxCaptureBytes = 100 }), okOut(expectedCSV)},
 	} {
-		agree(t, c.name, program, events, c.limits, c.want)
+		expect(t, c.name, program, events, c.limits, c.want)
 	}
 	// A cell that is a vector is its compact JSON text, one scalar of the
-	// output, held to max_scalar_bytes both ways.
+	// output, held to max_scalar_bytes.
 	containers := mustEvents(t, strings.Replace(records, `"id":123`, `"id":[1,2,3,4,5,6]`, 1))
-	agree(t, "a container cell under max_scalar_bytes", program, containers,
+	expect(t, "a container cell under max_scalar_bytes", program, containers,
 		with(func(l *tt.Limits) { l.MaxScalarBytes = 12 }), errCode(CodeResourceLimitExceeded))
-	agree(t, "a container cell within it", program, containers,
+	expect(t, "a container cell within it", program, containers,
 		with(func(l *tt.Limits) { l.MaxScalarBytes = 13 }),
 		okOut("\"Identifier\",\"Full name\",\"Balance\"\r\n\"[1,2,3,4,5,6]\",\"Alice\",\"50.25\"\r\n\"456\",\"Bob\",\"72\"\r\n"))
 	metrics := tt.NewMetrics()
-	if _, f := replayEvents(interpreted(t, program), events, RenderDefault, tt.DefaultLimits(), metrics); f != nil {
+	if _, f := replayEvents(program, events, RenderDefault, tt.DefaultLimits(), metrics); f != nil {
 		t.Fatal(f)
 	}
 	if metrics.Rows.Load() != 2 {
@@ -344,17 +364,17 @@ func TestTheLimitsHoldAlikeBothWays(t *testing.T) {
 const inferred = "def options\n  record\n    entry :delimiter \",\"\n    entry :newline \"\\r\\n\"\n    entry :header true\n    entry :null-text \"\"\n    entry :missing \"\"\n\ndef rows-binding\n  record\n    entry :columns :infer\n    entry :rows (path each-index)\n\ndef export [input]\n  pipe input\n    table-from-json rows-binding\n    csv options\n"
 
 // The inferred binding: the columns are the first row's keys, in its
-// order, each reading its own key. Natively it is transduce's InferSchema;
-// the library's text infers them with keys. Both ways write the same
-// bytes, fail with the same code, and hold the same limits, over every
-// shape a first row and a later row can take.
-func TestAnInferredBindingAgreesBothWays(t *testing.T) {
+// order, each reading its own key; the library's text infers them with
+// keys, over every shape a first row and a later row can take, and holds
+// them to the limits. Over the worked example's documents it writes what
+// transduce's InferSchema and render's CSV renderer write.
+func TestAnInferredBindingInfersTheFirstRowsColumns(t *testing.T) {
 	program := mustCompile(t, inferred, "inferred.alc")
 	ok := func(name, text, want string) {
-		agree(t, name, program, mustEvents(t, text), tt.DefaultLimits(), okOut(want))
+		expect(t, name, program, mustEvents(t, text), tt.DefaultLimits(), okOut(want))
 	}
 	fails := func(name, text string, code Code) {
-		agree(t, name, program, mustEvents(t, text), tt.DefaultLimits(), errCode(code))
+		expect(t, name, program, mustEvents(t, text), tt.DefaultLimits(), errCode(code))
 	}
 	ok("the first row's keys, in its order", `[{"b":1,"a":"x"},{"a":"y","b":2}]`, "\"b\",\"a\"\r\n\"1\",\"x\"\r\n\"2\",\"y\"\r\n")
 	ok("a key a later row lacks is a missing cell", `[{"a":1,"b":2},{"a":3}]`, "\"a\",\"b\"\r\n\"1\",\"2\"\r\n\"3\",\"\"\r\n")
@@ -380,11 +400,11 @@ func TestAnInferredBindingAgreesBothWays(t *testing.T) {
 		change(&l)
 		return l
 	}
-	agree(t, "max_columns holds the inferred columns", program, three, with(func(l *tt.Limits) { l.MaxColumns = 2 }), errCode(CodeResourceLimitExceeded))
-	// Three one-byte names take 16 + 3 * (16 + 1) = 67 bytes natively; the
-	// library's state holding them is larger still.
-	agree(t, "max_metadata_bytes holds the inferred columns", program, three, with(func(l *tt.Limits) { l.MaxMetadataBytes = 40 }), errCode(CodeResourceLimitExceeded))
-	agree(t, "max_record_bytes holds each row", program, three, with(func(l *tt.Limits) { l.MaxRecordBytes = 8 }), errCode(CodeResourceLimitExceeded))
+	expect(t, "max_columns holds the inferred columns", program, three, with(func(l *tt.Limits) { l.MaxColumns = 2 }), errCode(CodeResourceLimitExceeded))
+	// Three one-byte names take 16 + 3 * (16 + 1) = 67 bytes as the labels'
+	// array; the library's state holding them is larger still.
+	expect(t, "max_metadata_bytes holds the inferred columns", program, three, with(func(l *tt.Limits) { l.MaxMetadataBytes = 40 }), errCode(CodeResourceLimitExceeded))
+	expect(t, "max_record_bytes holds each row", program, three, with(func(l *tt.Limits) { l.MaxRecordBytes = 8 }), errCode(CodeResourceLimitExceeded))
 	// The column count holds where the schema is built, so it holds when
 	// the table events reach no renderer that would check them.
 	for _, c := range []struct{ name, binding string }{
@@ -396,25 +416,23 @@ func TestAnInferredBindingAgreesBothWays(t *testing.T) {
 		if !strings.HasPrefix(c.name, "an inferred") {
 			events = mustEvents(t, `{"m":["a","b","c"],"r":[{"a":1,"b":2,"c":3}]}`)
 		}
-		agree(t, c.name, items, events, with(func(l *tt.Limits) { l.MaxColumns = 2 }), errCode(CodeResourceLimitExceeded))
-		agree(t, c.name, items, events, tt.DefaultLimits(), okOut("xxx"))
+		expect(t, c.name, items, events, with(func(l *tt.Limits) { l.MaxColumns = 2 }), errCode(CodeResourceLimitExceeded))
+		expect(t, c.name, items, events, tt.DefaultLimits(), okOut("xxx"))
 	}
 	// The worked example's documents, bound by inference from their rows.
 	api := mustCompile(t, strings.Replace(inferred, "(path each-index)", "(path \"response\" \"payload\" \"deep\" \"records\" each-index)", 1), "inferred-api.alc")
 	for _, n := range []int{0, 1, 2, 3, 50} {
-		if report := differential(t, fmt.Sprintf("records_json(%d)", n), api, mustEvents(t, recordsJSON(n))); report != "" {
+		if report := agreesWithComponents(fmt.Sprintf("records_json(%d)", n), api, mustEvents(t, recordsJSON(n)), true); report != "" {
 			t.Error(report)
 		}
 	}
 }
 
 // Each row counts once in metrics.Rows, by the last table stage it passes:
-// the adapter to a renderer, a csv-table whose rows reach no later table
-// stage, or the native table when it hands its rows straight to a
-// renderer. A map, a filter or a scan-emit between two table stages hands
-// the count on, so a row a filter drops is never counted, and rows that
-// only ever become a text of items are not rows of any table; natively and
-// interpreted alike, with the same bytes.
+// the adapter to a renderer, or a csv-table whose rows reach no later
+// table stage. A map, a filter or a scan-emit between two table stages
+// hands the count on, so a row a filter drops is never counted, and rows
+// that only ever become a text of items are not rows of any table.
 func TestEachRowCountsOnceAcrossComposedTableStages(t *testing.T) {
 	tail := func(s string) string { return strings.Replace(workedExample, "    csv csv-options\n", s, 1) }
 	identity := "    map (fn [e] e)\n"
@@ -434,7 +452,7 @@ func TestEachRowCountsOnceAcrossComposedTableStages(t *testing.T) {
 		{"csv over csv-table", tail("    csv-table csv-options\n    csv csv-options\n"), RenderDefault, 2},
 		{"records over csv-table", tail("    csv-table csv-options\n    records\n    json\n"), RenderDefault, 2},
 		{"csv-table twice", tail("    csv-table csv-options\n    csv-table csv-options\n    csv csv-options\n"), RenderDefault, 2},
-		{"the library csv over the native table", tail("    csv opts\n\ndef opts\n  record\n    entry :delimiter \"||\"\n    entry :newline \"\\r\\n\"\n    entry :header true\n    entry :null-text \"\"\n    entry :missing :error\n"), RenderDefault, 2},
+		{"the library csv with its own dialect", tail("    csv opts\n\ndef opts\n  record\n    entry :delimiter \"||\"\n    entry :newline \"\\r\\n\"\n    entry :header true\n    entry :null-text \"\"\n    entry :missing :error\n"), RenderDefault, 2},
 		{"a map, then the program's csv", tail(identity + "    csv csv-options\n"), RenderDefault, 2},
 		{"a map, csv-table, csv", tail(identity + "    csv-table csv-options\n    csv csv-options\n"), RenderDefault, 2},
 		{"csv-table, a map, csv", tail("    csv-table csv-options\n" + identity + "    csv csv-options\n"), RenderDefault, 2},
@@ -448,49 +466,45 @@ func TestEachRowCountsOnceAcrossComposedTableStages(t *testing.T) {
 		{"csv-table's events as a text", tail("    csv-table csv-options\n" + asText), RenderDefault, 2},
 	} {
 		program := mustCompile(t, c.src, "rows.alc")
-		var outputs []string
-		for _, native := range []bool{true, false} {
-			p, f := program.WithNative(native)
-			if f != nil {
-				t.Fatal(f)
-			}
-			metrics := tt.NewMetrics()
-			out, f := replayEvents(p, events, c.render, tt.DefaultLimits(), metrics)
-			if f != nil {
-				t.Fatalf("%s (native %v): %v", c.name, native, f)
-			}
-			if metrics.Rows.Load() != c.rows {
-				t.Errorf("%s (native %v): %d rows counted, want %d", c.name, native, metrics.Rows.Load(), c.rows)
-			}
-			outputs = append(outputs, out)
+		metrics := tt.NewMetrics()
+		if _, f := replayEvents(program, events, c.render, tt.DefaultLimits(), metrics); f != nil {
+			t.Fatalf("%s: %v", c.name, f)
 		}
-		if outputs[0] != outputs[1] {
-			t.Errorf("%s: the bytes differ\n  %q\n  %q", c.name, outputs[0], outputs[1])
+		if metrics.Rows.Load() != c.rows {
+			t.Errorf("%s: %d rows counted, want %d", c.name, metrics.Rows.Load(), c.rows)
 		}
 	}
 }
 
-// The two paths differ, knowingly, in one place the standard shapes never
-// reach; pinned so a change to either is seen.
-func TestTheKnownDifferencesArePinned(t *testing.T) {
-	// Metadata selected twice: the native transducer calls it an order
-	// violation (a table has one schema); the library text says fail,
-	// which is INPUT_INVALID.
+// Where the text and the components answer apart, pinned so a change to
+// either is seen. Metadata selected twice is the text's own refusal, fail,
+// which is INPUT_INVALID, where transduce's table transducer calls the
+// same document an order violation, a table having one schema. A
+// descriptor without a title is a column without a label to the text's
+// column-from-meta, which the table refuses as a missing value, where
+// transduce's ColumnFromMeta refuses the descriptor itself. The standard
+// shapes reach neither. And a numeric title renders by its lexeme, one
+// label policy serving every table.
+func TestWhereTheTextAndTheComponentsAnswerApart(t *testing.T) {
 	twice := mustCompile(t, strings.Replace(workedExample, "      path \"response\" \"metadata\" \"fields\"\n", "      path \"response\" \"metadata\" each-index\n", 1), "twice.alc")
 	doc := `{"response":{"metadata":[[{"title":"a","path":["id"]}],[{"title":"b","path":["id"]}]],"payload":{"deep":{"records":[` + record(1) + `]}}}}`
 	events := mustEvents(t, doc)
-	if _, f := replay(twice, events, RenderDefault); f == nil || f.Code != CodeInputOrderViolation {
-		t.Errorf("native: %v", f)
+	if _, f := replay(twice, events, RenderDefault); f == nil || f.Code != CodeInputInvalid {
+		t.Errorf("text: %v", f)
 	}
-	if _, f := replay(interpreted(t, twice), events, RenderDefault); f == nil || f.Code != CodeInputInvalid {
-		t.Errorf("interpreted: %v", f)
+	if _, f := components(events, tt.DefaultLimits(), false); f == nil || f.Code != CodeInputOrderViolation {
+		t.Errorf("components: %v", f)
 	}
-	// A numeric title was a second difference; one label policy now serves
-	// every table (a string as it is, a number by its lexeme, a boolean by
-	// its name), so both ways render the lexeme.
 	program := mustCompile(t, workedExample, "export.alc")
+	untitled := mustEvents(t, `{"response":{"metadata":{"fields":[{"path":["a"]}]}}}`)
+	if _, f := replay(program, untitled, RenderDefault); f == nil || f.Code != CodeMissingValue {
+		t.Errorf("text: %v", f)
+	}
+	if _, f := components(untitled, tt.DefaultLimits(), false); f == nil || f.Code != CodeInputInvalid {
+		t.Errorf("components: %v", f)
+	}
 	numeric := mustEvents(t, `{"response":{"metadata":{"fields":[{"title":42,"path":["id"]}]},"payload":{"deep":{"records":[`+record(1)+`]}}}}`)
-	agree(t, "a numeric title", program, numeric, tt.DefaultLimits(), okOut("\"42\"\r\n\"1\"\r\n"))
+	expect(t, "a numeric title", program, numeric, tt.DefaultLimits(), okOut("\"42\"\r\n\"1\"\r\n"))
 }
 
 // The events end with End, as every source promises; a recording that
@@ -503,28 +517,22 @@ func TestAStreamWithoutEndWritesNothing(t *testing.T) {
 		t.Fatalf("the recording ends with %v", last)
 	}
 	events = events[:len(events)-1]
-	for _, native := range []bool{true, false} {
-		p, f := program.WithNative(native)
-		if f != nil {
-			t.Fatal(f)
-		}
-		var buffer bytes.Buffer
-		sink, f := p.Sink(&buffer, RenderDefault, tt.DefaultLimits(), tt.NewMetrics())
-		if f != nil {
-			t.Fatal(f)
-		}
-		if _, f := tt.Replay(events, sink); f != nil {
-			t.Fatal(f)
-		}
-		if buffer.Len() != 0 {
-			t.Errorf("native %v: %q before the end", native, buffer.String())
-		}
-		// And the End then completes it.
-		if _, f := sink.Event(tt.EvEnd()); f != nil {
-			t.Fatal(f)
-		}
-		if buffer.Len() == 0 {
-			t.Errorf("native %v: nothing after the end", native)
-		}
+	var buffer bytes.Buffer
+	sink, f := program.Sink(&buffer, RenderDefault, tt.DefaultLimits(), tt.NewMetrics())
+	if f != nil {
+		t.Fatal(f)
+	}
+	if _, f := tt.Replay(events, sink); f != nil {
+		t.Fatal(f)
+	}
+	if buffer.Len() != 0 {
+		t.Errorf("%q before the end", buffer.String())
+	}
+	// And the End then completes it.
+	if _, f := sink.Event(tt.EvEnd()); f != nil {
+		t.Fatal(f)
+	}
+	if buffer.Len() == 0 {
+		t.Error("nothing after the end")
 	}
 }

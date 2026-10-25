@@ -27,11 +27,11 @@ const EXPECTED_CSV: &str =
 /// The spec's program: sections 12.1 and 13.4.
 const PROGRAM: &str = "def column-from-meta [source]\n  record\n    entry :label (get \"title\" source)\n    entry :source\n      as-path\n        get \"path\" source\n\ndef api-binding\n  record\n    entry :columns\n      path \"response\" \"metadata\" \"fields\"\n    entry :rows\n      path \"response\" \"payload\" \"deep\" \"records\" each-index\n    entry :column column-from-meta\n\ndef api-table [input]\n  table-from-json api-binding input\n\ndef export [input]\n  pipe input\n    api-table\n    csv csv-options\n";
 
-fn runtime(src: &str, native: bool) -> Arc<Runtime> {
+fn runtime(src: &str) -> Arc<Runtime> {
     let forms = desugar::program(parse_file(src, "t.alc").unwrap(), src).unwrap();
     let sources = Sources::one("t.alc", src);
     let resolved = resolve(forms, &sources, &stdlib::outer).unwrap();
-    Arc::new(Runtime::new(Arc::new(resolved), sources).with_native(native))
+    Arc::new(Runtime::new(Arc::new(resolved), sources))
 }
 
 /// A writer the test keeps a handle on after the sink took it.
@@ -52,8 +52,8 @@ impl std::io::Write for Shared {
 /// Run `src` over the JSON `input`, read as `alchemy run` reads its
 /// input, lowered through transduce's routers and render's renderers; the
 /// output bytes, or the failure.
-fn run(src: &str, input: &str, native: bool, render: Option<Renderer>) -> Result<String, Fail> {
-    let rt = runtime(src, native);
+fn run(src: &str, input: &str, render: Option<Renderer>) -> Result<String, Fail> {
+    let rt = runtime(src);
     let result = rt.export()?;
     let limits = Limits::default();
     let metrics = Metrics::new();
@@ -71,55 +71,37 @@ mod lower {
     use tabnas_alchemy::shared::Code;
 
     #[test]
-    fn the_worked_example_through_the_interpreted_library() {
-        assert_eq!(run(PROGRAM, RECORDS, false, None).unwrap(), EXPECTED_CSV);
-    }
-
-    #[test]
-    fn the_worked_example_through_the_native_path() {
-        assert_eq!(run(PROGRAM, RECORDS, true, None).unwrap(), EXPECTED_CSV);
+    fn the_worked_example_through_the_library() {
+        assert_eq!(run(PROGRAM, RECORDS, None).unwrap(), EXPECTED_CSV);
     }
 
     #[test]
     fn json_echoes_the_input_with_its_lexemes() {
         let echo = "def export [input] (json input)";
-        assert_eq!(
-            run(echo, RECORDS, true, None).unwrap(),
-            format!("{RECORDS}\n")
-        );
-        assert_eq!(
-            run(echo, "[1.50, 1e2]", false, None).unwrap(),
-            "[1.50,1e2]\n"
-        );
+        assert_eq!(run(echo, RECORDS, None).unwrap(), format!("{RECORDS}\n"));
+        assert_eq!(run(echo, "[1.50, 1e2]", None).unwrap(), "[1.50,1e2]\n");
     }
 
     #[test]
     fn select_map_and_concat_map_stream_items() {
         let src = "def export [input]\n  pipe input\n    select (path \"a\" each-index)\n    map (fn [x] (get :n x))\n    concat-map (fn [n] (concat (scalar-text csv-options n) \";\"))";
         assert_eq!(
-            run(src, r#"{"a":[{"n":1},{"n":2.50}],"b":3}"#, false, None).unwrap(),
+            run(src, r#"{"a":[{"n":1},{"n":2.50}],"b":3}"#, None).unwrap(),
             "1;2.50;"
         );
         let joined = "def export [input]\n  join \",\"\n    map (fn [x] (get :n x)) (select (path \"a\" each-index) input)";
         assert_eq!(
-            run(
-                joined,
-                r#"{"a":[{"n":"x"},{"n":""},{"n":"y"}]}"#,
-                false,
-                None
-            )
-            .unwrap(),
+            run(joined, r#"{"a":[{"n":"x"},{"n":""},{"n":"y"}]}"#, None).unwrap(),
             "x,,y"
         );
         let framed = "def export [input]\n  concat\n    \"[\"\n    join \",\" (select (path each-index) input)\n    \"]\"\n    (text \"!\")";
-        assert_eq!(run(framed, r#"["a","b"]"#, false, None).unwrap(), "[a,b]!");
-        assert_eq!(run(framed, "[]", false, None).unwrap(), "[]!");
+        assert_eq!(run(framed, r#"["a","b"]"#, None).unwrap(), "[a,b]!");
+        assert_eq!(run(framed, "[]", None).unwrap(), "[]!");
         let filtered = "def export [input]\n  join \"|\"\n    filter (fn [x] (get :keep x)) (select (path each-index) input)";
         assert_eq!(
             run(
                 "def export [input]\n  concat-map (fn [x] (get :v x))\n    filter (fn [x] (get :keep x)) (select (path each-index) input)",
                 r#"[{"keep":true,"v":"a"},{"keep":false,"v":"b"},{"keep":true,"v":"c"}]"#,
-                false,
                 None
             )
             .unwrap(),
@@ -131,16 +113,13 @@ mod lower {
     #[test]
     fn replace_text_over_a_live_text_crosses_fragments() {
         let src = "def export [input]\n  replace-text \"ab\" \"X\"\n    concat-map (fn [s] s) (select (path each-index) input)";
-        assert_eq!(
-            run(src, r#"["a","b","zab","a"]"#, false, None).unwrap(),
-            "XzXa"
-        );
+        assert_eq!(run(src, r#"["a","b","zab","a"]"#, None).unwrap(), "XzXa");
     }
 
     #[test]
     fn a_finite_text_result_is_written_at_the_end() {
         assert_eq!(
-            run("def export [input] \"done\"", "1", false, None).unwrap(),
+            run("def export [input] \"done\"", "1", None).unwrap(),
             "done"
         );
     }
@@ -152,31 +131,25 @@ mod lower {
                 "def export [input]\n  pipe input\n    api-table\n    csv csv-options\n",
                 "",
             );
-        assert_eq!(run(&table, RECORDS, true, None).unwrap(), EXPECTED_CSV);
+        assert_eq!(run(&table, RECORDS, None).unwrap(), EXPECTED_CSV);
         assert_eq!(
-            run(&table, RECORDS, false, Some(Renderer::Csv)).unwrap(),
+            run(&table, RECORDS, Some(Renderer::Csv)).unwrap(),
             EXPECTED_CSV
         );
         let json = r#"[{"Identifier":123,"Full name":"Alice","Balance":50.25},{"Identifier":456,"Full name":"Bob","Balance":72}]"#;
         assert_eq!(
-            run(&table, RECORDS, true, Some(Renderer::Json)).unwrap(),
+            run(&table, RECORDS, Some(Renderer::Json)).unwrap(),
             format!("{json}\n")
         );
         assert_eq!(
-            run(&table, RECORDS, false, Some(Renderer::Json)).unwrap(),
+            run(&table, RECORDS, Some(Renderer::Json)).unwrap(),
             format!("{json}\n")
         );
         let echo = "def export [input] input";
-        assert_eq!(run(echo, "[1]", true, None).unwrap(), "[1]\n");
-        let f = run(echo, "[1]", true, Some(Renderer::Csv)).unwrap_err();
+        assert_eq!(run(echo, "[1]", None).unwrap(), "[1]\n");
+        let f = run(echo, "[1]", Some(Renderer::Csv)).unwrap_err();
         assert!(f.message.starts_with("protocol_mismatch: "), "{f}");
-        let f = run(
-            "def export [input] (json input)",
-            "1",
-            true,
-            Some(Renderer::Json),
-        )
-        .unwrap_err();
+        let f = run("def export [input] (json input)", "1", Some(Renderer::Json)).unwrap_err();
         assert!(f.message.starts_with("render_of_text: "), "{f}");
     }
 
@@ -184,28 +157,18 @@ mod lower {
     fn records_of_a_table_round_trips_through_json() {
         let src = PROGRAM.replace("    csv csv-options\n", "    records\n    json\n");
         let json = r#"[{"Identifier":123,"Full name":"Alice","Balance":50.25},{"Identifier":456,"Full name":"Bob","Balance":72}]"#;
-        assert_eq!(run(&src, RECORDS, true, None).unwrap(), format!("{json}\n"));
-        assert_eq!(
-            run(&src, RECORDS, false, None).unwrap(),
-            format!("{json}\n")
-        );
+        assert_eq!(run(&src, RECORDS, None).unwrap(), format!("{json}\n"));
+        assert_eq!(run(&src, RECORDS, None).unwrap(), format!("{json}\n"));
     }
 
     #[test]
     fn protocol_mismatches_are_named() {
-        let f = run(
-            "def export [input] (csv csv-options input)",
-            "1",
-            true,
-            None,
-        )
-        .unwrap_err();
+        let f = run("def export [input] (csv csv-options input)", "1", None).unwrap_err();
         assert_eq!(f.code, Code::DslTypeError);
         assert!(f.message.starts_with("protocol_mismatch: "), "{f}");
         let f = run(
             "def export [input] (json (select (path each-index) input))",
             "[1]",
-            true,
             None,
         )
         .unwrap_err();
@@ -213,7 +176,6 @@ mod lower {
         let f = run(
             "def export [input] (concat-map (fn [x] x) input)",
             "[1]",
-            true,
             None,
         )
         .unwrap_err();
@@ -247,26 +209,19 @@ mod effects {
     use serde_json::Value as Json;
     use tabnas_alchemy::effects::explain_json;
 
-    /// The CSV renderer is reported with the dialect it is built with: the
-    /// program's own options when its `csv` runs natively, the defaults when
-    /// the host renders a table; and what it reports is what it writes.
+    /// A program's own `csv` is the library's text, and the report says so:
+    /// the renderer is the text's own, and what the text writes is the
+    /// dialect its options record names. The host's renderer, for a table
+    /// result, is reported with the defaults it is built with.
     #[test]
-    fn a_custom_csv_dialect_is_reported_as_it_runs() {
+    fn a_programs_own_csv_renders_as_text_and_the_host_renderer_reports_the_defaults() {
         let lf = PROGRAM.replace("    csv csv-options\n", "    csv lf\n")
             + "\ndef lf (record (entry :delimiter \";\") (entry :newline \"\\n\") (entry :header false) (entry :null-text \"NULL\") (entry :missing \"-\"))\n";
         let program = compile(&lf, "lf.alc").unwrap();
-        assert!(program.native());
         let r = &explain_json(&program)["renderer"];
-        assert_eq!(r["name"], "csv");
-        assert_eq!(r["host"], false);
-        assert_eq!(r["newline"], "\n");
-        assert_eq!(r["header"], false);
-        assert_eq!(r["delimiter"], ";");
-        assert_eq!(r["null_text"], "NULL");
-        assert_eq!(r["missing"], "text");
-        assert_eq!(r["missing_text"], "-");
+        assert_eq!(r["name"], "text");
         assert_eq!(
-            run(&lf, RECORDS, true, None).unwrap(),
+            run(&lf, RECORDS, None).unwrap(),
             "\"123\";\"Alice\";\"50.25\"\n\"456\";\"Bob\";\"72\"\n"
         );
         // The null and missing texts reach the output as reported: a
@@ -277,22 +232,22 @@ mod effects {
         );
         assert_ne!(sparse, RECORDS);
         assert_eq!(
-            run(&lf, &sparse, true, None).unwrap(),
+            run(&lf, &sparse, None).unwrap(),
             "\"123\";\"Alice\";\"50.25\"\n\"456\";\"NULL\";\"-\"\n"
         );
-        // The default dialect, and the host's renderer, report the defaults.
+        // The default dialect is the text's too; the host's renderer reports
+        // the defaults it is built with.
         let default = compile(PROGRAM, "export.alc").unwrap();
+        assert_eq!(explain_json(&default)["renderer"]["name"], "text");
         let host = compile(&PROGRAM.replace("    csv csv-options\n", ""), "host.alc").unwrap();
-        for (name, program, is_host) in [("default", default, false), ("host", host, true)] {
-            let r = &explain_json(&program)["renderer"];
-            assert_eq!(r["name"], "csv", "{name}");
-            assert_eq!(r["host"], is_host, "{name}");
-            assert_eq!(r["delimiter"], ",", "{name}");
-            assert_eq!(r["newline"], "\r\n", "{name}");
-            assert_eq!(r["header"], true, "{name}");
-            assert_eq!(r["null_text"], "", "{name}");
-            assert_eq!(r["missing"], "error", "{name}");
-            assert_eq!(r["missing_text"], Json::Null, "{name}");
-        }
+        let r = &explain_json(&host)["renderer"];
+        assert_eq!(r["name"], "csv");
+        assert_eq!(r["host"], true);
+        assert_eq!(r["delimiter"], ",");
+        assert_eq!(r["newline"], "\r\n");
+        assert_eq!(r["header"], true);
+        assert_eq!(r["null_text"], "");
+        assert_eq!(r["missing"], "error");
+        assert_eq!(r["missing_text"], Json::Null);
     }
 }

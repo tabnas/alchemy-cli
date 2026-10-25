@@ -161,25 +161,10 @@ func (o runOutcome) String() string {
 	return fmt.Sprintf("Ok(%q)", o.out)
 }
 
-func (o runOutcome) agrees(other runOutcome) bool {
-	switch {
-	case o.fail == nil && other.fail == nil:
-		return o.out == other.out
-	case o.fail != nil && other.fail != nil:
-		return runCode(o.fail) == runCode(other.fail) &&
-			o.fail.Row == other.fail.Row && o.fail.Column == other.fail.Column
-	}
-	return false
-}
-
-// runBoth compiles program and runs it over doc as `alchemy run` does: the
-// document read through JSON's transducer part, with the default limits;
-// the standard compositions native or through the library's text.
-func runBoth(program, doc string, render Renderer, native bool) runOutcome {
+// runOne compiles program and runs it over doc as `alchemy run` does: the
+// document read through JSON's transducer part, with the default limits.
+func runOne(program, doc string, render Renderer) runOutcome {
 	compiled, f := Compile(program, "run", routers, renderers)
-	if f == nil && !native {
-		compiled, f = compiled.WithNative(false)
-	}
 	if f != nil {
 		return runOutcome{fail: f}
 	}
@@ -204,10 +189,7 @@ func driveRun(program *Program, doc string, render Renderer, limits tt.Limits, m
 }
 
 // TestSpecRun runs run.tsv: a program run over a JSON document, the bytes
-// it writes or the failure. Every row runs twice, with the standard
-// compositions native and through the library's text, and the two must
-// agree to the byte, or on the failure's code and position: a row whose
-// two paths differ fails whatever its expected cell says.
+// it writes or the failure.
 func TestSpecRun(t *testing.T) {
 	spec, err := support.LoadSpec(filepath.Join(specDir(t), "run.tsv"), nil)
 	if err != nil {
@@ -221,16 +203,11 @@ func TestSpecRun(t *testing.T) {
 	}
 	r := support.Runner{
 		ParseRow: func(input string, row *support.Row) (any, error) {
-			doc, render := runDoc(row), runRender(t, row)
-			native := runBoth(input, doc, render, true)
-			interpreted := runBoth(input, doc, render, false)
-			if !native.agrees(interpreted) {
-				return nil, fmt.Errorf("native and interpreted runs disagree:\n  native:      %s\n  interpreted: %s", native, interpreted)
+			o := runOne(input, runDoc(row), runRender(t, row))
+			if o.fail != nil {
+				return nil, asErr(o.fail)
 			}
-			if native.fail != nil {
-				return nil, asErr(native.fail)
-			}
-			return native.out, nil
+			return o.out, nil
 		},
 		ErrorCode: func(err error) string {
 			if f, ok := failOf(err); ok {
@@ -258,8 +235,7 @@ func TestSpecRun(t *testing.T) {
 // rowFailures is what a row's program meets, as the runners above meet it:
 // the reader's (reader.tsv), the desugarer's (pipe.tsv), compile's
 // (check.tsv, over the input its protocol column declares: empty for JSON
-// events, parser for the parser's rule passes), or a run's on both paths
-// (run.tsv).
+// events, parser for the parser's rule passes), or a run's (run.tsv).
 func rowFailures(t *testing.T, file string, row *support.Row) (fails []*Fail) {
 	input := row.Unesc(0)
 	var f *Fail
@@ -280,18 +256,13 @@ func rowFailures(t *testing.T, file string, row *support.Row) (fails []*Fail) {
 		_, f = checkRow(input, declared)
 	case "transduce.tsv":
 		grammar, render, duplicates := transduceGrammar(t, row), runRender(t, row), runDuplicates(t, row)
-		for _, native := range []bool{true, false} {
-			if _, o := runTransduce(input, grammar, row.UnescNamed("doc"), render, duplicates, native); o.fail != nil {
-				fails = append(fails, o.fail)
-			}
+		if _, o := runTransduce(input, grammar, row.UnescNamed("doc"), render, duplicates); o.fail != nil {
+			fails = append(fails, o.fail)
 		}
 		return fails
 	default:
-		render := runRender(t, row)
-		for _, native := range []bool{true, false} {
-			if o := runBoth(input, runDoc(row), render, native); o.fail != nil {
-				fails = append(fails, o.fail)
-			}
+		if o := runOne(input, runDoc(row), runRender(t, row)); o.fail != nil {
+			fails = append(fails, o.fail)
 		}
 		return fails
 	}
@@ -518,12 +489,9 @@ func transduceGrammar(t testing.TB, row *support.Row) *translate.Format {
 // over doc, parsed with grammar, as `alchemy run --grammar` does, with the
 // default limits; the program's output kind rides along, for the
 // differential.
-func runTransduce(program string, grammar *translate.Format, doc string, render Renderer, duplicates tt.Duplicates, native bool) (Output, runOutcome) {
+func runTransduce(program string, grammar *translate.Format, doc string, render Renderer, duplicates tt.Duplicates) (Output, runOutcome) {
 	var output Output
 	compiled, f := CompileWith(program, "transduce", InputParserEvents, routers, renderers)
-	if f == nil && !native {
-		compiled, f = compiled.WithNative(false)
-	}
 	if f == nil && duplicates != tt.Reject {
 		compiled, f = compiled.WithDuplicates(duplicates)
 	}
@@ -637,11 +605,10 @@ func sortedMembers(d tt.Datum) tt.Datum {
 
 // TestSpecTransduce runs transduce.tsv: a program over a grammar's rule
 // passes, run over a document in that grammar, the bytes it writes or the
-// failure. Every row runs twice, natively and through the library's text,
-// held to each other as run.tsv's are; and a row's program is a
-// transducer, its events the document's, which the differential holds it
-// to where it answers JSON events. The source of rule passes needs no
-// adapter, so every row runs in every build.
+// failure. A row's program is a transducer, its events the document's,
+// which the differential holds it to where it answers JSON events. The
+// source of rule passes needs no adapter, so every row runs in every
+// build.
 func TestSpecTransduce(t *testing.T) {
 	spec, err := support.LoadSpec(filepath.Join(specDir(t), "transduce.tsv"), nil)
 	if err != nil {
@@ -657,20 +624,16 @@ func TestSpecTransduce(t *testing.T) {
 		ParseRow: func(input string, row *support.Row) (any, error) {
 			grammar, doc, render := transduceGrammar(t, row), row.UnescNamed("doc"), runRender(t, row)
 			duplicates := runDuplicates(t, row)
-			output, native := runTransduce(input, grammar, doc, render, duplicates, true)
-			_, interpreted := runTransduce(input, grammar, doc, render, duplicates, false)
-			if !native.agrees(interpreted) {
-				return nil, fmt.Errorf("native and interpreted runs disagree:\n  native:      %s\n  interpreted: %s", native, interpreted)
-			}
-			if native.fail != nil {
-				return nil, asErr(native.fail)
+			output, o := runTransduce(input, grammar, doc, render, duplicates)
+			if o.fail != nil {
+				return nil, asErr(o.fail)
 			}
 			if output == OutputJsonEvents {
-				if err := transduceDifferential(t, grammar, doc, native.out); err != nil {
+				if err := transduceDifferential(t, grammar, doc, o.out); err != nil {
 					return nil, err
 				}
 			}
-			return native.out, nil
+			return o.out, nil
 		},
 		ErrorCode: func(err error) string {
 			if f, ok := failOf(err); ok {

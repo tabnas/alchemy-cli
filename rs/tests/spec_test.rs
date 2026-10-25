@@ -30,10 +30,8 @@ use common::{compile, compile_with, json_into, spec_dir, text_value};
 /// A program run over a JSON document: the bytes it writes, or the
 /// failure. See alchemy's `test/AGENTS.md` for the columns.
 ///
-/// Every row runs twice, with the standard compositions native and
-/// through the library's text (`with_native(false)`), and the two must
-/// agree to the byte, or on the failure's code and position: a row whose
-/// two paths differ fails whatever its expected cell says.
+/// Every row runs the library's text, the one implementation of its
+/// compositions, and is held to its expected cell.
 #[test]
 fn run() {
     Runner::new_with_row(|program, row| {
@@ -42,18 +40,7 @@ fn run() {
             doc => doc,
         };
         let render = row_render(row);
-        let native = run_both(program, &doc, render, true);
-        let interpreted = run_both(program, &doc, render, false);
-        match (&native, &interpreted) {
-            (Ok(a), Ok(b)) if a == b => {}
-            (Err(a), Err(b)) if run_code(a) == run_code(b) && (a.row, a.column) == (b.row, b.column) => {}
-            _ => {
-                return Err(Failure::message(format!(
-                    "native and interpreted runs disagree:\n  native:      {native:?}\n  interpreted: {interpreted:?}"
-                )))
-            }
-        }
-        native
+        run_program(program, &doc, render)
             .map(text_value)
             .map_err(|fail| run_failure(&fail))
     })
@@ -75,20 +62,12 @@ fn row_render(row: &Row) -> Option<Renderer> {
 /// Compile `program` and run it over `doc`, as `alchemy run` does: on a
 /// thread of `STACK_BYTES`, the document read through JSON's transducer
 /// part, with the default limits.
-fn run_both(
-    program: &str,
-    doc: &str,
-    render: Option<Renderer>,
-    native: bool,
-) -> Result<String, Fail> {
+fn run_program(program: &str, doc: &str, render: Option<Renderer>) -> Result<String, Fail> {
     std::thread::scope(|scope| {
         std::thread::Builder::new()
             .stack_size(tabnas_alchemy::STACK_BYTES)
             .spawn_scoped(scope, || {
-                let mut compiled = compile(program, "run")?;
-                if !native {
-                    compiled = compiled.with_native(false)?;
-                }
+                let compiled = compile(program, "run")?;
                 drive(&compiled, doc, render)
             })
             .expect("the run thread starts")
@@ -177,11 +156,9 @@ fn row_failures(file: &str, row: &Row) -> Vec<Fail> {
             let doc = row.unesc_named("doc");
             let render = row_render(row);
             let duplicates = row_duplicates(row);
-            [true, false]
+            transduce_program(&input, grammar, &doc, render, duplicates)
+                .err()
                 .into_iter()
-                .filter_map(|native| {
-                    transduce_both(&input, grammar, &doc, render, duplicates, native).err()
-                })
                 .collect()
         }
         _ => {
@@ -190,9 +167,9 @@ fn row_failures(file: &str, row: &Row) -> Vec<Fail> {
                 doc => doc,
             };
             let render = row_render(row);
-            [true, false]
+            run_program(&input, &doc, render)
+                .err()
                 .into_iter()
-                .filter_map(|native| run_both(&input, &doc, render, native).err())
                 .collect()
         }
     }
@@ -376,8 +353,7 @@ fn the_raised_messages_match_the_document() {
 
 /// A program over a grammar's rule passes, run over a document in that
 /// grammar: the bytes it writes, or the failure. See alchemy's
-/// `test/AGENTS.md` for the columns. Every row runs natively and
-/// interpreted, held to each other as [`run`]'s are. A row's program is a
+/// `test/AGENTS.md` for the columns. A row's program is a
 /// transducer, its events the document's, and the runner holds it to
 /// that: where the program answers JSON events, the grammar accepts the
 /// document and no member repeats, the events it writes are the walk of
@@ -389,21 +365,11 @@ fn transduce() {
         let doc = row.unesc_named("doc");
         let render = row_render(row);
         let duplicates = row_duplicates(row);
-        let native = transduce_both(program, grammar, &doc, render, duplicates, true);
-        let interpreted = transduce_both(program, grammar, &doc, render, duplicates, false);
-        match (&native, &interpreted) {
-            (Ok(a), Ok(b)) if a == b => {}
-            (Err(a), Err(b)) if run_code(a) == run_code(b) && (a.row, a.column) == (b.row, b.column) => {}
-            _ => {
-                return Err(Failure::message(format!(
-                    "native and interpreted runs disagree:\n  native:      {native:?}\n  interpreted: {interpreted:?}"
-                )))
-            }
-        }
-        if let Ok((Output::JsonEvents, written)) = &native {
+        let outcome = transduce_program(program, grammar, &doc, render, duplicates);
+        if let Ok((Output::JsonEvents, written)) = &outcome {
             differential(grammar, &doc, written).map_err(Failure::message)?;
         }
-        native
+        outcome
             .map(|(_, text)| text_value(text))
             .map_err(|fail| run_failure(&fail))
     })
@@ -444,22 +410,18 @@ fn transduce_grammar(row: &Row) -> &'static Format {
 /// parsed with `grammar`, as `alchemy run --grammar` does: on a thread of
 /// `STACK_BYTES`, with the default limits. The program's output kind rides
 /// along, for the differential.
-fn transduce_both(
+fn transduce_program(
     program: &str,
     grammar: &'static Format,
     doc: &str,
     render: Option<Renderer>,
     duplicates: Duplicates,
-    native: bool,
 ) -> Result<(Output, String), Fail> {
     std::thread::scope(|scope| {
         std::thread::Builder::new()
             .stack_size(tabnas_alchemy::STACK_BYTES)
             .spawn_scoped(scope, || {
                 let mut compiled = compile_with(program, "transduce", Input::ParserEvents)?;
-                if !native {
-                    compiled = compiled.with_native(false)?;
-                }
                 if duplicates != Duplicates::Reject {
                     compiled = compiled.with_duplicates(duplicates)?;
                 }

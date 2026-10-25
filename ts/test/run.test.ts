@@ -2,13 +2,13 @@
 
 // The public API end to end (rs/tests/run_test.rs): the spec's worked
 // example (section 5) run through the spec's program (sections 12.1 and
-// 13.4), natively and interpreted, byte for byte; the streaming behaviours
+// 13.4), byte for byte; the streaming behaviours
 // of the spec's section 19.5 that apply to a run over one document; the
 // `json` echo of every fixture against the walk's own rendering; and
 // `records` of a table round-tripping through JSON.
 //
 // Moved from alchemy's ts/test/run.test.ts: alchemy depends on neither
-// transduce nor render, and every test here runs a program on both.
+// transduce nor render, and every test here runs a program on them.
 
 import { describe, it } from 'node:test'
 import assert from 'node:assert'
@@ -31,9 +31,8 @@ import { EXPECTED_CSV, PROGRAM, RECORDS } from './common'
 import { compile, drive, err, events, ok, thrown } from './host'
 import { FIXTURES, METADATA, record, recordsJson } from './support'
 
-function both(): [Program, Program] {
-  const native = compile(PROGRAM, 'export.alc')
-  return [native, native.withNative(false)]
+function specProgram(): Program {
+  return compile(PROGRAM, 'export.alc')
 }
 
 function shaped(records: string): string {
@@ -52,10 +51,11 @@ function doubling(levels: number): string {
 describe('run', () => {
   // Acceptance 3: the worked example prints the spec's bytes, both ways.
   it('the worked example prints the spec csv both ways', () => {
-    for (const program of both()) {
+    {
+      const program = specProgram()
       assert.equal(program.output, 'Text')
       assert.equal(program.rowSelector()!.toString(), '.response.payload.deep.records[*]')
-      assert.equal(ok(program, RECORDS), EXPECTED_CSV, `native=${program.native}`)
+      assert.equal(ok(program, RECORDS), EXPECTED_CSV)
     }
   })
 
@@ -63,9 +63,10 @@ describe('run', () => {
   // policy, before any row is retained, and no CSV is written.
   it('metadata after rows is an input order violation', () => {
     const doc = `{"response":{"payload":{"deep":{"records":[${record(1)}]}},"metadata":${METADATA}}}`
-    for (const program of both()) {
+    {
+      const program = specProgram()
       const { fail, out } = err(program, doc)
-      assert.equal(fail.code, 'INPUT_ORDER_VIOLATION', `native=${program.native}`)
+      assert.equal(fail.code, 'INPUT_ORDER_VIOLATION')
       assert.ok(!fail.committedOutput)
       assert.equal(out, '')
     }
@@ -74,7 +75,8 @@ describe('run', () => {
   // Spec 19.5: cells follow the schema's order whatever the row's.
   it('cells follow schema order not member order', () => {
     const doc = shaped('{"account":{"balance":1},"person":{"name":"z"},"id":2}')
-    for (const program of both()) {
+    {
+      const program = specProgram()
       assert.equal(ok(program, doc), '"Identifier","Full name","Balance"\r\n"2","z","1"\r\n')
     }
   })
@@ -82,8 +84,9 @@ describe('run', () => {
   // Spec 19.5: no matching rows is a valid empty table: the header alone.
   it('no matching rows prints the header only', () => {
     for (const doc of [shaped(''), `{"response":{"metadata":${METADATA}}}`]) {
-      for (const program of both()) {
-        assert.equal(ok(program, doc), '"Identifier","Full name","Balance"\r\n', `native=${program.native}`)
+      {
+      const program = specProgram()
+        assert.equal(ok(program, doc), '"Identifier","Full name","Balance"\r\n')
       }
     }
   })
@@ -95,49 +98,50 @@ describe('run', () => {
   it('invalid trailing input fails after rows were exported', () => {
     const whole = recordsJson(2000)
     const doc = `${whole} x`
-    for (const program of both()) {
+    {
+      const program = specProgram()
       const full = ok(program, whole)
       const { fail, out } = err(program, doc)
-      assert.equal(fail.code, 'INPUT_INVALID', `native=${program.native}`)
-      assert.ok(fail.committedOutput, `native=${program.native}`)
+      assert.equal(fail.code, 'INPUT_INVALID')
+      assert.ok(fail.committedOutput)
       assert.ok(out.startsWith('"Identifier","Full name","Balance"\r\n'))
       assert.ok(Buffer.byteLength(out) > 32 * 1024)
       // The CSV renderer marks the end of each row, and the writer holds a
       // row until its end (tabnas/alchemy#29), where it once drained
       // wherever its budget fell (spec 17.4): what was committed is a
       // prefix of the whole output, and ends with a whole row.
-      assert.ok(full.startsWith(out), `native=${program.native}`)
+      assert.ok(full.startsWith(out))
       assert.ok(out.length < full.length)
-      assert.ok(out.endsWith('\r\n'), `native=${program.native}`)
+      assert.ok(out.endsWith('\r\n'))
     }
     // A small document: the rows were buffered, not committed, so nothing
     // reached the writer and the failure says so.
-    const { fail, out } = err(both()[0], `${RECORDS} x`)
+    const { fail, out } = err(specProgram(), `${RECORDS} x`)
     assert.equal(fail.code, 'INPUT_INVALID')
     assert.ok(!fail.committedOutput)
     assert.equal(out, '')
   })
 
   // Spec 19.5: a very large selected row fails clearly under the limit that
-  // bounds it, the same one both ways: the native transducer materializes
-  // rows under `max_record_bytes`, and the library's `table-from-json`
-  // captures its rows under the same limit, so the generic
-  // `max_capture_bytes` does not decide either.
+  // bounds it: the library's `table-from-json` captures its rows under
+  // `max_record_bytes`, so the generic `max_capture_bytes` does not decide.
   it('a very large selected row names the limit', () => {
     const big = `{"id":1,"person":{"name":"${'x'.repeat(4096)}"},"account":{"balance":2}}`
     const doc = shaped(`${record(0)},${big}`)
     const limits = Limits.with({ max_record_bytes: 1024 })
-    for (const program of both()) {
+    {
+      const program = specProgram()
       const { fail } = err(program, doc, limits)
       assert.equal(fail.code, 'RESOURCE_LIMIT_EXCEEDED')
-      assert.equal(fail.limit.name, 'max_record_bytes', `native=${program.native}`)
+      assert.equal(fail.limit.name, 'max_record_bytes')
       assert.equal(fail.path, '.response.payload.deep.records[1]')
     }
     // A small generic capture limit decides neither: both print the rows.
     const capture = Limits.with({ max_capture_bytes: 64 })
-    for (const program of both()) {
+    {
+      const program = specProgram()
       const { fail, out } = drive(program, RECORDS, undefined, capture)
-      assert.equal(fail, undefined, `native=${program.native}: ${fail}`)
+      assert.equal(fail, undefined, String(fail))
       assert.equal(out, EXPECTED_CSV)
     }
   })
@@ -178,9 +182,10 @@ describe('run', () => {
   // A missing cell under the standard options is `MISSING_VALUE`, and a
   // null is the empty string, both ways.
   it('missing and null cells follow the options', () => {
-    for (const program of both()) {
+    {
+      const program = specProgram()
       const { fail } = err(program, shaped('{"id":1,"person":{},"account":{"balance":2}}'))
-      assert.equal(fail.code, 'MISSING_VALUE', `native=${program.native}`)
+      assert.equal(fail.code, 'MISSING_VALUE')
       assert.equal(
         ok(program, shaped('{"id":null,"person":{"name":"n"},"account":{"balance":null}}')),
         '"Identifier","Full name","Balance"\r\n"","n",""\r\n',
@@ -244,7 +249,8 @@ describe('run', () => {
     assert.equal(program.output, 'Text')
     const expected =
       '[{"Identifier":123,"Full name":"Alice","Balance":50.25},{"Identifier":456,"Full name":"Bob","Balance":72}]'
-    for (const p of [program, program.withNative(false)]) {
+    {
+      const p = program
       const out = ok(p, RECORDS)
       assert.equal(out, `${expected}\n`)
       const parsed = JSON.parse(out)
@@ -267,7 +273,7 @@ describe('run', () => {
   // The output limit is the writer's: a run that would exceed it fails
   // with the limit named, and nothing past it is written.
   it('the output limit is enforced by the writer', () => {
-    const { fail } = err(both()[0], recordsJson(50), Limits.with({ max_output_bytes: 200 }))
+    const { fail } = err(specProgram(), recordsJson(50), Limits.with({ max_output_bytes: 200 }))
     assert.equal(fail.code, 'RESOURCE_LIMIT_EXCEEDED')
     assert.equal(fail.limit.name, 'max_output_bytes')
   })
@@ -482,7 +488,7 @@ describe('run: a failed run leaves whole records', () => {
     assert.equal(out, `[${whole.join(',')}`)
   })
 
-  it('a scan-emit step answers :record-end, natively and interpreted', () => {
+  it('a scan-emit step answers :record-end', () => {
     const source = `def step [s event]
   match event
     case array-start (transition (push :array s) [])
@@ -499,8 +505,8 @@ def export [input]
   join ""
     scan-emit [] step (fn [s] []) (events input)
 `
-    const native = compile(source, 'lines.alc')
-    for (const program of [native, native.withNative(false)]) {
+    const program = compile(source, 'lines.alc')
+    {
       const { fail, out } = err(program, cutArray(4000))
       assert.equal(fail.code, 'INPUT_INVALID', String(fail))
       assert.ok(fail.committedOutput, String(fail))
@@ -510,7 +516,7 @@ def export [input]
       assert.equal(out, whole)
     }
     // A run that does not fail writes the same text as one without marks.
-    assert.equal(ok(native, '[{"a":1},{"b":"x"}]'), '"a": 1\n"b": x\n')
+    assert.equal(ok(program, '[{"a":1},{"b":"x"}]'), '"a": 1\n"b": x\n')
   })
 
   it('concat-map through replace-text leaves whole items', () => {

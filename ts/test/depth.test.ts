@@ -45,8 +45,6 @@ describe('depth', () => {
     const program = compile(text, 'text.alc')
     const written = err(program, '[1]')
     assert.equal(finer(written.fail), 'recursion')
-    // Interpreted as natively.
-    assert.equal(finer(err(program.withNative(false), '[1]').fail), 'recursion')
   })
 
   // The deepest chains the bound admits, and one link more: a chain of
@@ -105,7 +103,6 @@ describe('depth', () => {
     for (const [name, chain, deepest, doc, want] of chains) {
       const program = compile(chain(deepest), `${name}.alc`)
       assert.equal(ok(program, doc), want, name)
-      assert.equal(ok(program.withNative(false), doc), want, name)
       const over = thrown(() => compile(chain(deepest + 1), `${name}.alc`))
       assert.equal(finer(over), 'recursion', `${name}: ${over}`)
     }
@@ -135,7 +132,7 @@ describe('depth', () => {
     for (let i = 1; i < 499; i++) s += `def m${i} [s] (map (fn [x] x) (m${i - 1} s))\n`
     s += 'def export [input] (join "," (m498 (select (path each-index) input)))\n'
     const program = compile(s, 'maps.alc')
-    assert.equal(at(half, () => ok(program.withNative(false), '["a"]')), 'a')
+    assert.equal(at(half, () => ok(program, '["a"]')), 'a')
     // And per item, under a small output limit as a host would set one.
     const { fail: perItem } = at(half, () =>
       drive(compile('def w [f] (f f)\ndef export [input] (join "" (map (fn [x] (w w)) (select (path each-index) input)))', 'x.alc'), '[1]', undefined, Limits.with({ max_output_bytes: 10 })),

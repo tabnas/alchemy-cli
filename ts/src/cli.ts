@@ -10,7 +10,7 @@
 //   alchemy format FILE      print the program in layout form
 //   alchemy check FILE       parse, desugar, resolve, check and build the plan; print nothing and exit 0
 //   alchemy explain FILE     print the plan report
-//   alchemy run [--grammar FORMAT] [--render csv|json] [--no-native] [--max-output-bytes N] PROGRAM INPUT
+//   alchemy run [--grammar FORMAT] [--render csv|json] [--max-output-bytes N] PROGRAM INPUT
 //                            run the program over the JSON document INPUT; with --grammar, over
 //                            the rule passes of INPUT parsed as FORMAT (a transducer part's input)
 //   alchemy translate --from FORMAT --to FORMAT [--path PATH] [--key KEY]
@@ -89,7 +89,7 @@ const OPTIONS: CompileOptions = { routers, renderers }
 
 const USAGE =
   'usage: alchemy canon|format|check|explain FILE\n' +
-  '       alchemy run [--grammar FORMAT] [--render csv|json] [--no-native] [--max-output-bytes N] PROGRAM INPUT\n' +
+  '       alchemy run [--grammar FORMAT] [--render csv|json] [--max-output-bytes N] PROGRAM INPUT\n' +
   '       alchemy translate --from FORMAT --to FORMAT [--path PATH] [--key KEY] [--with PROGRAM] [--max-output-bytes N] INPUT\n' +
   '       alchemy formats\n' +
   '       (a FILE may be - for standard input)'
@@ -200,7 +200,6 @@ type RunOptions = {
   // document's events.
   grammar?: translate.Format
   render?: Renderer
-  native: boolean
   maxOutputBytes: number | null
   program: string
   input: string
@@ -220,7 +219,6 @@ function outputLimit(n: string): number {
 function parseRunOptions(args: ReadonlyArray<string>): RunOptions {
   let grammar: translate.Format | undefined
   let render: Renderer | undefined
-  let native = true
   let maxOutputBytes: number | null = null
   const files: string[] = []
   let i = 0
@@ -248,9 +246,6 @@ function parseRunOptions(args: ReadonlyArray<string>): RunOptions {
         throw new Exit(Fail.input(`--render takes csv or json, not ${JSON.stringify(name)}`), 2)
       }
       i += 2
-    } else if ('--no-native' === arg) {
-      native = false
-      i += 1
     } else if ('--max-output-bytes' === arg) {
       const n = args[i + 1]
       if (undefined === n) throw usage()
@@ -268,7 +263,7 @@ function parseRunOptions(args: ReadonlyArray<string>): RunOptions {
   if ('-' === program && '-' === input) {
     throw new Exit(Fail.input('only one of PROGRAM and INPUT may be - (standard input)'), 2)
   }
-  return { grammar, render, native, maxOutputBytes, program, input }
+  return { grammar, render, maxOutputBytes, program, input }
 }
 
 type TranslateOptions = {
@@ -402,8 +397,7 @@ function command(args: ReadonlyArray<string>): string {
       // as that format, and is compiled over them, as a transducer part
       // is; without it, the JSON document's events.
       const grammar = options.grammar
-      let program = compile(src, options.program, undefined === grammar ? OPTIONS : { ...OPTIONS, input: 'ParserEvents/1' })
-      if (!options.native) program = program.withNative(false)
+      const program = compile(src, options.program, undefined === grammar ? OPTIONS : { ...OPTIONS, input: 'ParserEvents/1' })
       const limits: Limits = { ...Limits.default(), max_output_bytes: options.maxOutputBytes }
       // A renderer the program cannot take is refused before the input is
       // read, so the refusal never waits on standard input or drains a
