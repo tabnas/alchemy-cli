@@ -491,7 +491,7 @@ fn packages() -> Vec<(Option<Described>, Reader)> {
             read_pgn(),
         ),
         (
-            descriptor!("tabnas-css", tabnas_css, embed),
+            descriptor!("tabnas-css", tabnas_css, embed, transduce),
             reader!(tabnas_css),
         ),
         (

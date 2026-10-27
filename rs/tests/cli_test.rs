@@ -737,12 +737,11 @@ fn formats_lists_the_formats_translate_reads_and_writes() {
     // every format transduce does not stream, and Markdown, which it
     // streams only once the last line is in, each in the sentence its
     // manifest gives; JSON's none, nor PGN's, which streams a game at a
-    // time.
+    // time, nor CSS's, which streams a statement at a time.
     let by_id = |id: &str| formats.iter().find(|f| f["id"] == id).expect("a format");
     for (id, manifest) in [
         ("abnf", tabnas_abnf::translate().unwrap().manifest),
         ("c", tabnas_c::translate().unwrap().manifest),
-        ("css", tabnas_css::translate().unwrap().manifest),
         ("ebnf", tabnas_ebnf::translate().unwrap().manifest),
         ("expr", tabnas_expr::translate().unwrap().manifest),
         ("feed", tabnas_feed::translate().unwrap().manifest),
@@ -760,6 +759,7 @@ fn formats_lists_the_formats_translate_reads_and_writes() {
     }
     assert!(by_id("json")["whole"].is_null());
     assert!(by_id("pgn")["whole"].is_null());
+    assert!(by_id("css")["whole"].is_null());
     let keys: Vec<&str> = by_id("css")
         .as_object()
         .expect("an object")

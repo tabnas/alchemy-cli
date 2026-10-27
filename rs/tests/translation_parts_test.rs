@@ -150,6 +150,7 @@ fn conformance_main(parts: &StructuralParts, reads: &str, writes: &str, lifted: 
 
 fn grammar(format: &str) -> tabnas::Tabnas {
     match format {
+        "css" => tabnas_css::make(),
         "csv" => tabnas_csv::make(),
         "ini" => tabnas_ini::make(),
         "json" => tabnas_json::make(),
@@ -201,6 +202,10 @@ fn render(program: &Program, events: &[OwnedJsonEvent]) -> Result<String, Fail> 
 #[test]
 fn structural_translation_parts_agree_with_their_descriptors_and_compile() {
     let samples = [
+        (
+            "css",
+            "a, b { color: red } /* c */ @media screen { p { m: 1 } }",
+        ),
         ("csv", "a,b\n1,x\n2,y\n"),
         ("ini", "a=1\nb=x\n"),
         ("json", "{\"a\":1,\"b\":[true,null]}\n"),
@@ -215,6 +220,7 @@ fn structural_translation_parts_agree_with_their_descriptors_and_compile() {
         ("zon", ".{ .a = 1, .b = .{ true, false } }"),
     ];
     let formats = [
+        ("css", structural_parts!(tabnas_css::translate(), transduce)),
         ("csv", structural_parts!(tabnas_csv::translate(), transduce)),
         ("ini", structural_parts!(tabnas_ini::translate())),
         (
