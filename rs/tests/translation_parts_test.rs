@@ -222,7 +222,7 @@ fn structural_translation_parts_agree_with_their_descriptors_and_compile() {
     let formats = [
         ("css", structural_parts!(tabnas_css::translate(), transduce)),
         ("csv", structural_parts!(tabnas_csv::translate(), transduce)),
-        ("ini", structural_parts!(tabnas_ini::translate())),
+        ("ini", structural_parts!(tabnas_ini::translate(), transduce)),
         (
             "json",
             structural_parts!(tabnas_json::translate(), transduce),
@@ -244,7 +244,10 @@ fn structural_translation_parts_agree_with_their_descriptors_and_compile() {
             structural_parts!(tabnas_jsonl::translate(), transduce),
         ),
         ("markdown", structural_parts!(tabnas_markdown::translate())),
-        ("toml", structural_parts!(tabnas_toml::translate())),
+        (
+            "toml",
+            structural_parts!(tabnas_toml::translate(), transduce),
+        ),
         ("xml", structural_parts!(tabnas_xml::translate(), transduce)),
         (
             "yaml",
