@@ -491,7 +491,7 @@ fn packages() -> Vec<(Option<Described>, Reader)> {
             read_pgn(),
         ),
         (
-            descriptor!("tabnas-css", tabnas_css, embed),
+            descriptor!("tabnas-css", tabnas_css, embed, transduce),
             reader!(tabnas_css),
         ),
         (
@@ -515,7 +515,7 @@ fn packages() -> Vec<(Option<Described>, Reader)> {
             Reader::Tree(read_gbnf),
         ),
         (
-            descriptor!("tabnas-ini", tabnas_ini, embed),
+            descriptor!("tabnas-ini", tabnas_ini, embed, transduce),
             reader!(tabnas_ini),
         ),
         (
@@ -551,7 +551,7 @@ fn packages() -> Vec<(Option<Described>, Reader)> {
             reader!(tabnas_semver),
         ),
         (
-            descriptor!("tabnas-toml", tabnas_toml, embed),
+            descriptor!("tabnas-toml", tabnas_toml, embed, transduce),
             reader!(tabnas_toml),
         ),
         (
