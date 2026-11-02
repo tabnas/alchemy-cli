@@ -13,7 +13,7 @@ require (
 	github.com/tabnas/alchemy/go v0.3.0
 	github.com/tabnas/c/go v0.5.15
 	github.com/tabnas/chess/go v0.1.18
-	github.com/tabnas/css/go v0.5.17
+	github.com/tabnas/css/go v0.5.18
 	github.com/tabnas/csv/go v0.6.9
 	github.com/tabnas/ebnf/go v0.1.19
 	github.com/tabnas/expr/go v0.5.19
