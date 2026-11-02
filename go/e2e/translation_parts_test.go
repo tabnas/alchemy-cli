@@ -67,22 +67,26 @@ type translationDescriptor struct {
 func grammarTransducers() map[string]*structuralPart {
 	chess := tabnaschess.Translate()
 	csv := tabnascsv.Translate()
+	ini := tabnasini.Translate()
 	json := tabnasjson.Translate()
 	json5 := tabnasjson5.Translate()
 	jsonc := tabnasjsonc.Translate()
 	jsonic := tabnasjsonic.Translate()
 	jsonl := tabnasjsonl.Translate()
+	toml := tabnastoml.Translate()
 	xml := tabnasxml.Translate()
 	yaml := tabnasyaml.Translate()
 	zon := tabnaszon.Translate()
 	return map[string]*structuralPart{
 		"csv":    packagePart(csv.Transduce != nil, func() (string, string) { return csv.Transduce.Entry, csv.Transduce.Source }),
+		"ini":    packagePart(ini.Transduce != nil, func() (string, string) { return ini.Transduce.Entry, ini.Transduce.Source }),
 		"json":   packagePart(json.Transduce != nil, func() (string, string) { return json.Transduce.Entry, json.Transduce.Source }),
 		"json5":  packagePart(json5.Transduce != nil, func() (string, string) { return json5.Transduce.Entry, json5.Transduce.Source }),
 		"jsonc":  packagePart(jsonc.Transduce != nil, func() (string, string) { return jsonc.Transduce.Entry, jsonc.Transduce.Source }),
 		"jsonic": packagePart(jsonic.Transduce != nil, func() (string, string) { return jsonic.Transduce.Entry, jsonic.Transduce.Source }),
 		"jsonl":  packagePart(jsonl.Transduce != nil, func() (string, string) { return jsonl.Transduce.Entry, jsonl.Transduce.Source }),
 		"pgn":    packagePart(chess.Transduce != nil, func() (string, string) { return chess.Transduce.Entry, chess.Transduce.Source }),
+		"toml":   packagePart(toml.Transduce != nil, func() (string, string) { return toml.Transduce.Entry, toml.Transduce.Source }),
 		"xml":    packagePart(xml.Transduce != nil, func() (string, string) { return xml.Transduce.Entry, xml.Transduce.Source }),
 		"yaml":   packagePart(yaml.Transduce != nil, func() (string, string) { return yaml.Transduce.Entry, yaml.Transduce.Source }),
 		"zon":    packagePart(zon.Transduce != nil, func() (string, string) { return zon.Transduce.Entry, zon.Transduce.Source }),
