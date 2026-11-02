@@ -286,7 +286,9 @@ func TestARegisteredReaderDefectStillStands(t *testing.T) {
 // translation from one writes them so: each id with an example document
 // and its JSON as this command writes it. A plain map keeps no order, and
 // transduce's walker gives its members in sorted key order (semver's
-// version, css's nodes, a C syntax tree's nodes, and a PGN game's tags); a
+// version, a C syntax tree's nodes, and a PGN game's tags; a stylesheet's
+// nodes were one until css's transducer part, which keeps the document's
+// order, so css has no entry); a
 // module's typed value is written in its fields' order, where the Rust and
 // TypeScript readers keep the document's (a feed, and a PGN move's
 // annotations). PGN's transducer part keeps the document's order, so its
@@ -299,8 +301,6 @@ func TestARegisteredReaderDefectStillStands(t *testing.T) {
 // and Rust compilers do, with no options.match.tokenOrder.)
 var orderDivergent = map[string][2]string{
 	"semver": {"1.2.3-rc.1", `{"build":[],"major":1,"minor":2,"patch":3,"prerelease":["rc",1]}`},
-	"css": {"a{color:red}", `{"rules":[{"declarations":[{"property":"color","type":"declaration","value":"red"}],` +
-		`"selectors":["a"],"type":"rule"}],"type":"stylesheet"}`},
 	"pgn": {"[White \"W\"]\n[Black \"B\"]\n\n1. e4 {a} (1. d4) {b} $1 1-0\n",
 		`[{"tags":{"Black":"B","White":"W"},"moves":[{"san":"e4","piece":"P","to":"e4","number":1,"side":"w","nags":[1],` +
 			`"comments":[{"kind":"brace","text":"a"},{"kind":"brace","text":"b"}],"variations":[{"moves":[{"san":"d4","piece":"P","to":"d4","number":1,"side":"w"}]}]}],"result":"1-0"}]`},

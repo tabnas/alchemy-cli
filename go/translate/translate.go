@@ -299,6 +299,8 @@ func modules() []module {
 		{descriptor: func() at.Descriptor {
 			p := tabnascss.Translate()
 			return descriptor("tabnas-css", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
+		}, transduce: func() *at.PartText {
+			return partText((*modulePart)(tabnascss.Translate().Transduce))
 		}, parser: func() *tabnas.Tabnas { return tabnascss.MakeJsonic() }},
 		{descriptor: func() at.Descriptor {
 			p := tabnascsv.Translate()
@@ -329,6 +331,8 @@ func modules() []module {
 		{descriptor: func() at.Descriptor {
 			p := tabnasini.Translate()
 			return descriptor("tabnas-ini", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
+		}, transduce: func() *at.PartText {
+			return partText((*modulePart)(tabnasini.Translate().Transduce))
 		}, parser: func() *tabnas.Tabnas { return tabnasini.MakeJsonic() }},
 		{descriptor: func() at.Descriptor {
 			p := tabnasjson.Translate()
@@ -381,6 +385,8 @@ func modules() []module {
 		{descriptor: func() at.Descriptor {
 			p := tabnastoml.Translate()
 			return descriptor("tabnas-toml", p.Manifest, (*modulePart)(p.Lift), (*modulePart)(p.Embed), (*modulePart)(p.Render))
+		}, transduce: func() *at.PartText {
+			return partText((*modulePart)(tabnastoml.Translate().Transduce))
 		}, parser: func() *tabnas.Tabnas { return tabnastoml.MakeJsonic() }},
 		{descriptor: func() at.Descriptor {
 			p := tabnasxml.Translate()

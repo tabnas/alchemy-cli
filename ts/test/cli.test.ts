@@ -575,17 +575,25 @@ describe('cli translate', () => {
       loss: ['JSON has no spelling for Infinity or NaN, so a number that is not finite is written as null.'],
     })
     // The formats read through a transducer part are those whose packages
-    // ship one, each under the entry its manifest names, and no other.
+    // ship one, each under the entry its manifest names, and no other. CSS,
+    // INI and TOML ship theirs from their next release, so each is held to
+    // the package this build has, whichever side of that release: the
+    // registry's copy, or the sibling checkout the polyglot gate links.
+    const shipped = (id: string, parts: any): string[][] =>
+      parts?.transduce ? [[id, parts.transduce.entry]] : []
     assert.deepStrictEqual(
       formats.filter((f: any) => null !== f.transduce).map((f: any) => [f.id, f.transduce]),
       [
+        ...shipped('css', cssParts()),
         ['csv', 'csv-transduce'],
+        ...shipped('ini', iniParts()),
         ['json', 'json-transduce'],
         ['json5', 'json5-transduce'],
         ['jsonc', 'jsonc-transduce'],
         ['jsonic', 'jsonic-transduce'],
         ['jsonl', 'jsonl-transduce'],
         ['pgn', 'pgn-transduce'],
+        ...shipped('toml', tomlParts()),
         ['xml', 'xml-transduce'],
         ['yaml', 'yaml-transduce'],
         ['zon', 'zon-transduce'],
@@ -617,26 +625,36 @@ describe('cli translate', () => {
     // Why a format's documents are read whole, where its manifest says:
     // every format transduce does not stream, and Markdown, which it
     // streams only once the last line is in, each in the sentence its
-    // manifest gives; PGN's none, since it streams a game at a time.
+    // manifest gives; none for a format read through its transducer part,
+    // PGN's among them, which streams a game at a time.
     for (const [id, parts] of [
       ['abnf', abnfParts()],
       ['c', cParts()],
-      ['css', cssParts()],
       ['ebnf', ebnfParts()],
       ['expr', exprParts()],
       ['feed', feedParts()],
       ['gbnf', gbnfParts()],
-      ['ini', iniParts()],
       ['markdown', markdownParts()],
       ['proto', protoParts()],
       ['semver', semverParts()],
-      ['toml', tomlParts()],
     ] as const) {
       const whole = JSON.parse(String(parts?.manifest)).translate.whole
       assert.ok('string' === typeof whole && '' !== whole, id)
       assert.strictEqual(byId(id).whole, whole, id)
     }
     assert.strictEqual(byId('pgn').whole, null)
+    // CSS, INI and TOML give the sentence up with the part they ship from
+    // their next release: each is held to the package this build has, and
+    // has one of the two, never both or neither.
+    for (const [id, parts] of [
+      ['css', cssParts()],
+      ['ini', iniParts()],
+      ['toml', tomlParts()],
+    ] as const) {
+      const whole = JSON.parse(String(parts?.manifest)).translate.whole
+      assert.strictEqual(byId(id).whole, 'string' === typeof whole ? whole : null, id)
+      assert.strictEqual(null === byId(id).transduce, 'string' === typeof whole, id)
+    }
     // `formats` takes no arguments.
     const extra = dmog(['formats', 'json'])
     assert.equal(extra.status, 2)

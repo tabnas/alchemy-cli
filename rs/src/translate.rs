@@ -491,7 +491,7 @@ fn packages() -> Vec<(Option<Described>, Reader)> {
             read_pgn(),
         ),
         (
-            descriptor!("tabnas-css", tabnas_css, embed),
+            descriptor!("tabnas-css", tabnas_css, embed, transduce),
             reader!(tabnas_css),
         ),
         (
@@ -515,7 +515,7 @@ fn packages() -> Vec<(Option<Described>, Reader)> {
             Reader::Tree(read_gbnf),
         ),
         (
-            descriptor!("tabnas-ini", tabnas_ini, embed),
+            descriptor!("tabnas-ini", tabnas_ini, embed, transduce),
             reader!(tabnas_ini),
         ),
         (
@@ -551,7 +551,7 @@ fn packages() -> Vec<(Option<Described>, Reader)> {
             reader!(tabnas_semver),
         ),
         (
-            descriptor!("tabnas-toml", tabnas_toml, embed),
+            descriptor!("tabnas-toml", tabnas_toml, embed, transduce),
             reader!(tabnas_toml),
         ),
         (
@@ -1319,13 +1319,16 @@ mod tests {
         assert_eq!(
             through,
             [
+                ("css", "css-transduce"),
                 ("csv", "csv-transduce"),
+                ("ini", "ini-transduce"),
                 ("json", "json-transduce"),
                 ("json5", "json5-transduce"),
                 ("jsonc", "jsonc-transduce"),
                 ("jsonic", "jsonic-transduce"),
                 ("jsonl", "jsonl-transduce"),
                 ("pgn", "pgn-transduce"),
+                ("toml", "toml-transduce"),
                 ("xml", "xml-transduce"),
                 ("yaml", "yaml-transduce"),
                 ("zon", "zon-transduce"),

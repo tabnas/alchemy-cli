@@ -578,10 +578,11 @@ func transduceDifferential(t testing.TB, grammar *translate.Format, doc, written
 // in another order than the document's, so that the differential compares
 // a row's events with the walk with each object's members in key order: Go
 // reads a PGN database as typed values, a game's tags a map in sorted key
-// order and a move's fields and annotations in the struct's order, where
-// the part, as the Rust and TypeScript readers do, keeps the document's
-// order (translate/translate_test.go's orderDivergent).
-var memberOrderFree = map[string]bool{"pgn": true}
+// order and a move's fields and annotations in the struct's order, and a
+// stylesheet's nodes as plain maps, in sorted key order, where the part,
+// as the Rust and TypeScript readers do, keeps the document's order
+// (translate/translate_test.go's orderDivergent).
+var memberOrderFree = map[string]bool{"css": true, "pgn": true}
 
 // sortedMembers is a value with each object's members in key order.
 func sortedMembers(d tt.Datum) tt.Datum {

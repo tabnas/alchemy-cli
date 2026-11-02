@@ -138,16 +138,13 @@ func TestFormatsPrintsTheRegistryAsJSON(t *testing.T) {
 	for id, manifest := range map[string]string{
 		"abnf":     tabnasabnf.Translate().Manifest,
 		"c":        tabnasc.Translate().Manifest,
-		"css":      tabnascss.Translate().Manifest,
 		"ebnf":     tabnasebnf.Translate().Manifest,
 		"expr":     tabnasexpr.Translate().Manifest,
 		"feed":     tabnasfeed.Translate().Manifest,
 		"gbnf":     tabnasgbnf.Translate().Manifest,
-		"ini":      tabnasini.Translate().Manifest,
 		"markdown": tabnasmarkdown.Translate().Manifest,
 		"proto":    tabnasproto.Translate().Manifest,
 		"semver":   tabnassemver.Translate().Manifest,
-		"toml":     tabnastoml.Translate().Manifest,
 	} {
 		var m struct {
 			Translate struct {
@@ -156,6 +153,31 @@ func TestFormatsPrintsTheRegistryAsJSON(t *testing.T) {
 		}
 		if err := json.Unmarshal([]byte(manifest), &m); err != nil || m.Translate.Whole == "" || byID[id]["whole"] != m.Translate.Whole {
 			t.Errorf("%s: whole %v, its manifest's %q (%v)", id, byID[id]["whole"], m.Translate.Whole, err)
+		}
+	}
+	// CSS, INI and TOML give the sentence up with the transducer part they
+	// ship from their next release, so each is held to the module this
+	// build has, whichever side of that release: the published one, or the
+	// sibling checkout the polyglot gate's workspace uses.
+	for id, manifest := range map[string]string{
+		"css":  tabnascss.Translate().Manifest,
+		"ini":  tabnasini.Translate().Manifest,
+		"toml": tabnastoml.Translate().Manifest,
+	} {
+		var m struct {
+			Translate struct {
+				Whole *string `json:"whole"`
+			} `json:"translate"`
+		}
+		if err := json.Unmarshal([]byte(manifest), &m); err != nil {
+			t.Fatal(err)
+		}
+		if m.Translate.Whole == nil {
+			if byID[id]["whole"] != nil {
+				t.Errorf("%s: whole %v, its manifest gives none", id, byID[id]["whole"])
+			}
+		} else if byID[id]["whole"] != *m.Translate.Whole {
+			t.Errorf("%s: whole %v, its manifest's %q", id, byID[id]["whole"], *m.Translate.Whole)
 		}
 	}
 	for _, id := range []string{"json", "pgn"} {
