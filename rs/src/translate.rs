@@ -1319,13 +1319,16 @@ mod tests {
         assert_eq!(
             through,
             [
+                ("css", "css-transduce"),
                 ("csv", "csv-transduce"),
+                ("ini", "ini-transduce"),
                 ("json", "json-transduce"),
                 ("json5", "json5-transduce"),
                 ("jsonc", "jsonc-transduce"),
                 ("jsonic", "jsonic-transduce"),
                 ("jsonl", "jsonl-transduce"),
                 ("pgn", "pgn-transduce"),
+                ("toml", "toml-transduce"),
                 ("xml", "xml-transduce"),
                 ("yaml", "yaml-transduce"),
                 ("zon", "zon-transduce"),
